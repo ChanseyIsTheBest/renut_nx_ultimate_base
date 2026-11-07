@@ -89,7 +89,11 @@ inline std::vector<uint8_t> Convert(const uint8_t *src) {
       const uint32_t field = head >> 16;
       const uint32_t words = head & 0xFFFFu;
       if (LiteralIsFloat(field) && (words & 3u) == 0) {
-        Literal l{LiteralRegister(field), words / 4, uint32_t(physical.size())};
+        // renut-ultimate (2026-11-08, found by rr6-nx's merge): the 0x11 table's float4 definition counts WORDS, as 0x0E's
+        // does: the translator reads (count + 3) / 4 registers (shader_recompiler.cpp). words / 4 here kept only the first
+        // register of a literal of several (Ridge Racer 6's c253-c255 of 22D0/12: c254 and c255 read the game's registers,
+        // its race drawn black).
+        Literal l{LiteralRegister(field), words, uint32_t(physical.size())};
         for (uint32_t k = 0; k < words; ++k) {
           const uint32_t value = o + 4 + 4 * k + 4 <= virt ? Rd(src, o + 4 + 4 * k) : 0;
           physical.push_back(uint8_t(value >> 24));
