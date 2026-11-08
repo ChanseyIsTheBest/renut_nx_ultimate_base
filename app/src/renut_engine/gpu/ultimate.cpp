@@ -283,6 +283,14 @@ REXCVAR_DEFINE_BOOL(sasrt_gpu_plain_fetches, true, "Banjo/Enhancements",
                     "Off: every fetch keeps the run-time branch")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
+// renut-ultimate (port 47, 2026-11-08): rr6-nx's lock-free answer to "is this address one of Renut's objects".
+REXCVAR_DEFINE_BOOL(rr6_records_lockfree, true, "Banjo/Enhancements",
+                    "From rr6-nx: records::Lookup and OwnsHeader answered from a table over the record heap, "
+                    "without locks (a byte per 16-byte granule, marked under the existing locks). Ridge Racer 6's "
+                    "drawing thread spent about 30 % of its time on the console in the read-write lock's unlock "
+                    "behind them. The same answers. Off: the locked set and map")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
 // renut-ultimate (2026-11-08): sasrt_deko3d_depth_resolve's decompress only when something reads the target.
 REXCVAR_DEFINE_BOOL(ultimate_deko3d_depth_resolve_lazy, true, "Banjo/Enhancements",
                     "renut-ultimate: with sasrt_deko3d_depth_resolve, a compressed depth target leaving the bind point (or "
@@ -448,6 +456,10 @@ bool HeldExportsGuardOn() {
 }
 bool PlainFetchesOn() {
   static const bool on = REXCVAR_GET(sasrt_gpu_plain_fetches);
+  return on;
+}
+bool RecordsLockFreeOn() {
+  static const bool on = REXCVAR_GET(rr6_records_lockfree);
   return on;
 }
 }  // namespace banjo::renut_gpu

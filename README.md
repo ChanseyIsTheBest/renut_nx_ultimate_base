@@ -51,6 +51,8 @@ toml, so a port that finds one wrong for its game doesn't have to change the cod
 - On the console the base first cost Ridge Racer 6 4.1 ms of GPU a frame against its own build, at the same frame rate
   but with no headroom left. Port 44 gives 3.2 ms of it back (its game passes at its own build's times), and port 45 (the
   depth decompress only for a read) 0.5 ms more. 0.4 ms, in the game-gamma ramp's present, is still open.
+- Ports 47 and 48 (rr6-nx) take the locks out of Renut's object lookups and shorten the guest clock's read. On the
+  console they took Ridge Racer 6's drawing thread from its limit (42-48 fps while racing) to 60 fps with time to spare.
 - Port 44 and the translator changes take effect when a game's shader package is made again. Before measuring on the
   console, build its DKSH cache on the PC (`tools/deko3d_variant_cache.py`): a first run that compiles its shaders while
   it draws is slower on the GPU than the build is.

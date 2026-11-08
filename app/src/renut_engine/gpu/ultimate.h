@@ -44,4 +44,5 @@ bool TextureMemoFetchOnlyVerifyOn();  // sasrt_renut_texture_memo_fetch_only_ver
 bool ReplayInheritSameOn();  // ultimate_renut_replay_inherit_same (renut-ultimate audit)
 bool HeldExportsGuardOn();  // ultimate_renut_held_exports_guard (renut-ultimate audit)
 bool PlainFetchesOn();  // sasrt_gpu_plain_fetches (sasrt-nx; port 44)
+bool RecordsLockFreeOn();  // rr6_records_lockfree (rr6-nx; port 47): guest/guest_records.cpp's table
 }  // namespace banjo::renut_gpu
