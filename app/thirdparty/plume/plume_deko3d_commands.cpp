@@ -172,7 +172,11 @@ namespace plume {
 
     void Deko3DCommandList::end() {
         // sasrt-nx (2026-10-21): the next list may read the depth target still bound here.
-        resolveBoundDepth(false);
+        // renut-ultimate (2026-11-08, depthResolveLazy): then it is decompressed there, when it moves to a read layout.
+        if (Deko3DGetOptions().depthResolveLazy)
+            deferBoundDepth();
+        else
+            resolveBoundDepth(false);
         flushBarriers();
         list = dkCmdBufFinishList(cmd);
         open = false;
@@ -216,6 +220,19 @@ namespace plume {
         // sasrt-nx (2026-10-21, Deko3DOptions::depthResolve): the bound depth target moving to a read layout is
         // decompressed first; the barrier recorded here then orders the read after it.
         // Moving back to DEPTH_WRITE (written again while still bound) makes it dirty again.
+        // renut-ultimate (2026-11-08, depthResolveLazy): a target left for later is decompressed through its own view
+        // when it moves to a read layout; the barrier recorded below orders the read after it.
+        if (Deko3DGetOptions().depthResolveLazy && Deko3DGetOptions().depthResolve) {
+            for (uint32_t i = 0; i < textureBarriersCount; i++) {
+                const RenderTextureLayout l = textureBarriers[i].layout;
+                const Deko3DTexture *t = static_cast<const Deko3DTexture *>(textureBarriers[i].texture);
+                if (t && t->depthPending &&
+                    (l == RenderTextureLayout::SHADER_READ || l == RenderTextureLayout::DEPTH_READ ||
+                     l == RenderTextureLayout::GENERAL || l == RenderTextureLayout::COPY_SOURCE ||
+                     l == RenderTextureLayout::RESOLVE_SOURCE))
+                    resolvePendingDepth(t, true);
+            }
+        }
         if (framebuffer && framebuffer->hasDepth && framebuffer->depthCompressed && Deko3DGetOptions().depthResolve) {
             for (uint32_t i = 0; i < textureBarriersCount; i++) {
                 const RenderTextureLayout l = textureBarriers[i].layout;
@@ -944,8 +961,34 @@ namespace plume {
             const DkImageView *was = framebuffer && framebuffer->hasDepth ? &framebuffer->depth : nullptr;
             const DkImageView *next = f && f->hasDepth ? &f->depth : nullptr;
             if (!was || !next || was->pImage != next->pImage || was->layerOffset != next->layerOffset ||
-                was->mipLevelOffset != next->mipLevelOffset)
-                resolveBoundDepth(true);
+                was->mipLevelOffset != next->mipLevelOffset) {
+                // renut-ultimate (2026-11-08, depthResolveLazy): left for the read that needs it, unless the same image
+                // is bound next through another view (one pending view an image).
+                if (Deko3DGetOptions().depthResolveLazy && was && framebuffer->depthTexture &&
+                    !(next && was->pImage == next->pImage))
+                    deferBoundDepth();
+                else
+                    resolveBoundDepth(true);
+            }
+        }
+        // renut-ultimate (2026-11-08, depthResolveLazy): a target left for later and bound again: through the view it was
+        // written through, the bound target's tracking takes it over; through another, it is decompressed first.
+        if (f && f->hasDepth && f->depthTexture && f->depthTexture->depthPending) {
+            const DkImageView &pv = f->depthTexture->depthPendingView;
+            if (pv.layerOffset != f->depth.layerOffset || pv.mipLevelOffset != f->depth.mipLevelOffset) {
+                resolvePendingDepth(f->depthTexture, false);
+                if (Deko3DGetOptions().mergeBarriers) {
+                    pendingBarrierMode = pendingBarrier ? std::max(pendingBarrierMode, DkBarrier_Fragments) : DkBarrier_Fragments;
+                    pendingBarrierInvalidate |= DkInvalidateFlags_Image;
+                    pendingBarrier = true;
+                }
+                else
+                    emitBarrier(DkBarrier_Fragments, DkInvalidateFlags_Image);
+            }
+            else {
+                f->depthTexture->depthPending = false;
+                depthDirty = true;
+            }
         }
         framebuffer = f;
         if (!f)
@@ -1169,6 +1212,43 @@ namespace plume {
         }
     }
 
+    // renut-ultimate (2026-11-08, Deko3DOptions::depthResolveLazy).
+    void Deko3DCommandList::deferBoundDepth() {
+        if (!depthDirty)
+            return;
+        if (!framebuffer || !framebuffer->hasDepth || !framebuffer->depthTexture) {
+            resolveBoundDepth(false);
+            return;
+        }
+        depthDirty = false;
+        const Deko3DTexture *t = framebuffer->depthTexture;
+        t->depthPending = true;
+        t->depthPendingView = framebuffer->depth;
+        Deko3DStats &st = GetDeko3DStats();
+        st.depthResolvesDeferred.store(st.depthResolvesDeferred.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+    }
+
+    void Deko3DCommandList::resolvePendingDepth(const Deko3DTexture *t, bool rebind) {
+        if (!t->depthPending)
+            return;
+        t->depthPending = false;
+        flushBarriers();
+        dkCmdBufBindRenderTargets(cmd, nullptr, 0, &t->depthPendingView);
+        dkCmdBufResolveDepthValues(cmd);
+        if (rebind) {
+            if (framebuffer) {
+                const DkImageView *colors[8];
+                for (uint32_t i = 0; i < framebuffer->colorCount; i++)
+                    colors[i] = &framebuffer->colors[i];
+                dkCmdBufBindRenderTargets(cmd, colors, framebuffer->colorCount, framebuffer->hasDepth ? &framebuffer->depth : nullptr);
+            }
+            else
+                dkCmdBufBindRenderTargets(cmd, nullptr, 0, nullptr);
+        }
+        Deko3DStats &st = GetDeko3DStats();
+        st.depthResolvesLater.store(st.depthResolvesLater.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+    }
+
     // sasrt-nx (2026-10-21, Deko3DOptions::depthResolve).
     void Deko3DCommandList::resolveBoundDepth(bool barrierAfter) {
         if (!depthDirty)
@@ -1178,6 +1258,10 @@ namespace plume {
             return;
         flushBarriers();
         dkCmdBufResolveDepthValues(cmd);
+        {
+            Deko3DStats &st = GetDeko3DStats();
+            st.depthResolvesBound.store(st.depthResolvesBound.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+        }
         if (!barrierAfter)
             return;
         if (Deko3DGetOptions().mergeBarriers) {

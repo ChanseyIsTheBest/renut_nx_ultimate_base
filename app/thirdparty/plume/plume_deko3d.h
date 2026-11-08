@@ -76,6 +76,9 @@ namespace plume {
         std::atomic<uint64_t> msaaPipelines{0}, msaaAlphaToCoverage{0}, msaaPositioned{0};
         // sasrt-nx (2026-10-30, Deko3DOptions::stripRestart): indexed strip draws drawn with primitive restart.
         std::atomic<uint64_t> stripRestartDraws{0};
+        // renut-ultimate (2026-11-08): depth decompresses done where the target was bound, left for later
+        // (depthResolveLazy), and done later for a read.
+        std::atomic<uint64_t> depthResolvesBound{0}, depthResolvesDeferred{0}, depthResolvesLater{0};
     };
     // banjo-nx (2026-10-19, render-thread proposal 13): read inline (no call per draw).
     extern Deko3DStats g_deko3dStats;
@@ -129,6 +132,12 @@ namespace plume {
         bool ownsMemory = true;
         bool valid = false;
         bool compressed = false;  // sasrt-nx (2026-10-21): made with DkImageFlags_HwCompression
+        // renut-ultimate (2026-11-08, Deko3DOptions::depthResolveLazy): a compressed depth target written through
+        // depthPendingView and not decompressed since it left the bind point. Decompressed when it next moves to a read
+        // layout (a barrier), or before it is bound through another view. The command lists that touch it are recorded
+        // one after another, in the order the GPU runs them.
+        mutable bool depthPending = false;
+        mutable DkImageView depthPendingView{};
 
         Deko3DTexture(Deko3DDevice *device, const RenderTextureDesc &desc);
         Deko3DTexture(Deko3DDevice *device) : device(device) {} // swapchain images
@@ -345,6 +354,7 @@ namespace plume {
         DkImageView depth{};
         bool hasDepth = false;
         bool depthCompressed = false;  // sasrt-nx (2026-10-21): the depth target has hardware compression
+        const Deko3DTexture *depthTexture = nullptr;  // renut-ultimate (2026-11-08): its texture (depthResolveLazy)
         uint32_t width = 0, height = 0;
         bool srgb[8] = {};
         uint32_t getWidth() const override { return width; }
@@ -529,6 +539,11 @@ namespace plume {
         // sasrt-nx (2026-10-21): dkCmdBufResolveDepthValues on the bound depth target when depthDirty (barrierAfter:
         // a Fragments barrier dropping the image cache follows, for a read whose own barrier is already recorded).
         void resolveBoundDepth(bool barrierAfter);
+        // renut-ultimate (2026-11-08, Deko3DOptions::depthResolveLazy): the bound dirty depth target left for later (its
+        // texture's depthPending), and a pending one decompressed through its own view (rebind: the bound targets
+        // bound again after).
+        void deferBoundDepth();
+        void resolvePendingDepth(const Deko3DTexture *t, bool rebind);
     };
 
     struct Deko3DCommandQueue : RenderCommandQueue {
@@ -945,6 +960,11 @@ namespace plume {
         // and at the end of a list. The texture unit cannot read the GPU's compressed depth tiles. Ryujinx emulates no
         // compression, so only the console shows it.
         bool depthResolve = false;
+        // renut-ultimate (2026-11-08): with depthResolve, a target leaving the bind point (or bound at the end of a list)
+        // is decompressed only when something reads it: when it next moves to a read layout, or before it is bound
+        // through another view. Ridge Racer 6, which reads no depth, paid 0.46 ms a frame on the console for the eager
+        // form. Every read of a depth target goes through a barrier (Renut's other back ends need the layout).
+        bool depthResolveLazy = false;
     };
     void Deko3DSetOptions(const Deko3DOptions &options);
     // banjo-nx (2026-10-19, render-thread proposal 13): read inline (barriers() reads it per call).

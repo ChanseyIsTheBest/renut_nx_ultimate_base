@@ -283,6 +283,15 @@ REXCVAR_DEFINE_BOOL(sasrt_gpu_plain_fetches, true, "Banjo/Enhancements",
                     "Off: every fetch keeps the run-time branch")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
+// renut-ultimate (2026-11-08): sasrt_deko3d_depth_resolve's decompress only when something reads the target.
+REXCVAR_DEFINE_BOOL(ultimate_deko3d_depth_resolve_lazy, true, "Banjo/Enhancements",
+                    "renut-ultimate: with sasrt_deko3d_depth_resolve, a compressed depth target leaving the bind point (or "
+                    "bound at the end of a list) is decompressed only when something reads it: when it next moves to a "
+                    "read layout, or before it is bound through another view. The same pixels; a game that reads no "
+                    "depth pays nothing (Ridge Racer 6 paid 0.46 ms a frame on the console for the eager form). Off: "
+                    "decompressed at every unbind, as in sasrt-nx")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
 namespace banjo::renut_gpu {
 int Deko3DUserClipEnable() { return REXCVAR_GET(banjo_deko3d_user_clip_enable); }
 bool ConstNanFlushOn() {
@@ -311,6 +320,10 @@ bool CullBothOn() {
 }
 bool DepthBiasOn() {
   static const bool on = REXCVAR_GET(rr6_depth_bias);
+  return on;
+}
+bool Deko3DDepthResolveLazyOn() {
+  static const bool on = REXCVAR_GET(ultimate_deko3d_depth_resolve_lazy);
   return on;
 }
 bool Deko3DDepthResolveOn() {

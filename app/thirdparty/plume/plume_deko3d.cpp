@@ -2587,6 +2587,7 @@ namespace plume {
             fb->depth = v ? v->view : t->defaultView();
             fb->hasDepth = true;
             fb->depthCompressed = t->compressed;  // sasrt-nx (2026-10-21)
+            fb->depthTexture = t;  // renut-ultimate (2026-11-08, depthResolveLazy)
             if (fb->colorCount == 0) {
                 fb->width = t->desc.width;
                 fb->height = t->desc.height;

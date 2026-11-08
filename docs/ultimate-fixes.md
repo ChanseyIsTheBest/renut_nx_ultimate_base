@@ -75,15 +75,16 @@ Where the 4.06 ms went:
   (about 120 more a fetch; shaders without fetches unchanged) and more registers (ps_80391EE201BC4392 252 instructions and 32
   GPRs before, 1,283 and 60 after). **Port 44** (below) folds it away per pipeline: with every bit set each heavy RR6 shader
   compiles to exactly its master size (ps_FEB1A950B191D9BA 312 to 144 words), and the game passes are master's again.
-- **0.46 ms: `sasrt_deko3d_depth_resolve` (port 09).** It decompresses a compressed depth target at every unbind, whether or
-  not anything reads it. RR6 never reads its depth (no depth resolve or hand-over bind in any run; its master never
-  decompressed and draws right), so rr6-nx ships it off. sasrt-nx needs it (its shadow cascades). A lazy form, only for a
-  target that will be sampled or copied, would serve both: not written.
-- **0.42 ms: present, the game-gamma ramp path.** The ramp's lookup costs 0.68 ms in the base (eight in-run A/B 86 pairs at
-  57+ fps), where master's whole present, ramp included, is 0.74. The two present shaders compile to the same size (the
-  texel-load choice is a real branch, not two fetches). Left: the base's 1024 x RGBA8 table by v x 1023 (halo3-nx's and
-  kameo-nx's) against master's 256 x RGBA32F by v x 255. A 256-entry table would pick another entry than the base's for
-  about 6 % of filtered values (none of the exact 8-bit ones): master's picture, not the base's. Not done.
+- **0.46 ms: `sasrt_deko3d_depth_resolve` (port 09).** It decompressed a compressed depth target at every unbind, whether or
+  not anything read it. RR6 never reads its depth (no depth resolve or hand-over bind in any run; its master never
+  decompressed and draws right). **Port 45** (below) decompresses only for a read: with the key on, RR6's run left 37,220
+  for later and needed none, and its resolves are master's again (1.859 ms).
+- **0.42 ms: present, the game-gamma ramp path.** The ramp costs 0.58-0.76 ms in the base (in-run A/B 86, 9-10 pairs a
+  run at 57+ fps) and 0.04 in rr6-nx's master (its A/B 73, 9 pairs). Ruled out on the console, each with that A/B: the
+  table's form (256 x RGBA8 by the 8-bit value, 0.15 ms better; 1024 x RGBA32F, 0.22 worse: in-run targets of a test build),
+  the upload (every frame, as master: still 0.76), the present shader's structure (master's frame sample and pow in a test
+  build: still 0.58) and its registers (10 in both). Left: what surrounds the ramp texture itself (its descriptor, the
+  caches). The test builds were not kept. Open.
 
 Ruled out on the console, one toml a run: the 16-bit pair (`sasrt_renut_fixed16_float`, `_clamp`), the copy-engine wait,
 `banjo_renut_resolve_clears_both` with `vivapinata_edram_clear_overlap`, `sasrt_renut_deko3d_clear_new`; kameo-nx's
@@ -160,6 +161,7 @@ console's cache>`, and check the log's "uam 0 compiles" before comparing.
 | 42 | The SDK runtime (kernel calls, threads, the audio driver) and FFmpeg (XMA) in the Switch LTO and PGO, C and C++ only; each build folder has its own SDK libraries (`REXGLUE_OUTPUT_IN_BUILD`), so the stages no longer replace each other's | build | `BANJO_SWITCH_SDK_OPT` (CMake, on) | built (everyday and LTO + PGO use); the profile in `pgo/` has no SDK counts until an instrumented console run |
 | 43 | 0x0E containers: a literal of several registers keeps them all. container_0e.h (kameo-nx's form) wrote the definition's count in registers (words / 4), but the 0x11 table counts words and the translator reads (count + 3) / 4 registers, so only the first register of a multi-register literal was a literal and the rest read the game's constant registers | 22 | none | found by rr6-nx's merge (2026-11-08): Ridge Racer 6's pixel shaders hold c253-c255 as one literal (22D0/12); its race drew black and its intro video black and white. Fixed, the race matches rr6-nx's master on the PC. kameo-nx has the same line and 3,490 multi-register float literals in its dump (its ps_00078ce0812e1370 reads c254 and c255 through g_C); it looks right, probably because its D3DDevice_SetPixelShader copies the literals into the device's constants (container_0e.h's own note), which Renut uploads. Not checked on Kameo |
 | 44 | Port 25's per-fetch sign, gamma and exponent block folded away per pipeline where the draw's fetch constants have none of it: a tools/deko3d_glsl_opt.py pass (plainfetch) ends each fetch's condition with constant 926's bit for its fetch constant; render/draw.cpp PlainFetchMask sets the bits on the pipeline key (fetch_pad, its spare word; the list format unchanged); pipeline.cpp passes 926 and treats the key as specialised (the generic pipeline draws until it is built); deko3d_variant_cache.py reads the word, and --plain-guess makes the all-plain variant from the shader table for lists made before it | 25 | `sasrt_gpu_plain_fetches` | sasrt-nx's design (2026-11-08, its GPU round), measured by rr6-nx on the console the same day: 3.16 ms a frame of Ridge Racer 6's race back, its game passes at its master build's GPU times (the section above). deko3d only; takes effect when a game's shader package is made again (Katamari's has not been) |
+| 45 | Port 09's depth decompress done lazily: a compressed depth target leaving the bind point (or bound at the end of a list) is marked pending on its texture with the view it was written through, and decompressed only when a barrier moves it to a read layout (bound through that view again, then the bound targets again) or before it is bound through another view | 09 | `ultimate_deko3d_depth_resolve_lazy` (off: port 09's eager form) | rr6-nx's console race: 37,220 decompresses left for later, 0 needed (it reads no depth), resolves back at its master's 1.86 ms from 2.32. Its reads of depth on a game that has them (sasrt-nx's shadow cascades) not yet checked on a console. The deko3d report line counts them |
 
 **Guest atomics**: already in the base, from banjo-nx. `tools/guest_cas.py` (a post-codegen step) writes each `stwcx.` / `stdcx.`
 as `REX_GUEST_CAS`, which is `__atomic_compare_exchange_n` seq_cst (`BANJO_SWITCH_GUEST_CAS`, on). Checked in the built
@@ -242,10 +244,9 @@ The base binds its D3D hooks to Katamari's addresses, so these are hook bodies a
 
 ## Not yet
 
-- **a lazy depth decompress** (port 09): only for a depth target that will be sampled or copied; today every unbind of a
-  compressed one decompresses it (0.46 ms a frame in Ridge Racer 6's race, which reads no depth: it ships the key off).
 - **the game-gamma ramp's present cost** (ports 27 and k10): 0.42 ms a frame more than rr6-nx's master in Ridge Racer 6's
-  race; the lookup costs 0.68 ms (the RR6 section above). Cause inside the path not found.
+  race; the ramp costs 0.58-0.76 ms where master's costs 0.04. The table's form, the upload, the shader's structure and its
+  registers are ruled out (the RR6 section above).
 
 - **real occlusion queries** (kameo-nx): needs a per-game `D3DQuery_Issue` hook.
 - **the last pixel shader** (kameo-nx): depends on a Kameo shadow-pass flag.

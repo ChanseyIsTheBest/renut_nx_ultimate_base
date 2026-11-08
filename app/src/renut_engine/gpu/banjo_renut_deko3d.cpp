@@ -463,6 +463,7 @@ void InstallShaderCache() {
   options.asyncCacheReads = Deko3DAsyncCacheReadsOn();     // 2026-10-23
   options.userClipEnable = Deko3DUserClipEnable();  // renut-ultimate, from rr6-nx (2026-11-05)
   options.depthResolve = Deko3DDepthResolveOn();  // sasrt-nx (2026-10-21)
+  options.depthResolveLazy = Deko3DDepthResolveLazyOn();  // renut-ultimate (2026-11-08)
   plume::Deko3DSetOptions(options);
   // banjo-nx (2026-10-28, the console's OOM): a block that finds no room in the heap gets the spare command buffers'.
   plume::Deko3DSetMemoryPressureCallback(+[] { ::renut::gpu::ReleaseSpareBuffersNow(); });
@@ -532,7 +533,7 @@ void InstallShaderCache() {
 std::string Report() {
   const plume::Deko3DStats &st = plume::GetDeko3DStats();
   const uint64_t compiles = st.shaderCompiles;
-  return fmt::format("deko3d: {} draws ({} through the address window), {} pipeline binds ({} state binds), bound "
+  std::string r = fmt::format("deko3d: {} draws ({} through the address window), {} pipeline binds ({} state binds), bound "
                      "textures {} read, {} skipped (A/B 39); uam {} compiles (avg {:.0f} ms, {} failed; "
                      "{} stages given the generic variant meanwhile, {} compiled and {} read from the cache in the background, {} "
                      "swapped in; blocking: {} a draw "
@@ -554,6 +555,12 @@ std::string Report() {
                      st.barriersImageInvalidate.load(), st.copyBuffer.load(), st.copyUpload.load(), st.copyReadback.load(),
                      st.copyImage.load(), st.copyResolve.load(), st.copyBlit.load(), st.msaaPipelines.load(),
                      st.msaaAlphaToCoverage.load(), st.msaaPositioned.load(), st.stripRestartDraws.load());
+  // renut-ultimate (2026-11-08): the depth decompresses (sasrt_deko3d_depth_resolve, ultimate_deko3d_depth_resolve_lazy).
+  if (Deko3DDepthResolveOn())
+    r += fmt::format("; depth decompresses (sasrt_deko3d_depth_resolve): {} where the target was bound, {} left for "
+                     "later, {} done later for a read", st.depthResolvesBound.load(), st.depthResolvesDeferred.load(),
+                     st.depthResolvesLater.load());
+  return r;
 }
 
 #else

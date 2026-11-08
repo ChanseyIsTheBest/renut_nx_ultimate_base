@@ -47,8 +47,8 @@ toml, so a port that finds one wrong for its game doesn't have to change the cod
 
 - Every fix builds for the Switch (the everyday NRO, and an LTO + PGO NRO) and for the PC.
 - On the console the base first cost Ridge Racer 6 4.1 ms of GPU a frame against its own build, at the same frame rate
-  but with no headroom left. Port 44 gives 3.2 ms of it back (its game passes at its own build's times), and turning off
-  one key the game does not need gives 0.5 ms more. 0.4 ms, in the game-gamma ramp's present, is still open.
+  but with no headroom left. Port 44 gives 3.2 ms of it back (its game passes at its own build's times), and port 45 (the
+  depth decompress only for a read) 0.5 ms more. 0.4 ms, in the game-gamma ramp's present, is still open.
 - Port 44 and the translator changes take effect when a game's shader package is made again. Before measuring on the
   console, build its DKSH cache on the PC (`tools/deko3d_variant_cache.py`): a first run that compiles its shaders while
   it draws is slower on the GPU than the build is.
