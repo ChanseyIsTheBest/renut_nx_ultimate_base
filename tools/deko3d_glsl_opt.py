@@ -2195,6 +2195,65 @@ def pass_fetchspec(text):
 
 
 # ---------------------------------------------------------------------------------------------------------------------
+# pass: plainfetch — a fetch's sign, gamma and exponent code dropped where the draw's fetch words have none
+# (sasrt-nx, 2026-11-08, the GPU round after its move to the ultimate base: sasrt_gpu_plain_fetches, constant 926;
+# renut-ultimate port 44, measured by rr6-nx the same day: with the ultimate renderer its pixel shaders were about 120
+# instructions heavier per fetch and the race drew 3.2 ms a frame more on the GPU. The mask: render/draw.cpp
+# PlainFetchMask)
+
+PLAINFETCH_DECL = ('#ifndef SPIRV_CROSS_CONSTANT_ID_926\n#define SPIRV_CROSS_CONSTANT_ID_926 0u\n#endif\n'
+                   'const uint g_sasrtPlainFetch = SPIRV_CROSS_CONSTANT_ID_926;\n')
+_PF_COND = r'(?:!\(\((_\d+) \| (_\d+)\) != 0u\)|(_\d+))'
+_PF_BLOCK = re.compile(r'bool (_\d+);\s*if \(' + _PF_COND + r'\)\s*\{\s*\1 = (_\d+) != 0;\s*\}\s*else\s*\{\s*\1 = true;\s*\}')
+_PF_NOT = r'bool {v} = !\(\((_\d+) \| (_\d+)\) != 0u\);'
+_PF_SIGNS = r'uint {v} = \(g_UboShared\.v\[(\d+)u\]\.([xyzw]) >> 16u\) & 15u;'
+_PF_GAMMA = r'uint {v} = \(g_UboShared\.v\[(\d+)u\]\.([xyzw]) >> 13u\) & 7u;'
+_PF_EXP = r'int {v} = int\(g_UboShared\.v\[(\d+)u\]\.([xyzw]) << 6u\) >> 26;'
+
+
+def _pf_byte(m):
+    return int(m.group(1)) * 16 + 'xyzw'.index(m.group(2)) * 4
+
+
+def pass_plainfetch(text):
+    """Renut's texture fetches apply Xenos' per-fetch-constant signs and gamma (SharedConstants.sampler_indices bits
+    13-19: v[24 + r / 4]) and the exponent adjust (texture_indices bits 20-25: v[r / 4] for a 2D fetch) to the texel in
+    a block that runs only when the fetch constant has any; for every other fetch the block is skipped and the texel is
+    used as it is. The block is a uniform branch, but its temporaries count in the shader's registers (the race's
+    G-buffer shader 33 GPRs with them, 28 without; the final pass 42 and 31). Constant 926, bit r: the draw's words for
+    fetch constant r have none of the three (render/draw.cpp PlainFetchMask), so the block's condition is false at
+    compile time and uam drops it. Its default 0 leaves every block as it was. Same pixels: the condition was false for
+    that draw anyway."""
+    if 'SPIRV_CROSS_CONSTANT_ID_926' in text or '>> 16u) & 15u;' not in text:
+        return text
+    edits = []
+    for m in _PF_BLOCK.finditer(text):
+        b, x, y, p, e = m.group(1), m.group(2), m.group(3), m.group(4), m.group(5)
+        if p:
+            mn = re.search(_PF_NOT.format(v=re.escape(p)), text)
+            if not mn:
+                continue
+            x, y = mn.group(1), mn.group(2)
+        ms = re.search(_PF_SIGNS.format(v=re.escape(x)), text)
+        mg = re.search(_PF_GAMMA.format(v=re.escape(y)), text)
+        me = re.search(_PF_EXP.format(v=re.escape(e)), text)
+        if not (ms and mg and me):
+            continue
+        sb, gb, eb = _pf_byte(ms), _pf_byte(mg), _pf_byte(me)
+        r = (sb - 384) // 4
+        # the words of one fetch constant r: sampler_indices[r] (bytes 384-511) for both, texture_indices[d][r] (d the
+        # fetch's dimension, bytes 0-383) for the exponent
+        if sb != gb or not 384 <= sb < 512 or eb >= 384 or eb % 128 != 4 * r:
+            continue
+        edits.append((m.end(), f'\n    {b} = {b} && ((g_sasrtPlainFetch >> {r}u) & 1u) == 0u;'))
+    if not edits:
+        return text
+    for at, code in reversed(edits):
+        text = text[:at] + code + text[at:]
+    return insert_globals(text, PLAINFETCH_DECL)
+
+
+# ---------------------------------------------------------------------------------------------------------------------
 # pass: vskill — a vertex kill as the GPU does it: only a primitive whose vertices are all killed goes (constant 914)
 # vivapinata-nx (2026-11-03, 6eecb25a), ported into renut-ultimate.
 
@@ -2269,6 +2328,7 @@ PASSES = [
     ('bonesel', pass_bonesel),
     ('aw4', pass_aw4),
     ('skinonce', pass_skinonce),
+    ('plainfetch', pass_plainfetch),  # sasrt-nx (2026-11-08), port 44: constant 926
     ('vskill', pass_vskill),  # vivapinata-nx (2026-11-03): last
 ]
 # banjo-nx (2026-10-21): scaled targets (648p / 900p): scale1 and fragscale (1x only) are not in the default.
@@ -2276,7 +2336,7 @@ DEFAULT = ','.join(name for name, _ in PASSES if name not in ('scale1', 'fragsca
 
 
 # The passes for one stage only.
-STAGE_OF = {'skinonce': 'vert', 'bonesel': 'vert', 'aw4': 'vert', 'lightbranch': 'frag', 'nullps': 'frag', 'gpr32': 'frag', 'earlyz': 'frag', 'txq': 'frag', 'alpha': 'frag', 'alphamask': 'frag', 'earlyhoist': 'frag', 'tess': 'vert', 'vsout': 'vert', 'vszero': 'vert', 'pszero': 'frag'}
+STAGE_OF = {'plainfetch': 'frag', 'skinonce': 'vert', 'bonesel': 'vert', 'aw4': 'vert', 'lightbranch': 'frag', 'nullps': 'frag', 'gpr32': 'frag', 'earlyz': 'frag', 'txq': 'frag', 'alpha': 'frag', 'alphamask': 'frag', 'earlyhoist': 'frag', 'tess': 'vert', 'vsout': 'vert', 'vszero': 'vert', 'pszero': 'frag'}
 
 
 def optimise(text, passes=DEFAULT, stage=None, name=None):

@@ -270,6 +270,19 @@ REXCVAR_DEFINE_BOOL(ultimate_renut_held_exports_guard, true, "Banjo/Enhancements
                     "repeated) still reads the kept results. Off: the kept results for four frames, as in sasrt-nx")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
+// renut-ultimate (port 44, 2026-11-08): sasrt-nx's design of the same day (its GPU round, item 2), measured by rr6-nx on
+// the console: port 25's per-fetch sign path folded away per pipeline where the draw's fetch constants have none of it.
+// Ridge Racer 6's race on the ultimate renderer drew 3.2 ms a frame more on the GPU without it (its pixel shaders weighted
+// by GPU time 3.8 times the instructions: about 120 more per texture fetch, and more registers); with it, its game passes
+// are as rr6-nx's master build draws them (main pass 7.89 ms against 7.89).
+REXCVAR_DEFINE_BOOL(sasrt_gpu_plain_fetches, true, "Banjo/Enhancements",
+                    "From sasrt-nx: the pixel shader's fetches whose fetch-constant words have no signs, gamma or "
+                    "exponent adjust for a draw are compiled without that code (constant 926, a bit a fetch constant; "
+                    "tools/deko3d_glsl_opt.py pass plainfetch; render/draw.cpp PlainFetchMask): the same pixels, fewer "
+                    "instructions and registers. deko3d only; takes effect when a game's shader package is made again. "
+                    "Off: every fetch keeps the run-time branch")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
 namespace banjo::renut_gpu {
 int Deko3DUserClipEnable() { return REXCVAR_GET(banjo_deko3d_user_clip_enable); }
 bool ConstNanFlushOn() {
@@ -418,6 +431,10 @@ bool ReplayInheritSameOn() {
 }
 bool HeldExportsGuardOn() {
   static const bool on = REXCVAR_GET(ultimate_renut_held_exports_guard);
+  return on;
+}
+bool PlainFetchesOn() {
+  static const bool on = REXCVAR_GET(sasrt_gpu_plain_fetches);
   return on;
 }
 }  // namespace banjo::renut_gpu

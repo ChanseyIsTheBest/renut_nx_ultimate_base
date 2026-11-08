@@ -29,7 +29,7 @@ The full list, with each fix's source commit, the evidence for it and its switch
 | Textures | the fetch constant over SetTexture's pointer; fetch signs, exponent adjust and integer formats; textures bound by fetch constant alone; 2D textures read through tfetch3D; DXT3A; volumes as 2D arrays | rr6-nx, sasrt-nx, kameo-nx, vivapinata-nx |
 | Render targets and resolves | Kameo's ten GPU changes (colour and scan-out hand-overs, depth read layouts, resolves that keep targets, the gamma ramp once in 8 bits); gamma targets encoded; 16-bit fixed targets as FP16; one EDRAM view read through another; a clear over the same EDRAM in another layout; 1x1 float resolves read back for the CPU | kameo-nx, halo3-nx, sasrt-nx, vivapinata-nx |
 | Command buffers and memexport | replays inherit the running device; recorded vertex shader binds; memexport written in place, and its results kept for the streams inside them | halo3-nx, sasrt-nx |
-| Shader translator | each fetch's own filters and LOD bias, the cube op, tessellated lists, indexed literal arrays, bounded raw vertex fetch, version 0x0E containers; the fetch spec (one format's decode per pipeline) | vivapinata-nx, kameo-nx, feedingfrenzy-nx, banjo-nx |
+| Shader translator | each fetch's own filters and LOD bias, the cube op, tessellated lists, indexed literal arrays, bounded raw vertex fetch, version 0x0E containers; the fetch spec (one format's decode per pipeline); plain fetches (each fetch's sign, gamma and exponent code compiled away for the draws that have none) | vivapinata-nx, kameo-nx, feedingfrenzy-nx, banjo-nx, sasrt-nx |
 | Speed | small captures, the stream cache's age queue, quad index buffer, NEON delta masks with prefetch; whole-buffer copies over the cache cap; the texture memo; a frame split past 192 MB of uploads; the refresh pacing the game as the 360's vertical blank did | bangaio-nx, kameo-nx, sasrt-nx, pacman-nx |
 | CPU side | guest atomics with no extra barrier; the SDK runtime and FFmpeg in the Switch build's LTO and PGO; game memory and the NRO's code on 2 MB blocks | banjo-nx, katamari-nx |
 
@@ -42,9 +42,16 @@ toml, so a port that finds one wrong for its game doesn't have to change the cod
 ## State
 
 > [!WARNING]
-> **Nothing here has run on a real console yet.**
+> **The base itself (Beautiful Katamari) has not run on a real console yet.** Ridge Racer 6, moved onto it in rr6-nx, has
+> (2026-11-08): see [docs/ultimate-fixes.md](docs/ultimate-fixes.md), "Ridge Racer 6 on the console".
 
 - Every fix builds for the Switch (the everyday NRO, and an LTO + PGO NRO) and for the PC.
+- On the console the base first cost Ridge Racer 6 4.1 ms of GPU a frame against its own build, at the same frame rate
+  but with no headroom left. Port 44 gives 3.2 ms of it back (its game passes at its own build's times), and turning off
+  one key the game does not need gives 0.5 ms more. 0.4 ms, in the game-gamma ramp's present, is still open.
+- Port 44 and the translator changes take effect when a game's shader package is made again. Before measuring on the
+  console, build its DKSH cache on the PC (`tools/deko3d_variant_cache.py`): a first run that compiles its shaders while
+  it draws is slower on the GPU than the build is.
 - Beautiful Katamari runs in Ryujinx and on the PC (Vulkan and D3D12): menus, the hub, and a new game through to the
   practice room, with no errors logged, and the Switch build's picture matches the PC's. It hasn't yet been compared frame
   by frame with katamari-nx's own build.

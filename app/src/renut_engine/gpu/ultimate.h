@@ -42,4 +42,5 @@ bool TextureMemoFetchOnlyOn();  // sasrt_renut_texture_memo_fetch_only (sasrt-nx
 bool TextureMemoFetchOnlyVerifyOn();  // sasrt_renut_texture_memo_fetch_only_verify (sasrt-nx)
 bool ReplayInheritSameOn();  // ultimate_renut_replay_inherit_same (renut-ultimate audit)
 bool HeldExportsGuardOn();  // ultimate_renut_held_exports_guard (renut-ultimate audit)
+bool PlainFetchesOn();  // sasrt_gpu_plain_fetches (sasrt-nx; port 44)
 }  // namespace banjo::renut_gpu

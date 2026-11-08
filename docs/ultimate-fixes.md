@@ -34,6 +34,68 @@ Katamari has no recorded command buffers, no memexport and no fetch-only texture
 to act on in these runs. u1 and ref1 (katamari-nx's own NRO) crashed at 35-42 s in the SaltyNX code of the profiler thread
 because the NRO was not at the fallback path; not from these changes.
 
+### Ridge Racer 6 on the base (2026-11-08)
+
+rr6-nx's branch `ultimate` (uncommitted when written): the base's renderer, translator, plume and SDK merged three ways
+into rr6-nx from their common starting point (katamari-nx 1.0, 064bff99a2, whose renderer files rr6-nx was copied from).
+RR6 keeps its XDK 2135 hooks, device head and adapters, its alpha-near-one and fog-NaN switches (A/B 85-87 there) and its
+diagnostics; its own copies of the fixes the base took from it went, so each is defined once. Its own build, shader and
+emulator folders (pc-ult, switch-ult, renut_switch_ult, ryu-data\rr6-ult). The merge found port 43: with the base as it was,
+RR6's race drew black and its intro video black and white.
+
+| Run | Build | Against | Result |
+|-----|-------|---------|--------|
+| ab_ult2 | PC, Vulkan, rr6-nx ultimate | rr6-nx master's PC build, same route and save | the race's countdown frame a mean of 0.8 of 255 apart; video, menus, car select the same |
+| emu_ab_ult | Ryujinx, rr6-nx ultimate NRO | master's NRO of 2026-11-05 15:34 | race frames the same (mean 1.2 at 265 s); no errors |
+
+What the merge showed about the boundary: the hooks and device layout are per XDK (5632 for Katamari, 2135 for RR6), and a
+port's own fixes already in the base have to come out of the port. The A/B target numbers collide between ports.
+
+### Ridge Racer 6 on the console (2026-11-08): what the base costs on the GPU
+
+The first console runs of a game on the base: rr6-nx's `ultimate` branch on the user's Switch, stock clocks (CPU 1020, GPU
+460.8, memory 1600 MHz, handheld), the same scripted race each run (rr6-nx's `tools/console_run.py`, its m22 timeline), against
+rr6-nx's master build. GPU time from Renut's GPU profile, the race's seven 10 s blocks averaged.
+
+| Pass (ms a frame) | master | ultimate | + port 44 | + `sasrt_deko3d_depth_resolve` off |
+|---|---|---|---|---|
+| main pass 1440x800 | 7.885 | 9.800 | 7.890 | 7.868 |
+| full-screen 1280x720 (3 draws) | 1.619 | 2.608 | 1.617 | 1.618 |
+| resolves (9 a frame) | 1.854 | 2.317 | 2.317 | 1.860 |
+| present and overlays | 0.741 | 1.158 | 1.112 | 1.157 |
+| 256x512, 320x180, 1280x720 depth | 1.237 | 1.511 | 1.245 | 1.240 |
+| total | 13.350 | 17.414 | 14.192 | 13.756 |
+
+The "+ port 44" run also toggled targets 73-79 and 86 in-run (4 s halves), which shaves its present a little; the last column
+is that build with only the decompress off. The race at 58-60 fps in every column but the second (51-53 cold, 58-59 warm, at 16.4-16.9 ms right on the frame's budget).
+Where the 4.06 ms went:
+
+- **3.16 ms: port 25's sign path.** Every texture fetch of every pixel shader carried the sign, gamma and exponent block
+  behind a run-time branch, taken by no RR6 texture: weighted by GPU time the pixel shaders had 3.8 times the instructions
+  (about 120 more a fetch; shaders without fetches unchanged) and more registers (ps_80391EE201BC4392 252 instructions and 32
+  GPRs before, 1,283 and 60 after). **Port 44** (below) folds it away per pipeline: with every bit set each heavy RR6 shader
+  compiles to exactly its master size (ps_FEB1A950B191D9BA 312 to 144 words), and the game passes are master's again.
+- **0.46 ms: `sasrt_deko3d_depth_resolve` (port 09).** It decompresses a compressed depth target at every unbind, whether or
+  not anything reads it. RR6 never reads its depth (no depth resolve or hand-over bind in any run; its master never
+  decompressed and draws right), so rr6-nx ships it off. sasrt-nx needs it (its shadow cascades). A lazy form, only for a
+  target that will be sampled or copied, would serve both: not written.
+- **0.42 ms: present, the game-gamma ramp path.** The ramp's lookup costs 0.68 ms in the base (eight in-run A/B 86 pairs at
+  57+ fps), where master's whole present, ramp included, is 0.74. The two present shaders compile to the same size (the
+  texel-load choice is a real branch, not two fetches). Left: the base's 1024 x RGBA8 table by v x 1023 (halo3-nx's and
+  kameo-nx's) against master's 256 x RGBA32F by v x 255. A 256-entry table would pick another entry than the base's for
+  about 6 % of filtered values (none of the exact 8-bit ones): master's picture, not the base's. Not done.
+
+Ruled out on the console, one toml a run: the 16-bit pair (`sasrt_renut_fixed16_float`, `_clamp`), the copy-engine wait,
+`banjo_renut_resolve_clears_both` with `vivapinata_edram_clear_overlap`, `sasrt_renut_deko3d_clear_new`; kameo-nx's
+hand-overs never engage in RR6 (0 resolves not drawn, 0 drawn after all). CPU, the race: the drawing thread 14.91 to 14.36 ms
+a frame (the base's render-thread rounds and rr6-nx's own copies together), the render thread 7.05 to 6.87.
+
+**A trap for every port measuring on the console:** any change to the translator makes every GLSL text, and so every DKSH
+cache key, new. The first run of such a build compiles its variants with uam while drawing (155 compiles here, 754 stages on
+the generic variant meanwhile), and its GPU times are not the build's. Make the cache on the PC first:
+`tools/deko3d_variant_cache.py --generic [--plain-guess <shader table>] --list <the console's pipeline lists> --merge <the
+console's cache>`, and check the log's "uam 0 compiles" before comparing.
+
 ## The fixes
 
 | # | Fix | From | Evidence there | Switch | State |
@@ -97,6 +159,7 @@ because the NRO was not at the fallback path; not from these changes.
 | 41 | Fetch-only textures keyed by a hash of the data they describe too (one page sampled as two textures keeps both), and refreshed across frames instead of bound again | 37 | none | built |
 | 42 | The SDK runtime (kernel calls, threads, the audio driver) and FFmpeg (XMA) in the Switch LTO and PGO, C and C++ only; each build folder has its own SDK libraries (`REXGLUE_OUTPUT_IN_BUILD`), so the stages no longer replace each other's | build | `BANJO_SWITCH_SDK_OPT` (CMake, on) | built (everyday and LTO + PGO use); the profile in `pgo/` has no SDK counts until an instrumented console run |
 | 43 | 0x0E containers: a literal of several registers keeps them all. container_0e.h (kameo-nx's form) wrote the definition's count in registers (words / 4), but the 0x11 table counts words and the translator reads (count + 3) / 4 registers, so only the first register of a multi-register literal was a literal and the rest read the game's constant registers | 22 | none | found by rr6-nx's merge (2026-11-08): Ridge Racer 6's pixel shaders hold c253-c255 as one literal (22D0/12); its race drew black and its intro video black and white. Fixed, the race matches rr6-nx's master on the PC. kameo-nx has the same line and 3,490 multi-register float literals in its dump (its ps_00078ce0812e1370 reads c254 and c255 through g_C); it looks right, probably because its D3DDevice_SetPixelShader copies the literals into the device's constants (container_0e.h's own note), which Renut uploads. Not checked on Kameo |
+| 44 | Port 25's per-fetch sign, gamma and exponent block folded away per pipeline where the draw's fetch constants have none of it: a tools/deko3d_glsl_opt.py pass (plainfetch) ends each fetch's condition with constant 926's bit for its fetch constant; render/draw.cpp PlainFetchMask sets the bits on the pipeline key (fetch_pad, its spare word; the list format unchanged); pipeline.cpp passes 926 and treats the key as specialised (the generic pipeline draws until it is built); deko3d_variant_cache.py reads the word, and --plain-guess makes the all-plain variant from the shader table for lists made before it | 25 | `sasrt_gpu_plain_fetches` | sasrt-nx's design (2026-11-08, its GPU round), measured by rr6-nx on the console the same day: 3.16 ms a frame of Ridge Racer 6's race back, its game passes at its master build's GPU times (the section above). deko3d only; takes effect when a game's shader package is made again (Katamari's has not been) |
 
 **Guest atomics**: already in the base, from banjo-nx. `tools/guest_cas.py` (a post-codegen step) writes each `stwcx.` / `stdcx.`
 as `REX_GUEST_CAS`, which is `__atomic_compare_exchange_n` seq_cst (`BANJO_SWITCH_GUEST_CAS`, on). Checked in the built
@@ -140,6 +203,22 @@ The base binds its D3D hooks to Katamari's addresses, so these are hook bodies a
   does it in the renderer and is in the base (p1).
 - sasrt-nx `sasrt_renut_run_at_splice`: off there, and in its own command buffer hooks. Not in the base.
 
+## Reported by sasrt-nx after its move to the base (2026-11-08), not fixed here
+
+- **h1's inheritance and captured runs:** halo3-nx's replay inheritance (`BuildInheritRuns`, guest/command_buffers.cpp)
+  crashed 5.7 s into a sasrt-nx run that replays captured runs from its same-frame slots: a captured run shares its
+  HostCommandBuffer with the live table, so the render thread built `inherit_runs` while the game thread re-recorded (and
+  cleared) the same buffer. sasrt-nx ships `banjo_renut_replay_inherits = false`. The fix: keep the inheritance data with
+  the captured run. Katamari and Ridge Racer 6 record no command buffers; the captured runs are sasrt-nx's own (its same-frame slots),
+  so Halo 3's replays do not meet it.
+- **memory-export seeding and the copy engine:** `PrepareMemExportLocked` seeds each export window with a copy-engine copy
+  (a full barrier before it), but the barrier after it is GRAPHICS only, a 3D wait-for-idle that does not wait for the copy
+  engine: on the console an export draw's vertex shader can write the window before the seed lands, and the seed then
+  overwrites the exports. `UploadVertexFetchData`'s exported fetch-data copies likewise (GRAPHICS_AND_COMPUTE after).
+  sasrt-nx moved both, and `FlushExportReadbacksLocked`'s, to a compute shader on the 3D engine (`fetch_copy_cs`,
+  `sasrt_gpu_fetch_copy_compute`), which also turned about 23 full barriers a frame into 3D waits. Ryujinx serialises the
+  engines, so only a console shows it. Matters for games that seed memory exports, Halo 3 above all.
+
 ## Left out, and why
 
 - **DXN swap**: disputed (the SDK's Xenia texture cache loads k_DXN as BC5 with no swap; Kameo's notes: no independent evidence).
@@ -162,6 +241,11 @@ The base binds its D3D hooks to Katamari's addresses, so these are hook bodies a
 - **kameo-nx df7ca54a52's other switches**: in its hunk's context only; in ultimate.cpp already or left out above.
 
 ## Not yet
+
+- **a lazy depth decompress** (port 09): only for a depth target that will be sampled or copied; today every unbind of a
+  compressed one decompresses it (0.46 ms a frame in Ridge Racer 6's race, which reads no depth: it ships the key off).
+- **the game-gamma ramp's present cost** (ports 27 and k10): 0.42 ms a frame more than rr6-nx's master in Ridge Racer 6's
+  race; the lookup costs 0.68 ms (the RR6 section above). Cause inside the path not found.
 
 - **real occlusion queries** (kameo-nx): needs a per-game `D3DQuery_Issue` hook.
 - **the last pixel shader** (kameo-nx): depends on a Kameo shadow-pass flag.

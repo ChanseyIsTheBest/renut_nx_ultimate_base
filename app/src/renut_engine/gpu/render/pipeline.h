@@ -90,7 +90,12 @@ struct PipelineKey {
   // 0: read at run time (every other draw). Like the bools: a key not built yet draws with the generic one.
   uint32_t fetch_types[4];
   uint32_t tess_kind;
-  uint32_t fetch_pad;  // 0 (the key's size stays a multiple of 8)
+  // renut-ultimate (port 44, 2026-11-08; sasrt-nx's sasrt_gpu_plain_fetches, was fetch_pad, 0): the pixel shader's
+  // constant 926, bit r for each fetch constant it samples whose words have no signs, gamma or exponent adjust
+  // (render/draw.cpp PlainFetchMask; tools/deko3d_glsl_opt.py pass plainfetch). 0: read at run time. Like the bools: a
+  // key not built yet draws with the generic one. Kept in the list's key as before (the field's place and the key's size
+  // are the same).
+  uint32_t fetch_pad;
 };
 
 // banjo-nx (banjo_gpu_blend_skip): for the key's other fields, 1 when its one target keeps its value for a source alpha

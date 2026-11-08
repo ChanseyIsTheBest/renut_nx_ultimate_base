@@ -2,6 +2,7 @@
  * @file    gpu/render/pipeline.cpp
  */
 #include "renut_engine/gpu/render/pipeline.h"
+#include "renut_engine/gpu/ultimate.h"  // port 44: PlainFetchesOn (sasrt_gpu_plain_fetches)
 
 #include <algorithm>
 #include <atomic>
@@ -365,7 +366,7 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineKey &key, const Pipel
 
   // banjo-nx (banjo_gpu_bool_spec): the key's bools as the shaders' specialization constants (banjo_bool_spec.h). One
   // list for every stage: a stage takes the ids it declares (vertex and pixel shader bools have distinct ones).
-  plume::RenderSpecConstant spec[280];  // 256 bools, 900-914 and 920-925
+  plume::RenderSpecConstant spec[280];  // 256 bools, 900-914 and 920-926
   uint32_t spec_count = 0;
   for (uint32_t w = 0; w < 8; ++w) {
     for (uint32_t m = key.bool_mask[w]; m; m &= m - 1) {
@@ -399,6 +400,10 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineKey &key, const Pipel
   // first four bound fetches, from its key (render/draw.cpp FetchSpecWords): this game's terrain draws up to 580,000 vertices a frame.
   else if (key.tess_kind)
     spec[spec_count++] = plume::RenderSpecConstant(904, key.tess_kind);
+  // renut-ultimate (port 44, 2026-11-08; sasrt-nx's sasrt_gpu_plain_fetches): the fetch constants without signs, gamma
+  // or exponent adjust.
+  if (key.pixel_shader && key.fetch_pad)
+    spec[spec_count++] = plume::RenderSpecConstant(926, key.fetch_pad);
   for (uint32_t k = 0; k < 4; ++k) {
     if (key.fetch_types[k])
       spec[spec_count++] = plume::RenderSpecConstant(920 + k, key.fetch_types[k]);
@@ -663,6 +668,8 @@ bool DecodeRecord(const char *data, size_t size, Job &job) {
     job.key.output_trim = 0;
   if (!banjo::renut_gpu::AlphaSpecOn())
     job.key.alpha_func = 0;
+  if (!banjo::renut_gpu::PlainFetchesOn())  // port 44 (sasrt_gpu_plain_fetches)
+    job.key.fetch_pad = 0;
   if (!banjo::renut_gpu::FetchSpecOn()) {
     std::memset(job.key.fetch_types, 0, sizeof(job.key.fetch_types));
     job.key.tess_kind = 0;
@@ -1063,7 +1070,7 @@ SpecState SpecialisedPipeline(const PipelineKey &key, uint64_t hash, const HostV
 }
 
 bool Specialised(const PipelineKey &key) {
-  if (key.alpha_func || key.tess_kind)
+  if (key.alpha_func || key.tess_kind || key.fetch_pad)  // port 44: fetch_pad, constant 926
     return true;
   for (const uint32_t w : key.fetch_types) {
     if (w)
@@ -1296,6 +1303,7 @@ static plume::RenderPipeline *GetPipelineSlow(const PipelineKey &key, const Pipe
     generic.alpha_func = 0;  // banjo-nx (banjo_deko3d_alpha_spec): the function read at run time
     std::memset(generic.fetch_types, 0, sizeof(generic.fetch_types));  // banjo-nx (banjo_gpu_fetch_spec)
     generic.tess_kind = 0;
+    generic.fetch_pad = 0;  // port 44 (sasrt_gpu_plain_fetches)
     plume::RenderPipeline *pipeline = GetPipelineLocked(generic, inputs);
     if (state == SpecState::Pending) {
       SpecPending &p = g_spec_pending[hash];

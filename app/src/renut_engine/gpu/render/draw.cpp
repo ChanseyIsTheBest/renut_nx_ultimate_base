@@ -6596,6 +6596,26 @@ bool FetchSpecDiffers(const PipelineKey &key, const FetchSpec &s) {
   return key.tess_kind != s.kind || std::memcmp(key.fetch_types, s.types, sizeof(s.types)) != 0;
 }
 
+// renut-ultimate (port 44, 2026-11-08; sasrt-nx's design, sasrt_gpu_plain_fetches): the pixel shader's constant 926,
+// bit r for each fetch constant it samples (its entry's textureFetchMask) whose words for this draw have no signs or
+// gamma (sampler_indices bits 13-19) and no exponent adjust (texture_indices bits 20-25, of every dimension): the
+// shaders' fetch code skips its sign, gamma and exponent block exactly then (tools/deko3d_glsl_opt.py pass plainfetch).
+// From the draw's SharedConstants after FillTextures; set on the key after it is made or reused (the key's other inputs
+// do not decide it). 0 off deko3d, without a pixel shader, or with the key off. Bit 31 is never set (sasrt-nx uses it
+// for another fold of its own).
+[[gnu::always_inline]] inline u32 PlainFetchMask(const SharedConstants &sc, const ShaderCacheEntry *ps_entry) {
+  if (!ps_entry || !IsDeko3D() || !banjo::renut_gpu::PlainFetchesOn())
+    return 0;
+  u32 mask = 0;
+  for (u32 bits = ps_entry->textureFetchMask & 0x7FFFFFFFu; bits; bits &= bits - 1) {
+    const u32 r = u32(std::countr_zero(bits));
+    const u32 words = sc.texture_indices[0][r] | sc.texture_indices[1][r] | sc.texture_indices[2][r];
+    const u32 any = (sc.sampler_indices[r] & 0x000FE000u) | (words & 0x03F00000u);
+    mask |= u32(any == 0) << r;
+  }
+  return mask;
+}
+
 PipelineKey MakeKey(const GuestDevice &device, const ShaderRecord *vs, const ShaderRecord *ps,
                     const VertexDeclarationRecord *declaration, const Targets &t, u32 primitive,
                     bool per_instance, const u32 *booleans, u32 alpha_test_func, const FetchSpec &fetch_spec) {
@@ -9805,8 +9825,10 @@ int FastDrawLocked(const u8 *device_state, const DrawCall &call, const ReplayCon
   // banjo-nx (2026-10-27, shadow sort): the key reads the shaders through their cache entries and the declaration
   // through its layout hash (MakeKey, BoolSpecMask), so another shader object of the same contents (N&B makes one per
   // mesh: a new address at 69 % of the shadow draws) keeps the key and the pipeline; compared with the key's own.
+  const u32 plain_fetches = PlainFetchMask(sc, ps_entry);  // renut-ultimate (port 44, sasrt_gpu_plain_fetches)
   const bool key_inputs = f.key_rs_epoch != f.rs_epoch || !f.pipeline || !f.kp || depth_only != f.depth_only ||
                           misc != f.key_misc || f.prebuild_epoch != prebuild_epoch ||
+                          f.kp->fetch_pad != (f.kp->pixel_shader ? plain_fetches : 0u) ||
                           ((shaders_changed || (fields & kFieldDecl)) &&
                            (vs->entry != f.kp->vertex_shader || ps_entry != f.kp->pixel_shader ||
                             declaration->layout_hash != f.kp->layout_hash || ab_off == 41)) ||  // A/B 41: as before
@@ -9819,6 +9841,7 @@ int FastDrawLocked(const u8 *device_state, const DrawCall &call, const ReplayCon
         c.layout_hash == declaration->layout_hash && c.misc == misc &&
         (c.prebuild_epoch == prebuild_epoch || (!c.provisional && ab_off != 63)) &&
         c.generation == g_fast_pipeline_generation &&
+        c.key.fetch_pad == (c.key.pixel_shader ? plain_fetches : 0u) &&  // port 44 (sasrt_gpu_plain_fetches)
         (!geometry.per_instance || !FetchSpecDiffers(c.key, fetch_spec))) {  // banjo_gpu_fetch_spec
       ++g_fast_pipeline_hits;
       f.kp = &c.key;
@@ -9835,6 +9858,7 @@ int FastDrawLocked(const u8 *device_state, const DrawCall &call, const ReplayCon
                                                                               : 3];
       c.key = MakeKey(device, vs, ps, declaration, targets, call.primitive, geometry.per_instance, sc.booleans,
                       sc.alpha_test_func, fetch_spec);
+      c.key.fetch_pad = c.key.pixel_shader ? plain_fetches : 0u;  // port 44 (sasrt_gpu_plain_fetches)
       c.blend_used = BlendConstantUsed(c.key);
       c.hot = KeyHot::Of(c.key);
       f.kp = &c.key;
@@ -9856,8 +9880,9 @@ int FastDrawLocked(const u8 *device_state, const DrawCall &call, const ReplayCon
     f.prebuild_epoch = prebuild_epoch;
   }
   if (verify) {
-    const PipelineKey key = MakeKey(device, vs, ps, declaration, targets, call.primitive, geometry.per_instance,
-                                    sc.booleans, sc.alpha_test_func, fetch_spec);
+    PipelineKey key = MakeKey(device, vs, ps, declaration, targets, call.primitive, geometry.per_instance,
+                              sc.booleans, sc.alpha_test_func, fetch_spec);
+    key.fetch_pad = key.pixel_shader ? plain_fetches : 0u;  // port 44 (sasrt_gpu_plain_fetches)
     plume::RenderPipeline *made = GetPipelineLocked(key, {host_vs, draw_host_ps, &declaration->layout});
     if (std::memcmp(&key, f.kp, sizeof(key)) != 0 || made != f.pipeline) {
       static uint32_t logged = 0;
@@ -11473,8 +11498,9 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
   if (reused) {
     key = reuse.key;
     if (reuse_verify) {
-      const PipelineKey made = MakeKey(device, vs, ps, declaration, targets, call.primitive, geometry.per_instance,
-                                       sc.booleans, sc.alpha_test_func, fetch_spec);
+      PipelineKey made = MakeKey(device, vs, ps, declaration, targets, call.primitive, geometry.per_instance,
+                                 sc.booleans, sc.alpha_test_func, fetch_spec);
+      made.fetch_pad = key.fetch_pad;  // port 44: set below for both (sasrt_gpu_plain_fetches)
       if (std::memcmp(&made, &key, sizeof(key)) != 0) {
         static uint32_t logged = 0;
         if (logged++ < 8)
@@ -11487,6 +11513,7 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
     key = MakeKey(device, vs, ps, declaration, targets, call.primitive, geometry.per_instance, sc.booleans,
                   sc.alpha_test_func, fetch_spec);
   }
+  key.fetch_pad = key.pixel_shader ? PlainFetchMask(sc, ps_entry) : 0u;  // port 44 (sasrt_gpu_plain_fetches)
   if (reuse_on) {
     reuse.seq = hint.seq;
     reuse.vs_entry = vs->entry;

@@ -236,6 +236,8 @@ def read_list(path, blend_skip_on, alpha_guess=ALPHA_GUESS):
         alpha_func = struct.unpack_from('<I', data, at + OFF_ALPHA_FUNC)[0] if version >= 4 else 0
         fetch_types = struct.unpack_from('<4I', data, at + OFF_FETCH_TYPES) if version >= 5 else (0, 0, 0, 0)
         tess_kind = struct.unpack_from('<I', data, at + OFF_TESS_KIND)[0] if version >= 5 else 0
+        # port 44 (sasrt-nx's sasrt_gpu_plain_fetches): the key's word after tess_kind (fetch_pad), constant 926
+        plain = struct.unpack_from('<I', data, at + OFF_TESS_KIND + 4)[0] if version >= 5 else 0
         per_instance, rect_list, point_sprite = struct.unpack_from('<III', data, at + OFF_PER_INSTANCE)
         depth_control, stencil_ref_mask = struct.unpack_from('<II', data, at + OFF_DEPTH_CONTROL)
         at += size
@@ -253,20 +255,46 @@ def read_list(path, blend_skip_on, alpha_guess=ALPHA_GUESS):
         for k in range(4):
             if fetch_types[k]:
                 spec[920 + k] = fetch_types[k]
+        if plain and ps:
+            spec[926] = plain
         for w in range(8):
             for b in range(32):
                 if mask[w] >> b & 1:
                     spec[1000 + w * 32 + b] = values[w] >> b & 1
         hashes = (f'{vs:016X}', f'{ps:016X}')
         out.append((hashes, spec))
-        if any(mask) or alpha_func or tess_kind or any(fetch_types):
+        if any(mask) or alpha_func or tess_kind or any(fetch_types) or plain:
             out.append((hashes, tail))  # the generic pipeline a specialised key draws with until it is built
+        made = [spec]
         if not alpha_func and ps:
             for guess in alpha_guess:
                 guessed = dict(spec)
                 guessed[903] = guess
                 out.append((hashes, guessed))
+                made.append(guessed)
+        # port 44 (rr6-nx, 2026-11-08): a list made before the plain-fetch key records 0 there. A draw whose fetch
+        # constants have no signs, gamma or exponent adjust gets 926 = its pixel shader's textureFetchMask without bit 31
+        # (render/draw.cpp PlainFetchMask), so that variant is made too for each (--plain-guess, from the shader table).
+        guess_mask = PLAIN_GUESS.get(ps) if ps and not plain else None
+        if guess_mask:
+            for s in made:
+                out.append((hashes, {**s, 926: guess_mask}))
     return out
+
+
+# port 44: pixel shader hash -> textureFetchMask & 0x7FFFFFFF, from the NRO's shader table (--plain-guess).
+PLAIN_GUESS = {}
+
+
+def load_plain_guess(table):
+    """shader_cache_switch.cpp's entries: { hash, dxilOffset, dxilSize, spirvOffset, spirvSize, specConstantsMask,
+    vertexFetchMemoryMask, textureFetchMask, ... } (renut_engine/gpu/shaders/shader_cache.h)."""
+    for m in re.finditer(r'\{ 0x([0-9A-Fa-f]+), (?:[0-9]+, ){4}(?:0x[0-9A-Fa-f]+|[0-9]+), (?:0x[0-9A-Fa-f]+|[0-9]+), '
+                         r'(0x[0-9A-Fa-f]+|[0-9]+),', open(table, encoding='utf-8').read()):
+        mask = int(m.group(2), 0) & 0x7FFFFFFF
+        if mask:
+            PLAIN_GUESS[int(m.group(1), 16)] = mask
+    return len(PLAIN_GUESS)
 
 
 def config_specs(prefix, defaults, sspec):
@@ -303,6 +331,10 @@ def main():
     ap.add_argument('--glsl', default=os.path.join(ROOT, 'out', 'deko3d_shaders', 'glsl_opt'))
     ap.add_argument('--out', default=os.path.join(ROOT, 'out', 'deko3d_shaders', 'deko3d_shaders.bin'))
     ap.add_argument('--merge', default=None, help='an existing cache whose entries are kept')
+    ap.add_argument('--plain-guess', default=None,
+                    help="port 44: the NRO's shader table (app/out/renut_switch*/shader_cache_switch.cpp): each list "
+                         "pixel shader's variant with every fetch plain (constant 926), for lists made before the "
+                         "plain-fetch key")
     ap.add_argument('--dry-run', action='store_true', help='count the variants (and the merged cache entries among them)')
     ap.add_argument('--prune', action='store_true',
                     help='keep only the variants of these lists (a merged cache gives its compiled code, not its other '
@@ -345,6 +377,8 @@ def main():
     memo_new = {}
 
     pipelines = []
+    if a.plain_guess:  # port 44
+        print(f'deko3d_variant_cache: plain-fetch guesses for {load_plain_guess(a.plain_guess)} pixel shaders')
     for path in a.list:
         pipelines += read_list(path, a.blend_skip, tuple(int(x) for x in a.alpha_guess.split(',') if x))
     for path in a.variants:
