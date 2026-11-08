@@ -830,6 +830,14 @@ namespace plume {
                 z = view.layerCount ? view.layerCount
                                     : (t->desc.arraySize > view.layerOffset ? t->desc.arraySize - view.layerOffset : 1u);
             imageSizes[id] = {w, h, z};
+            if (imageTextures.size() <= id)  // sasrt-nx (2026-11-08, Deko3DOptions::trackedImageInvalidate)
+                imageTextures.resize(id + 1, nullptr);
+            imageTextures[id] = t;
+        }
+        if (t == nullptr || !t->valid) {  // sasrt-nx (2026-11-08): an emptied slot names no texture
+            const uint32_t id = descriptorIndex - imageFirst;
+            if (id < imageTextures.size())
+                imageTextures[id] = nullptr;
         }
         g_deko3dStats.descriptorWrites++;
         device->descriptorEpoch.fetch_add(1, std::memory_order_release);
@@ -1789,7 +1797,7 @@ namespace plume {
         if (job->ok) {
             if (g_cacheStore)
                 g_cacheStore(key, job->ownDksh);
-            fresh->valid = loadCode(job->ownDksh, fresh->shader, job->request.name.c_str());
+            fresh->valid = loadCode(job->ownDksh, fresh->shader, job->request.name.c_str(), &fresh->vsInputs);
         }
         else {
             g_deko3dStats.shaderCompileFailures++;
@@ -1919,9 +1927,34 @@ namespace plume {
     // Shader code: 16 MB blocks, bump allocated (deko3d maps every code block into its one code segment).
     static constexpr uint32_t CodeBlockSize = 16u << 20;
 
-    bool Deko3DDevice::loadCode(const std::vector<uint8_t> &dksh, DkShader &shader, const char *what) {
+    bool Deko3DDevice::loadCode(const std::vector<uint8_t> &dksh, DkShader &shader, const char *what, uint32_t *vsInputs) {
         if (dksh.size() < 64)
             return false;
+        // sasrt-nx (2026-11-08, Deko3DOptions::vsInputMask): a vertex program's input map. The DKSH header has control_sz
+        // at byte 8 and programs_off at 16; the program header its type (0 vertex) and entrypoint; the program starts with
+        // its shader program header (SPH type 1, shader type 1 for a vertex shader), whose words 6-9 map the 32 generic
+        // attributes, 4 bits (x y z w) each: an attribute with none is never read.
+        if (vsInputs) {
+            *vsInputs = ~0u;
+            uint32_t controlSz = 0, programsOff = 0, type = 0, entry = 0;
+            memcpy(&controlSz, dksh.data() + 8, 4);
+            memcpy(&programsOff, dksh.data() + 16, 4);
+            if (uint64_t(programsOff) + 8 <= dksh.size()) {
+                memcpy(&type, dksh.data() + programsOff, 4);
+                memcpy(&entry, dksh.data() + programsOff + 4, 4);
+                const uint64_t sph = uint64_t(controlSz) + entry;
+                uint32_t w[10];
+                if (type == 0 && sph + sizeof(w) <= dksh.size()) {
+                    memcpy(w, dksh.data() + sph, sizeof(w));
+                    if ((w[0] & 0x1F) == 1 && ((w[0] >> 10) & 0xF) == 1) {
+                        uint32_t used = 0;
+                        for (uint32_t a = 0; a < 32; a++)
+                            used |= uint32_t(((w[6 + a / 8] >> ((a % 8) * 4)) & 0xF) != 0) << a;
+                        *vsInputs = used;
+                    }
+                }
+            }
+        }
         {
             // The DKSH header (uam's dksh.h): programs_off at byte 16; the program's per_warp_scratch_sz at byte 20.
             uint32_t programsOff = 0, scratch = 0;
@@ -1973,8 +2006,10 @@ namespace plume {
     static bool genericDrops(uint32_t id) {
         // banjo-nx (2026-10-31): 920-923, the tessellated draws' fetch types (banjo_gpu_fetch_spec): the generic variant
         // reads them at run time, the same values.
+        // sasrt-nx (2026-11-08, sasrt_gpu_clip_spec): 929, the user clip distance (written by default; the draws that set
+        // the clip slot off ignore it).
         return (id >= 1000 && id <= 1255) || id == 900 || id == 901 || id == 903 || id == 904 || id == 905 || id == 906 ||
-               id == 909 || (id >= 920 && id <= 923);
+               id == 909 || (id >= 920 && id <= 923) || id == 929;
     }
 
     void Deko3DSetBackgroundThread(bool background) { t_backgroundThread = background; }
@@ -2160,7 +2195,7 @@ namespace plume {
             }
             auto fresh = std::make_unique<Deko3DShaderVariant>();
             if (have)
-                fresh->valid = loadCode(dksh, fresh->shader, shader->name.c_str());
+                fresh->valid = loadCode(dksh, fresh->shader, shader->name.c_str(), &fresh->vsInputs);
             std::lock_guard<std::mutex> lock(variantMutex);
             auto &slot = variants[key];
             if (!slot)
@@ -2295,6 +2330,13 @@ namespace plume {
         p->type = Deko3DPipeline::Type::Graphics;
         p->device = this;
         p->layout = static_cast<const Deko3DPipelineLayout *>(desc.pipelineLayout);
+        // sasrt-nx (2026-11-08, sasrt_gpu_clip_spec): constant 929 = 0 for a vertex shader that has it (pass clipspec).
+        for (uint32_t i = 0; i < desc.specConstantsCount; i++) {
+            const Deko3DShader *vs = static_cast<const Deko3DShader *>(desc.vertexShader);
+            if (desc.specConstants[i].index == 929 && desc.specConstants[i].value == 0 && vs &&
+                std::find(vs->specIds.begin(), vs->specIds.end(), 929u) != vs->specIds.end())
+                p->noUserClip = true;
+        }
         // banjo-nx (2026-10-21, asyncVariants): the epoch before any of its variants is queued, so one done meanwhile
         // still moves it.
         p->pendingEpoch = asyncEpoch.load(std::memory_order_acquire);
@@ -2437,6 +2479,16 @@ namespace plume {
         p->depthStencil.stencilBackDepthFailOp = toDk(desc.stencilBackFace.depthFailOp);
         p->depthStencil.stencilBackCompareOp = toDk(desc.stencilBackFace.compareFunction);
         p->stencilEnabled = desc.stencilEnabled;
+        // sasrt-nx (2026-11-08, Deko3DOptions::preciseDepthResolve): conservative (the write mask and the depth test
+        // are not looked at).
+        {
+            const auto keeps = [](const RenderStencilFaceDesc &f) {
+                return f.failOp == RenderStencilOp::KEEP && f.passOp == RenderStencilOp::KEEP &&
+                       f.depthFailOp == RenderStencilOp::KEEP;
+            };
+            p->writesDepthStencil = desc.depthWriteEnabled ||
+                                    (desc.stencilEnabled && (!keeps(desc.stencilFrontFace) || !keeps(desc.stencilBackFace)));
+        }
         p->stencilReadMask = uint8_t(desc.stencilReadMask);
         p->stencilWriteMask = uint8_t(desc.stencilWriteMask);
         p->stencilReference = uint8_t(desc.stencilReference);
@@ -2472,6 +2524,8 @@ namespace plume {
                 break;
             }
         }
+        for (uint32_t a = 0; a < p->attribCount; a++)  // sasrt-nx (2026-11-08, Deko3DOptions::vsInputMask)
+            p->fetchedAttribs |= uint32_t(p->attribs[a].isFixed == 0) << a;
         for (uint32_t s = 0; s < desc.inputSlotsCount; s++) {
             const RenderInputSlot &slot = desc.inputSlots[s];
             if (slot.index >= 16)
@@ -2569,11 +2623,14 @@ namespace plume {
 
     std::unique_ptr<RenderFramebuffer> Deko3DDevice::createFramebuffer(const RenderFramebufferDesc &desc) {
         auto fb = std::make_unique<Deko3DFramebuffer>();
+        static std::atomic<uint64_t> serials{0};  // sasrt-nx (2026-11-08, sameTargetsKept)
+        fb->serial = serials.fetch_add(1, std::memory_order_relaxed) + 1;
         fb->colorCount = std::min<uint32_t>(desc.colorAttachmentsCount, 8);
         for (uint32_t i = 0; i < fb->colorCount; i++) {
             const Deko3DTexture *t = static_cast<const Deko3DTexture *>(desc.colorAttachments[i]);
             const Deko3DTextureView *v = desc.colorAttachmentViews ? static_cast<const Deko3DTextureView *>(desc.colorAttachmentViews[i]) : nullptr;
             fb->colors[i] = v ? v->view : t->defaultView();
+            fb->colorTextures[i] = t;  // sasrt-nx (2026-11-08, trackedReadWait)
             fb->srgb[i] = isSrgbFormat(fb->colors[i].format != DkImageFormat_None ? fb->colors[i].format : t->format);
             if (i == 0) {
                 // The view's level (mip chains rendered level by level).

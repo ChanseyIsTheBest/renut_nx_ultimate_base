@@ -76,6 +76,16 @@ struct StreamConvertPush {
   uint32_t elements[2 * kStreamConvertMaxElements];
 };
 static_assert(sizeof(StreamConvertPush) == 96);
+// sasrt-nx (2026-11-08, sasrt_gpu_fetch_copy_compute): matches FetchCopyPush in shaders/host/fetch_copy_cs.hlsl; its
+// set: the slots' export buffers, the upload chunk, the fetch data buffer.
+struct FetchCopyPush {
+  uint32_t source;  // 0 / 1 the slots' export buffers, 2 the upload chunk
+  uint32_t source_offset;
+  uint32_t dest_offset;
+  uint32_t words;
+};
+static_assert(sizeof(FetchCopyPush) == 16);
+constexpr uint32_t kFetchCopyBuffers = 4;
 // stream_convert_cs: the export buffers of the slots come first in its set.
 constexpr uint32_t kStreamConvertBuffers = kFramesInFlight + 1;
 constexpr uint32_t kStreamConvertMaxStrideWords = 255;
@@ -188,6 +198,10 @@ struct VideoState {
   std::unique_ptr<plume::RenderPipeline> depth_resolve_pipeline[2];
   // banjo-nx (2026-10-19, banjo_renut_depth_words_lazy): the same with the words target's writes masked off.
   std::unique_ptr<plume::RenderPipeline> depth_resolve_float_pipeline[2];
+  // sasrt-nx (2026-11-08, sasrt_gpu_depth_resolve_float_ps): the single-sampled depth-only pipeline with the float-only
+  // shader (depth_resolve_float_ps).
+  std::unique_ptr<plume::RenderShader> sasrt_depth_float_ps;
+  std::unique_ptr<plume::RenderPipeline> sasrt_depth_float_pipeline;
   // Host mip levels of scaled resolve destinations (textures.cpp); null when
   // it failed to build, which leaves them single-level.
   std::unique_ptr<plume::RenderShader> texture_mip_ps;
@@ -221,6 +235,19 @@ struct VideoState {
   std::unique_ptr<plume::RenderPipeline> stream_convert_pipeline;
   std::unique_ptr<plume::RenderDescriptorSet> stream_convert_set;
   const plume::RenderBuffer *stream_convert_set_buffers[kStreamConvertBuffers] = {};
+  // sasrt-nx (2026-11-08, sasrt_gpu_fetch_copy_compute; deko3d only): the fetch data copies on the 3D engine
+  // (fetch_copy_cs; draw.cpp UploadVertexFetchData). A set per slot, replaced (never rewritten) when its buffers change.
+  std::unique_ptr<plume::RenderPipelineLayout> fetch_copy_layout;
+  std::unique_ptr<plume::RenderShader> fetch_copy_cs;
+  std::unique_ptr<plume::RenderPipeline> fetch_copy_pipeline;
+  std::unique_ptr<plume::RenderDescriptorSet> fetch_copy_set[kFramesInFlight];
+  const plume::RenderBuffer *fetch_copy_set_buffers[kFramesInFlight][kFetchCopyBuffers] = {};
+  // sasrt-nx (2026-11-08, sasrt_gpu_fetch_copy_compute): the memexport windows' seeds (draw.cpp PrepareMemExportLocked)
+  // through fetch_copy_cs too: the set whose destination is the slot's export buffer.
+  std::unique_ptr<plume::RenderDescriptorSet> seed_copy_set[kFramesInFlight];
+  std::unique_ptr<plume::RenderDescriptorSet> readback_copy_set[kFramesInFlight];  // sasrt_gpu_readback_compute
+  const plume::RenderBuffer *readback_copy_set_buffers[kFramesInFlight][kFetchCopyBuffers] = {};
+  const plume::RenderBuffer *seed_copy_set_buffers[kFramesInFlight][kFetchCopyBuffers] = {};
   std::unique_ptr<plume::RenderBuffer> exported_streams[kFramesInFlight];
   uint64_t exported_streams_capacity[kFramesInFlight] = {};
   uint64_t exported_streams_used[kFramesInFlight] = {};
@@ -234,6 +261,12 @@ struct VideoState {
   std::unique_ptr<plume::RenderPipelineLayout> target_readback_layout;
   std::unique_ptr<plume::RenderShader> target_readback_cs;
   std::unique_ptr<plume::RenderPipeline> target_readback_pipeline;
+  // sasrt-nx (2026-11-08, sasrt_gpu_texel_readback_compute; deko3d only): a 1x1 float resolve's texel for the CPU
+  // (texel_readback_cs, in target_readback_layout).
+  std::unique_ptr<plume::RenderShader> texel_readback_cs;
+  std::unique_ptr<plume::RenderPipeline> texel_readback_pipeline;
+  std::unique_ptr<plume::RenderDescriptorSet> texel_readback_set[kFramesInFlight];
+  const plume::RenderBuffer *texel_readback_set_buffer[kFramesInFlight] = {};
 
   // Destruction deferred until the slot's fence has been waited.
   std::vector<std::unique_ptr<plume::RenderTexture>> retired_textures[kFramesInFlight];

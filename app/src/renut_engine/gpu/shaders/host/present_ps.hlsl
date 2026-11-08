@@ -22,8 +22,15 @@ float4 main(PSInput input) : SV_Target0
     // (256 x 1, its red, green and blue entries over 1023; 0 = none), looked up by the 8-bit value as the 360's display
     // does. The slot goes in as raw bits: Ryujinx follows a bindless handle only back to a constant buffer load, so one
     // computed from a float read zero (black) there (the SA2 port's finding).
+    // sasrt-nx (2026-11-08, sasrt_gpu_identity_ramp), this renderer's 1024-entry form: 1 = an identity ramp: the texel
+    // its lookup would load, level(v) = round(v * 255 / 1023) as present.cpp makes the texels, computed instead.
     const uint ramp = asuint(g_Push.param1);
-    if (ramp != 0)
+    if (ramp == 1u)
+    {
+        const uint3 v = uint3(round(saturate(color.rgb) * 1023.0));
+        color.rgb = float3((min(v, 1023u) * 510u + 1023u) / 2046u) / 255.0;
+    }
+    else if (ramp != 0u)
     {
         const int3 v = int3(round(saturate(color.rgb) * 1023.0));  // halo3-nx: by the 10-bit value (1024 entries)
         color.r = g_Textures[NonUniformResourceIndex(ramp)].Load(int3(v.r, 0, 0)).r;

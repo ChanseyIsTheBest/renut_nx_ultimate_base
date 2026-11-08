@@ -8,6 +8,7 @@
 #include <bit>
 #include <atomic>
 #include <chrono>
+#include "renut_engine/gpu/sasrt_gpu_round.h"  // sasrt-nx (2026-11-08): the GPU round
 #include <condition_variable>
 #include <cstdlib>
 #include <mutex>
@@ -22,6 +23,9 @@
 #include "renut_engine/gpu/render/draw.h"
 #include "renut_engine/gpu/render/textures.h"
 #include "renut_engine/gpu/log.h"
+#if defined(PLUME_DEKO3D)
+#include "renut_engine/gpu/banjo_renut_deko3d.h"  // sasrt-nx (2026-11-08, sasrt_deko3d_diag_trace)
+#endif
 #include "renut_engine/gpu/overlay/overlay_ui.h"
 #include "renut_engine/gpu/overlay/overlay_drawer.h"  // banjo-nx (2026-10-19): HasLatest
 #include "renut_engine/gpu/banjo_renut_tuning.h"
@@ -135,6 +139,12 @@ struct GameGamma {
   std::unique_ptr<plume::RenderTextureView> view;
   uint32_t slot = kInvalidDescriptor;
   float param = 0.0f;  // UtilityPush::param1 of the scan-outs: the slot as raw bits, 0 = no ramp
+  // sasrt-nx (2026-11-08, sasrt_gpu_identity_ramp), in this renderer's 1024-entry form: every channel's entry i stores the
+  // level entry i would store if it were i (the texels are level(entry)): the scan-out then computes level(v) for its
+  // 10-bit value v without the three texture loads (present_ps.hlsl, param1 = 1). Exact for any input, not only 8-bit
+  // ones. Ridge Racer 6's ramp is not one (entry 256 is 193): only for games that load the linear ramp.
+  bool identity = false;
+  uint32_t identity_version = 0;  // the ramp version 'identity' was worked out for
 };
 GameGamma g_gamma;
 
@@ -209,10 +219,23 @@ void PrepareGameGammaLocked(VideoState &s) {
     g_gamma.uploaded = version;
   }
   g_gamma.param = std::bit_cast<float>(g_gamma.slot);  // the slot's bits (present_ps.hlsl); never 0, a dynamic slot
+  // sasrt-nx (2026-11-08, sasrt_gpu_identity_ramp): worked out once a ramp version, as the texels are made above.
+  if (g_gamma.identity_version != version) {
+    g_gamma.identity_version = version;
+    const auto level = [](uint32_t entry) { return (std::min<uint32_t>(entry, 1023u) * 510u + 1023u) / 2046u; };
+    bool identity = true;
+    for (uint32_t i = 0; i < 3 * 1024 && identity; ++i)
+      identity = level(ramp[i]) == level(i % 1024);
+    g_gamma.identity = identity;
+  }
 }
 
 void RecordScanOut(VideoState &s, const PresentImage &image, uint32_t out_w, uint32_t out_h) {
   plume::RenderCommandList *cmd = s.command_list;
+#if defined(PLUME_DEKO3D)
+  if (IsDeko3D())
+    banjo::renut_gpu::deko3d::TraceFrameBoundary();  // sasrt-nx (2026-11-08, sasrt_deko3d_diag_trace)
+#endif
   if (image.layout && *image.layout != plume::RenderTextureLayout::SHADER_READ) {
     cmd->barriers(plume::RenderBarrierStage::GRAPHICS,
                   plume::RenderTextureBarrier(image.texture, plume::RenderTextureLayout::SHADER_READ));
@@ -254,6 +277,12 @@ void RecordScanOut(VideoState &s, const PresentImage &image, uint32_t out_w, uin
   if (push.param0 == 1.0f && !banjo::renut_gpu::PresentNoPowOn())
     push.param0 = -1.0f;
   push.param1 = image.gamma > 0.0f ? 0.0f : g_gamma.param;  // banjo-nx: not on banjo_renut_diag_show_texture's views
+  // sasrt-nx (2026-11-08, sasrt_gpu_identity_ramp; the second GPU round): an identity ramp's lookup computed instead: 1 in
+  // param1's bits (slots 0-2 are the null textures, never the ramp's).
+  if (push.param1 != 0.0f && g_gamma.identity && sasrt::gpu_round::On(sasrt::gpu_round::kIdentityRamp)) {
+    push.param1 = std::bit_cast<float>(1u);
+    sasrt::gpu_round::Count(sasrt::gpu_round::kIdentityRamp);
+  }
   cmd->setGraphicsPushConstants(0, &push, 0, sizeof(push));
   cmd->drawInstanced(3, 1, 0, 0);
 }

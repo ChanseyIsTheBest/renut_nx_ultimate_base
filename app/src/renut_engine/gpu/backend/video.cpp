@@ -45,11 +45,14 @@
 
 #include "host_shaders/depth_resolve_ms_ps.spirv.h"
 #include "host_shaders/depth_resolve_ps.spirv.h"
+#include "host_shaders/depth_resolve_float_ps.spirv.h"  // sasrt-nx (2026-11-08)
 #include "host_shaders/present_ps.spirv.h"
 #include "host_shaders/present_vs.spirv.h"
 #include "host_shaders/rectangle_list_gs.spirv.h"
 #include "host_shaders/point_sprite_gs.spirv.h"
 #include "host_shaders/stream_convert_cs.spirv.h"
+#include "host_shaders/fetch_copy_cs.spirv.h"  // sasrt-nx (2026-11-08)
+#include "host_shaders/texel_readback_cs.spirv.h"  // sasrt-nx (2026-11-08)
 #include "host_shaders/target_readback_cs.spirv.h"
 #include "host_shaders/texture_mip_ps.spirv.h"
 #include "host_shaders/resolve_copy_ps.spirv.h"
@@ -57,11 +60,14 @@
 #if defined(PLUME_DEKO3D)  // banjo-nx (2026-10-17): the deko3d back end's (tools/deko3d_host_shader.py)
 #include "host_shaders/depth_resolve_ms_ps.deko3d.h"
 #include "host_shaders/depth_resolve_ps.deko3d.h"
+#include "host_shaders/depth_resolve_float_ps.deko3d.h"  // sasrt-nx (2026-11-08)
 #include "host_shaders/present_ps.deko3d.h"
 #include "host_shaders/present_vs.deko3d.h"
 #include "host_shaders/rectangle_list_gs.deko3d.h"
 #include "host_shaders/point_sprite_gs.deko3d.h"
 #include "host_shaders/stream_convert_cs.deko3d.h"
+#include "host_shaders/fetch_copy_cs.deko3d.h"  // sasrt-nx (2026-11-08)
+#include "host_shaders/texel_readback_cs.deko3d.h"  // sasrt-nx (2026-11-08)
 #include "host_shaders/target_readback_cs.deko3d.h"
 #include "host_shaders/texture_mip_ps.deko3d.h"
 #include "host_shaders/resolve_copy_ps.deko3d.h"
@@ -70,11 +76,14 @@
 #if defined(_WIN32)
 #include "host_shaders/depth_resolve_ms_ps.dxil.h"
 #include "host_shaders/depth_resolve_ps.dxil.h"
+#include "host_shaders/depth_resolve_float_ps.dxil.h"  // sasrt-nx (2026-11-08)
 #include "host_shaders/present_ps.dxil.h"
 #include "host_shaders/present_vs.dxil.h"
 #include "host_shaders/rectangle_list_gs.dxil.h"
 #include "host_shaders/point_sprite_gs.dxil.h"
 #include "host_shaders/stream_convert_cs.dxil.h"
+#include "host_shaders/fetch_copy_cs.dxil.h"  // sasrt-nx (2026-11-08)
+#include "host_shaders/texel_readback_cs.dxil.h"  // sasrt-nx (2026-11-08)
 #include "host_shaders/target_readback_cs.dxil.h"
 #include "host_shaders/texture_mip_ps.dxil.h"
 #include "host_shaders/resolve_copy_ps.dxil.h"
@@ -326,6 +335,17 @@ bool BuildDepthResolvePipelines(VideoState &s) {
     if (s.depth_resolve_float_pipeline[i])
       s.depth_resolve_float_pipeline[i]->setName(i ? "renut depth resolve, depth only (msaa)"
                                                    : "renut depth resolve, depth only");
+    // sasrt-nx (2026-11-08, sasrt_gpu_depth_resolve_float_ps): the same pipeline with the float-only shader.
+    if (i == 0) {
+      s.sasrt_depth_float_ps =
+          CreateHostShader(s.device.get(), RENUT_HOST_SHADER(depth_resolve_float_ps), "depth_resolve_float_ps");
+      if (s.sasrt_depth_float_ps) {
+        desc.pixelShader = s.sasrt_depth_float_ps.get();
+        s.sasrt_depth_float_pipeline = s.device->createGraphicsPipeline(desc);
+      }
+      if (s.sasrt_depth_float_pipeline)
+        s.sasrt_depth_float_pipeline->setName("sasrt depth resolve, the float alone");
+    }
   }
   return true;
 }
@@ -376,6 +396,37 @@ void BuildStreamConvertPipeline(VideoState &s) {
   s.stream_convert_pipeline->setName("renut stream convert");
 }
 
+// sasrt-nx (2026-11-08, sasrt_gpu_fetch_copy_compute): see shaders/host/fetch_copy_cs.hlsl.
+plume::RenderDescriptorSetBuilder FetchCopySetBuilder() {
+  plume::RenderDescriptorSetBuilder buffers;
+  buffers.begin();
+  buffers.addReadWriteByteAddressBuffer(0, kFetchCopyBuffers);  // u0, space0
+  buffers.end();
+  return buffers;
+}
+
+// Optional (deko3d only): without it the fetch data is copied by the copy engine, as before.
+void BuildFetchCopyPipeline(VideoState &s) {
+  if (!IsDeko3D())
+    return;
+  plume::RenderPipelineLayoutBuilder layout;
+  layout.begin(false, false);
+  layout.addDescriptorSet(FetchCopySetBuilder());
+  layout.addPushConstant(0, 1, sizeof(FetchCopyPush), plume::RenderShaderStageFlag::COMPUTE);
+  layout.end();
+  s.fetch_copy_layout = layout.create(s.device.get());
+  s.fetch_copy_cs = CreateHostShader(s.device.get(), RENUT_HOST_SHADER(fetch_copy_cs), "fetch_copy_cs");
+  if (s.fetch_copy_layout && s.fetch_copy_cs) {
+    s.fetch_copy_pipeline = s.device->createComputePipeline(
+        plume::RenderComputePipelineDesc(s.fetch_copy_layout.get(), s.fetch_copy_cs.get(), 64, 1, 1));
+  }
+  if (!s.fetch_copy_pipeline) {
+    RGPU_WARN("[sasrt] fetch copy pipeline creation failed: the copy engine copies the fetch data (as before)");
+    return;
+  }
+  s.fetch_copy_pipeline->setName("sasrt fetch copy");
+}
+
 // See shaders/host/target_readback_cs.hlsl.
 plume::RenderDescriptorSetBuilder TargetReadbackSetBuilder() {
   plume::RenderDescriptorSetBuilder buffers;
@@ -412,6 +463,17 @@ void BuildTargetReadbackPipeline(VideoState &s) {
     return;
   }
   s.target_readback_pipeline->setName("renut target readback");
+  // sasrt-nx (2026-11-08, sasrt_gpu_texel_readback_compute; deko3d only): the 1x1 float readback in the same layout.
+  if (IsDeko3D()) {
+    s.texel_readback_cs = CreateHostShader(s.device.get(), RENUT_HOST_SHADER(texel_readback_cs), "texel_readback_cs");
+    if (s.texel_readback_cs)
+      s.texel_readback_pipeline = s.device->createComputePipeline(plume::RenderComputePipelineDesc(
+          s.target_readback_layout.get(), s.texel_readback_cs.get(), 1, 1, 1));
+    if (s.texel_readback_pipeline)
+      s.texel_readback_pipeline->setName("sasrt texel readback");
+    else
+      RGPU_WARN("[sasrt] texel readback pipeline creation failed: the copy engine reads the 1x1 resolves back (as before)");
+  }
 }
 
 } // namespace
@@ -420,6 +482,10 @@ namespace detail {
 
 std::unique_ptr<plume::RenderDescriptorSet> CreateStreamConvertSet(VideoState &s) {
   return StreamConvertSetBuilder().create(s.device.get());
+}
+
+std::unique_ptr<plume::RenderDescriptorSet> CreateFetchCopySet(VideoState &s) {
+  return FetchCopySetBuilder().create(s.device.get());
 }
 
 std::unique_ptr<plume::RenderDescriptorSet> CreateTargetReadbackSet(VideoState &s) {
@@ -973,6 +1039,7 @@ bool Video::CreateHostDevice() {
   }
   BuildRectangleListShader(s);
   BuildStreamConvertPipeline(s);
+  BuildFetchCopyPipeline(s);  // sasrt-nx (2026-11-08)
   BuildTargetReadbackPipeline(s);
   // Optional: without it, scaled resolve destinations keep one level.
   s.texture_mip_ps =

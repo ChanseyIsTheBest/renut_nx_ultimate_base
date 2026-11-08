@@ -46,6 +46,7 @@
 void BanjoTlbTestTick();
 
 #include "cpu/banjo_enhancements.h"
+#include "renut_engine/gpu/sasrt_gpu_round.h"  // sasrt-nx (2026-11-08)
 
 namespace banjo::hot {
 void Report();  // app/src/cpu/banjo_hot_guest.cpp: at most once every 10 s
@@ -632,7 +633,8 @@ REXCVAR_DEFINE_INT32(banjo_renut_ab_target, 0, "Banjo",
                      "banjo_renut_smaa (2026-10-21; was banjo_late_input_gpu until 36s). The part is "
                      "switched off and on every banjo_renut_ab_s seconds; the \"[renut A/B]\" line every 10 s gives "
                      "both halves' frame rate, render thread and GPU time")
-    .range(0, 127);  // banjo-nx (2026-10-27): was 19, which refused every target from 20 on; 2026-10-28: 127 (64, 65)
+    .range(0, 255);  // banjo-nx (2026-10-27): was 19, which refused every target from 20 on; 2026-10-28: 127 (64, 65);
+                     // sasrt-nx (2026-11-08): 255 (the third GPU round's targets, 120 and up)
 REXCVAR_DEFINE_INT32(banjo_renut_ab_s, 4, "Banjo", "Renut's renderer: the half-period of banjo_renut_ab_target, in seconds")
     .range(1, 60);
 REXCVAR_DEFINE_STRING(banjo_renut_ab_targets, "", "Banjo",
@@ -871,7 +873,7 @@ struct Stats {
   // banjo-nx (2026-10-20, banjo_renut_ab_targets): the list's halves by target, and the place in it.
   // banjo-nx (2026-10-27): 64 (targets 32-40 exist; AbTargets dropped them at 32). 2026-10-28: 128 (target 64, A/B of the
   // night_gpu packages' renut_ab.toml, was dropped silently at 64: the same trap again; 65 the host packets).
-  Half by_target[128][2];
+  Half by_target[256][2];  // sasrt-nx (2026-11-08): 256 (targets up to 255)
   uint32_t cycle = 0;
   std::chrono::steady_clock::time_point half_start{};
   uint64_t cpu_mark = 0;  // banjo-nx (2026-10-28): TotalThreadTicks at the half's start
@@ -975,7 +977,11 @@ const char *AbName(int target) {
   case 78: return "no pow in the scan-out at an output gamma of 1 (banjo_renut_present_no_pow)";
   case 79: return "the scan-out loads the texel at one to one (banjo_renut_present_texel_load)";
   case 84: return "a queued draw prefetches the delta's device and shadow lines (banjo_renut_delta_prefetch; 74 in bangaio-nx)";
-  default: return "none";
+  default: {
+    // sasrt-nx (2026-11-08): the GPU round's items (sasrt_gpu_round.h: 90 and up).
+    const char *name = sasrt::gpu_round::AbName(target);
+    return name ? name : "none";
+  }
   }
 }
 
@@ -999,10 +1005,10 @@ const std::vector<int> &AbTargets() {
         n = n * 10 + (c - '0');
         digit = true;
       } else {
-        if (digit && n > 0 && n < 128)  // banjo-nx (2026-10-27): was 32, which dropped targets 32-40 silently; 128 now
+        if (digit && n > 0 && n < 256)  // banjo-nx (2026-10-27): was 32, which dropped targets 32-40 silently; sasrt-nx: 256
           v.push_back(n);
-        else if (digit && n >= 128)
-          REXLOG_WARN("[renut] banjo_renut_ab_targets: target {} is past the last one (127): left out", n);
+        else if (digit && n >= 256)
+          REXLOG_WARN("[renut] banjo_renut_ab_targets: target {} is past the last one (255): left out", n);
         n = 0;
         digit = false;
       }
@@ -1022,6 +1028,7 @@ int AbTargetLocked() {
 // Render thread: the part as the half says.
 void AbApply(int target, bool on) {
   g_ab_off.store(on ? 0 : target, std::memory_order_relaxed);
+  sasrt::gpu_round::ApplyPlume();  // sasrt-nx (2026-11-08): the GPU round's plume items follow the half
   if (target == 26)  // banjo-nx (2026-10-26): read by every setter, so a plain flag (d3d_native.h)
     renut::gpu::native::g_touch_compare = on && REXCVAR_GET(banjo_renut_touch_compare);
   if (target == 27)
@@ -1243,6 +1250,7 @@ void StatsGameFrame() {
               g_kind_depth_plain.exchange(0, std::memory_order_relaxed),
               g_depth_only_draws.exchange(0, std::memory_order_relaxed),
               g_kind_nothing.exchange(0, std::memory_order_relaxed), g_kind_partial.exchange(0, std::memory_order_relaxed));
+  REXLOG_INFO("{}", sasrt::gpu_round::Report());  // sasrt-nx (2026-11-08): the GPU round's counts
   REXLOG_INFO("[renut] depth resolve words: {} binds through the resolve's own texture (banjo_gpu_depth_words_view), "
               "{} with the copy (made only when resolved since); {} binds of a depth resolve's float target; {} colour "
               "resolves drawn (banjo_deko3d_draw_resolves); resolves of an unchanged source not done again "

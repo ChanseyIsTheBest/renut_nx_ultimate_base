@@ -53,6 +53,9 @@ toml, so a port that finds one wrong for its game doesn't have to change the cod
   depth decompress only for a read) 0.5 ms more. 0.4 ms, in the game-gamma ramp's present, is still open.
 - Ports 47 and 48 (rr6-nx) take the locks out of Renut's object lookups and shorten the guest clock's read. On the
   console they took Ridge Racer 6's drawing thread from its limit (42-48 fps while racing) to 60 fps with time to spare.
+- Port 49 brings sasrt-nx's three GPU rounds (45 items, each with its own key and A/B target). In Ridge Racer 6 they
+  take 0.4-0.9 ms of GPU a frame (13.6 -> 13.2 racing); in sasrt-nx's game 68 -> 47 ms. The optimiser passes act once a
+  game's shader package and DKSH cache are made again.
 - Port 44 and the translator changes take effect when a game's shader package is made again. Before measuring on the
   console, build its DKSH cache on the PC (`tools/deko3d_variant_cache.py`): a first run that compiles its shaders while
   it draws is slower on the GPU than the build is.

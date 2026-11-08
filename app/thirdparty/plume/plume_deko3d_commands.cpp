@@ -15,6 +15,9 @@
 #include <cstring>
 
 namespace plume {
+    namespace {
+        uint32_t traceImage(const void *p);  // sasrt-nx (2026-11-08, the trace): below
+    }
     // banjo-nx (2026-10-26): setVertexBuffers' filter of unchanged slots (banjo_deko3d_vtx_dedupe).
     bool g_vtxDedupe = true;
     DkImageFormat toDkFormat(RenderFormat format);
@@ -103,6 +106,13 @@ namespace plume {
         pendingBarrierInvalidate = 0;
         memoryUsed = 0;
         addMemory(0);
+        // sasrt-nx (2026-11-08, Deko3DOptions::freshComputeConstants): InvalidateShaderCaches (0x369), Constant (bit 12).
+        // sasrt-nx (2026-11-08): and the global-data cache (bit 4): the seeds read upload-ring addresses (CPU-written,
+        // reused two frames on) with no barrier right before them (sasrt_gpu_seed_no_lead_wait).
+        if (Deko3DGetOptions().freshComputeConstants) {
+            const uint32_t word = (4u << 29) | (0x1010u << 16) | (0u << 13) | 0x369u;
+            dkCmdBufReplayCmds(cmd, &word, 1);
+        }
         transientBlock = 0;
         transientUsed = 0;
         open = true;
@@ -110,6 +120,10 @@ namespace plume {
 
         graphicsPipeline = nullptr;
         computePipeline = nullptr;
+        boundTargetsSerial = 0;  // sasrt-nx (2026-11-08, sameTargetsKept)
+        workSinceFragmentWait = true;  // sasrt-nx (2026-11-08, leanBarrierSkip)
+        discardNextDraw = false;
+        dispatchSinceIdle = true;
         boundStateHash = 0;
         boundShaders[0] = boundShaders[1] = boundShaders[2] = kDeko3DShadersUnknown;  // banjo-nx (2026-10-28)
         std::fill(std::begin(boundGroups), std::end(boundGroups), 0);
@@ -153,9 +167,21 @@ namespace plume {
         texSizeValid = 0;
         // Whatever the GPU holds of descriptors and shader code from before is dropped.
         dkCmdBufBarrier(cmd, DkBarrier_None, DkInvalidateFlags_Descriptors | DkInvalidateFlags_Shader);
+        // sasrt-nx (2026-11-08, Deko3DOptions::tiledCache): on (or off again once it has been on: the A/B halves).
+        {
+            static bool everOn = false;
+            const bool on = Deko3DGetOptions().tiledCache;
+            if (on || everOn) {
+                everOn = everOn || on;
+                dkCmdBufTiledCacheOp(cmd, on ? DkTiledCacheOp_Enable : DkTiledCacheOp_Disable);
+            }
+        }
         if (const int clip = Deko3DGetOptions().userClipEnable; clip >= 0) {  // rr6-nx (2026-11-05): see Deko3DOptions
             const uint32_t words[2] = {(1u << 29) | (1u << 16) | 0x544u, uint32_t(clip)};
             dkCmdBufReplayCmds(cmd, words, 2);
+            boundUserClip = clip;  // sasrt-nx (2026-11-08, sasrt_gpu_clip_spec)
+        } else {
+            boundUserClip = -1;
         }
         descriptorEpoch = currentEpoch();
         seenDescriptors = device->descriptorEpoch.load(std::memory_order_relaxed);  // banjo-nx (2026-10-28)
@@ -175,11 +201,18 @@ namespace plume {
         // renut-ultimate (2026-11-08, depthResolveLazy): then it is decompressed there, when it moves to a read layout.
         if (Deko3DGetOptions().depthResolveLazy)
             deferBoundDepth();
+        // sasrt-nx (2026-11-08, lazyDepthResolve): or its read does, in whichever list.
+        if (depthDirty && framebuffer && lazyResolvable(framebuffer->depthTexture) && framebuffer->depthTexture->depthUnresolved)
+            depthDirty = false;
         else
             resolveBoundDepth(false);
         flushBarriers();
         list = dkCmdBufFinishList(cmd);
         open = false;
+        if (Deko3DGetOptions().diagBarriers)
+            bumpStat(GetDeko3DStats().diagListEnds);  // sasrt-nx (2026-11-08): the census
+        if (g_deko3dTrace)
+            Deko3DTraceToken("E");
         // banjo-nx (2026-10-19, render-thread proposal 13): this list's draws into the totals.
         Deko3DStats &st = GetDeko3DStats();
         st.draws.store(st.draws.load(std::memory_order_relaxed) + statDraws, std::memory_order_relaxed);
@@ -207,6 +240,14 @@ namespace plume {
                 flags = DkInvalidateFlags_Descriptors | DkInvalidateFlags_Shader;
             flushBarriers();
             dkCmdBufBarrier(cmd, DkBarrier_None, flags);
+            if (Deko3DGetOptions().diagBarriers) {  // sasrt-nx (2026-11-08): the census
+                if (flags & DkInvalidateFlags_Descriptors)
+                    bumpStat(GetDeko3DStats().diagDescInvalidates);
+                if (flags & DkInvalidateFlags_Shader)
+                    bumpStat(GetDeko3DStats().diagCodeInvalidates);
+            }
+            if (g_deko3dTrace)
+                Deko3DTraceToken("I");
             descriptorEpoch = epoch;
             seenDescriptors = d;
             seenCode = c;
@@ -244,21 +285,122 @@ namespace plume {
                      l == RenderTextureLayout::GENERAL || l == RenderTextureLayout::COPY_SOURCE ||
                      l == RenderTextureLayout::RESOLVE_SOURCE))
                     resolveBoundDepth(false);
-                else if (l == RenderTextureLayout::DEPTH_WRITE)
-                    depthDirty = true;
+                else if (l == RenderTextureLayout::DEPTH_WRITE && !Deko3DGetOptions().preciseDepthResolve)
+                    depthDirty = true;  // sasrt-nx (2026-11-08): with preciseDepthResolve the draws that write mark it
+            }
+        }
+        // sasrt-nx (2026-11-08, lazyDepthResolve): a written depth image not bound now, about to be read: decompressed
+        // first (bound alone for it), before this barrier orders the read after it.
+        if (Deko3DGetOptions().lazyDepthResolve && Deko3DGetOptions().depthResolve) {
+            for (uint32_t i = 0; i < textureBarriersCount; i++) {
+                const Deko3DTexture *t = static_cast<const Deko3DTexture *>(textureBarriers[i].texture);
+                if (!t || !t->compressed || !t->depthUnresolved || !(t->desc.flags & RenderTextureFlag::DEPTH_TARGET) ||
+                    !lazyResolvable(t))
+                    continue;
+                if (framebuffer && framebuffer->hasDepth && framebuffer->depthTexture == t)
+                    continue;  // the bound one: the code below
+                const RenderTextureLayout l = textureBarriers[i].layout;
+                if (l == RenderTextureLayout::SHADER_READ || l == RenderTextureLayout::DEPTH_READ ||
+                    l == RenderTextureLayout::GENERAL || l == RenderTextureLayout::COPY_SOURCE ||
+                    l == RenderTextureLayout::RESOLVE_SOURCE)
+                    resolveUnboundDepth(t);
+            }
+        }
+        if (bufferBarriersCount)
+            ++bufferWaits;  // sasrt-nx (2026-11-08, Deko3DBufferWaits)
+        // sasrt-nx (2026-11-08, Deko3DOptions::trackedTargetWait): copies, resolves and decompressions use their textures:
+        // marked for the wait epoch (the next move into a target layout waits for them).
+        {  // sasrt-nx (2026-11-08): kept whatever the options
+            const uint64_t now = g_deko3dWaitEpoch.load(std::memory_order_relaxed);
+            for (uint32_t i = 0; i < textureBarriersCount; i++) {
+                const RenderTextureLayout l = textureBarriers[i].layout;
+                if (l != RenderTextureLayout::COLOR_WRITE && l != RenderTextureLayout::DEPTH_WRITE && textureBarriers[i].texture)
+                    static_cast<const Deko3DTexture *>(textureBarriers[i].texture)->usedWaitEpoch = now;
+            }
+        }
+        // sasrt-nx (2026-11-08, Deko3DOptions::trackedTargetWait; the third GPU round): only moves into target layouts, and
+        // none of their textures used since the last fragment wait: nothing reads them while they are written.
+        if (Deko3DGetOptions().trackedTargetWait && Deko3DGetOptions().leanBarriers &&
+            bufferBarriersCount == 0 && textureBarriersCount > 0 &&
+            !(stages & (RenderBarrierStage::COPY | RenderBarrierStage::COMPUTE))) {
+            const uint64_t now = g_deko3dWaitEpoch.load(std::memory_order_relaxed);
+            bool unused = true;
+            for (uint32_t i = 0; i < textureBarriersCount && unused; i++) {
+                const RenderTextureLayout l = textureBarriers[i].layout;
+                const Deko3DTexture *t = static_cast<const Deko3DTexture *>(textureBarriers[i].texture);
+                unused = (l == RenderTextureLayout::COLOR_WRITE || l == RenderTextureLayout::DEPTH_WRITE) && t &&
+                         t->usedWaitEpoch != now;
+            }
+            if (unused) {
+                bumpRound(43);  // sasrt::gpu_round::kTargetWaitTracked
+                return;
+            }
+        }
+        // sasrt-nx (2026-11-08, Deko3DOptions::leanBarrierSkip): only moves into write layouts, nothing to wait for.
+        if (Deko3DGetOptions().leanBarrierSkip && Deko3DGetOptions().leanBarriers &&
+            !workSinceFragmentWait && bufferBarriersCount == 0 && textureBarriersCount > 0 &&
+            !(stages & (RenderBarrierStage::COPY | RenderBarrierStage::COMPUTE))) {
+            bool writesOnly = true;
+            for (uint32_t i = 0; i < textureBarriersCount; i++) {
+                const RenderTextureLayout l = textureBarriers[i].layout;
+                writesOnly = writesOnly && (l == RenderTextureLayout::COLOR_WRITE || l == RenderTextureLayout::DEPTH_WRITE);
+            }
+            if (writesOnly) {
+                bumpRound(27);
+                return;
             }
         }
         uint32_t invalidate = 0;
         DkBarrier mode = DkBarrier_None;
         bool copy = (stages & RenderBarrierStage::COPY) != 0;
+        uint32_t readMovesFree = 0;  // sasrt-nx (2026-11-08, trackedReadWait): read moves needing neither wait nor drop
+        // sasrt-nx (2026-11-08, Deko3DOptions::diagBarriers): why, for the counts.
+        uint32_t why = copy ? uint32_t(Deko3DWhyCopy) : 0u;
+        if (Deko3DGetOptions().diagBarriers) {
+            for (uint32_t i = 0; i < textureBarriersCount; i++) {
+                switch (textureBarriers[i].layout) {
+                case RenderTextureLayout::SHADER_READ:
+                case RenderTextureLayout::DEPTH_READ:
+                case RenderTextureLayout::GENERAL: why |= Deko3DWhyRead; break;
+                case RenderTextureLayout::COPY_SOURCE:
+                case RenderTextureLayout::COPY_DEST:
+                case RenderTextureLayout::RESOLVE_SOURCE:
+                case RenderTextureLayout::RESOLVE_DEST: why |= Deko3DWhyCopy; break;
+                case RenderTextureLayout::COLOR_WRITE: why |= Deko3DWhyColor; break;
+                case RenderTextureLayout::DEPTH_WRITE: why |= Deko3DWhyDepth; break;
+                default: why |= Deko3DWhyOther; break;
+                }
+            }
+            if (bufferBarriersCount)
+                why |= Deko3DWhyBuffer;
+            if (stages & RenderBarrierStage::COMPUTE)
+                why |= Deko3DWhyCompute;
+        }
         for (uint32_t i = 0; i < textureBarriersCount; i++) {
             switch (textureBarriers[i].layout) {
             case RenderTextureLayout::SHADER_READ:
             case RenderTextureLayout::DEPTH_READ:
-            case RenderTextureLayout::GENERAL:
-                invalidate |= DkInvalidateFlags_Image;
-                mode = std::max(mode, DkBarrier_Fragments);
+            case RenderTextureLayout::GENERAL: {
+                // sasrt-nx (2026-11-08, Deko3DOptions::trackedImageInvalidate): only a texture sampled since the last
+                // drop can have lines in the cache.
+                const Deko3DTexture *t = static_cast<const Deko3DTexture *>(textureBarriers[i].texture);
+                const bool drop = !Deko3DGetOptions().trackedImageInvalidate || !t ||
+                                  t->sampledEpoch == g_deko3dTexDropEpoch.load(std::memory_order_relaxed);
+                if (drop)
+                    invalidate |= DkInvalidateFlags_Image;
+                else
+                    bumpRound(42);  // sasrt::gpu_round::kTexDropTracked: a read move without the drop
+                // sasrt-nx (2026-11-08, Deko3DOptions::trackedReadWait): the wait only for a texture written since the last
+                // wait, or with its drop due (which waits for the GPU's earlier work).
+                const bool written = !Deko3DGetOptions().trackedReadWait || !t ||
+                                     t->writtenWaitEpoch == g_deko3dWaitEpoch.load(std::memory_order_relaxed);
+                if (drop || written) {
+                    mode = std::max(mode, DkBarrier_Fragments);
+                } else {
+                    ++readMovesFree;
+                }
                 break;
+                }
             case RenderTextureLayout::COPY_SOURCE:
             case RenderTextureLayout::COPY_DEST:
             case RenderTextureLayout::RESOLVE_SOURCE:
@@ -280,13 +422,21 @@ namespace plume {
             }
         }
         if (bufferBarriersCount) {
-            invalidate |= DkInvalidateFlags_Shader | DkInvalidateFlags_Image;
+            // sasrt-nx (2026-11-08, Deko3DOptions::dataOnlyInvalidate): the data caches, not the instruction cache.
+            invalidate |= (Deko3DGetOptions().dataOnlyInvalidate ? Deko3DDataInvalidate : uint32_t(DkInvalidateFlags_Shader)) |
+                          DkInvalidateFlags_Image;
             mode = std::max(mode, DkBarrier_Primitives);
         }
         if (stages & RenderBarrierStage::COMPUTE)
             mode = std::max(mode, DkBarrier_Primitives);
         if (copy)
             mode = DkBarrier_Full;
+        // sasrt-nx (2026-11-08, Deko3DOptions::trackedReadWait): every move was a read move with nothing to wait for or drop.
+        if (readMovesFree && readMovesFree == textureBarriersCount && mode == DkBarrier_None && !invalidate &&
+            bufferBarriersCount == 0) {
+            bumpRound(44);  // sasrt::gpu_round::kReadWaitTracked
+            return;
+        }
         if (mode == DkBarrier_None && textureBarriersCount == 0 && bufferBarriersCount == 0)
             mode = DkBarrier_Primitives;
         if (Deko3DGetOptions().mergeBarriers) {
@@ -294,13 +444,18 @@ namespace plume {
             // barrier recorded before then.
             pendingBarrierMode = pendingBarrier ? std::max(pendingBarrierMode, mode) : mode;
             pendingBarrierInvalidate |= invalidate;
+            pendingBarrierWhy = pendingBarrier ? (pendingBarrierWhy | why | Deko3DWhyMerged) : why;
             pendingBarrier = true;
             return;
         }
+        pendingBarrierWhy = why;
         emitBarrier(mode, invalidate);
     }
 
     void Deko3DCommandList::emitBarrier(DkBarrier mode, uint32_t invalidate) {
+        // sasrt-nx (2026-11-08, Deko3DOptions::tiledCache): the copy engine reads memory: the tiles flushed first.
+        if (mode == DkBarrier_Full && Deko3DGetOptions().tiledCache)
+            dkCmdBufTiledCacheOp(cmd, DkTiledCacheOp_Flush);
         {
             // banjo-nx (2026-10-19): counted for the renderer's report (a load and a store: diagnostics).
             Deko3DStats &st = GetDeko3DStats();
@@ -308,11 +463,68 @@ namespace plume {
             bump(mode == DkBarrier_Full ? st.barriersFull : mode == DkBarrier_Fragments ? st.barriersFragments : st.barriersPrimitives);
             if (invalidate & DkInvalidateFlags_Image)
                 bump(st.barriersImageInvalidate);
+            if (Deko3DGetOptions().diagBarriers)  // sasrt-nx (2026-11-08)
+                bump(st.barrierWhy[mode == DkBarrier_Full ? 2 : mode == DkBarrier_Fragments ? 1 : 0][pendingBarrierWhy & 255]);
         }
-        dkCmdBufBarrier(cmd, mode, invalidate);
+        // sasrt-nx (2026-11-08, Deko3DOptions::dataOnlyInvalidate): after the wait and deko3d's invalidations, the shaders'
+        // data caches alone (an inline 3D method: InvalidateShaderCaches 0x369, GlobalData bit 4 | Constant bit 12);
+        // nothing when the full shader invalidate is in the flags anyway.
+        const bool dataOnly = (invalidate & Deko3DDataInvalidate) && !(invalidate & DkInvalidateFlags_Shader);
+        // sasrt-nx (2026-11-08, Deko3DBufferWait): the global-data cache alone when nothing above covers it.
+        const bool globalOnly = (invalidate & Deko3DGlobalDataInvalidate) && !dataOnly && !(invalidate & DkInvalidateFlags_Shader);
+        if (g_deko3dTrace) {
+            static const char kWhy[] = "rcCdobkm";
+            char t[16];
+            uint32_t n = 0;
+            t[n++] = 'B';
+            t[n++] = mode == DkBarrier_Full ? 'X' : mode == DkBarrier_Fragments ? 'F' : mode == DkBarrier_Primitives ? 'P' : 'N';
+            for (uint32_t b = 0; b < 8; b++)
+                if ((pendingBarrierWhy >> b) & 1)
+                    t[n++] = kWhy[b];
+            if (invalidate & DkInvalidateFlags_Image)
+                t[n++] = 'i';
+            t[n] = 0;
+            Deko3DTraceToken(t);
+        }
+        dkCmdBufBarrier(cmd, mode, invalidate & ~(Deko3DDataInvalidate | Deko3DGlobalDataInvalidate));
+        // sasrt-nx (2026-11-08, Deko3DOptions::trackedImageInvalidate): a drop after the GPU's earlier work (a fragment
+        // barrier's drop waits for idle, a primitives barrier waited): a new epoch; what is bound is sampled in it too.
+        {
+            // sasrt-nx (2026-11-08): the epochs and marks are kept whatever the options (an A/B half switching one on
+            // finds them current).
+            const bool drop = (invalidate & DkInvalidateFlags_Image) && mode >= DkBarrier_Fragments;
+            // sasrt-nx (2026-11-08, Deko3DOptions::trackedTargetWait): every wait for the fragments or more: a new wait epoch.
+            const bool wait = mode >= DkBarrier_Fragments;
+            if (drop)
+                g_deko3dTexDropEpoch.store(g_deko3dTexDropEpoch.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+            if (wait)
+                g_deko3dWaitEpoch.store(g_deko3dWaitEpoch.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+            if (drop || wait)
+                markBoundSampled();
+            // sasrt-nx (2026-11-08, Deko3DOptions::trackedReadWait): the bound targets are written in the new epoch too.
+            if (mode >= DkBarrier_Fragments)
+                markTargetsWritten();
+        }
+        if (dataOnly) {
+            bumpRound(8);
+            const uint32_t word = (4u << 29) | (0x1010u << 16) | (0u << 13) | 0x369u;
+            dkCmdBufReplayCmds(cmd, &word, 1);
+        } else if (globalOnly) {
+            const uint32_t word = (4u << 29) | (0x0010u << 16) | (0u << 13) | 0x369u;
+            dkCmdBufReplayCmds(cmd, &word, 1);
+        }
         pendingBarrier = false;
         pendingBarrierMode = DkBarrier_None;
         pendingBarrierInvalidate = 0;
+        pendingBarrierWhy = 0;
+        // sasrt-nx (2026-11-08, leanBarrierSkip): a fragment barrier, a wait for idle or a full barrier: the fragments
+        // recorded before it are done before anything after it.
+        if (mode == DkBarrier_Primitives || mode == DkBarrier_Full) {
+            workSinceFragmentWait = false;
+            dispatchSinceIdle = false;
+        } else if (mode == DkBarrier_Fragments && !dispatchSinceIdle) {
+            workSinceFragmentWait = false;
+        }
     }
 
     void Deko3DCommandList::dispatch(uint32_t x, uint32_t y, uint32_t z) {
@@ -347,6 +559,12 @@ namespace plume {
             computeSsboDirty = false;
         }
         flushBarriers();
+        if (Deko3DGetOptions().diagBarriers)
+            bumpStat(GetDeko3DStats().diagDispatches);  // sasrt-nx (2026-11-08): the census
+        if (g_deko3dTrace)
+            Deko3DTraceToken("X");
+        dispatchSinceIdle = true;  // sasrt-nx (2026-11-08, leanBarrierSkip)
+        workSinceFragmentWait = true;  // sasrt-nx (2026-11-08, leanBarrierSkip)
         dkCmdBufDispatchCompute(cmd, x, y, z);
     }
 
@@ -397,6 +615,43 @@ namespace plume {
     void Deko3DSharedLinesWritten(RenderCommandList *commandList, uint32_t lines) {
         if (commandList)
             static_cast<Deko3DCommandList *>(commandList)->texLinesWritten |= lines;
+    }
+
+    // sasrt-nx (2026-11-08, Deko3DOptions::trackedImageInvalidate): the texture-cache drops that waited for the GPU so far
+    // (+ 1: epoch 0 is "never sampled"). Commands are recorded and submitted in one order on one queue.
+    std::atomic<uint64_t> g_deko3dTexDropEpoch{1};
+    // sasrt-nx (2026-11-08, Deko3DOptions::trackedTargetWait): the fragment waits (or stronger) recorded so far, + 1.
+    std::atomic<uint64_t> g_deko3dWaitEpoch{1};
+
+    void Deko3DCommandList::markSampled(uint32_t id) {
+        const Deko3DDescriptorSet *set = boundImageSetObj;
+        if (set && id < set->imageTextures.size()) {
+            if (const Deko3DTexture *t = set->imageTextures[id]) {
+                t->sampledEpoch = g_deko3dTexDropEpoch.load(std::memory_order_relaxed);
+                t->usedWaitEpoch = g_deko3dWaitEpoch.load(std::memory_order_relaxed);
+            }
+        }
+    }
+
+    void Deko3DCommandList::markTargetsWritten() {
+        if (!framebuffer)
+            return;
+        const uint64_t now = g_deko3dWaitEpoch.load(std::memory_order_relaxed);
+        for (uint32_t i = 0; i < framebuffer->colorCount; i++) {
+            if (const Deko3DTexture *t = framebuffer->colorTextures[i])
+                t->writtenWaitEpoch = now;
+        }
+        if (framebuffer->hasDepth && framebuffer->depthTexture)
+            framebuffer->depthTexture->writtenWaitEpoch = now;
+    }
+
+    void Deko3DCommandList::markBoundSampled() {
+        for (int st = 0; st < 3; st++) {
+            for (uint32_t k = 0; k < boundTexCount[st] && k < 32; k++)
+                markSampled(uint32_t(boundTex[st][k]) & 0xFFFFFu);
+        }
+        for (uint32_t k = 0; k < extraFragTexCount; k++)
+            markSampled(extraFragTex[k]);
     }
 
     void Deko3DCommandList::bindTextures() {
@@ -504,6 +759,14 @@ namespace plume {
             dkCmdBufBindTextures(cmd, GraphicsStages[st], first, handles + first, end - first);
             memcpy(boundTex[st] + first, handles + first, (end - first) * sizeof(DkResHandle));
             boundTexCount[st] = n;
+            // sasrt-nx (2026-11-08, Deko3DOptions::trackedImageInvalidate): the ones bound now are sampled in this epoch
+            // (those bound before were marked at their bind or at the last drop).
+            {  // sasrt-nx (2026-11-08): kept whatever the options (an A/B half switching one on finds the marks current)
+                for (uint32_t k = first; k < end; k++)
+                    markSampled(uint32_t(handles[k]) & 0xFFFFFu);
+                if (st == 2)
+                    extraFragTexCount = 0;  // the fragment stage bound whole: Deko3DBindFragmentTextures' ids replaced
+            }
         }
         // banjo-nx (2026-10-27): what this run read (only from the renderer's copy: a ring upload's words are elsewhere).
         if (sharedWords) {
@@ -517,6 +780,17 @@ namespace plume {
         }
     }
 
+    void Deko3DCommandList::noteUserClip() {
+        if (boundUserClip < 0)
+            return;
+        const int want = graphicsPipeline->noUserClip ? 0 : Deko3DGetOptions().userClipEnable;
+        if (want == boundUserClip || want < 0)
+            return;
+        const uint32_t words[2] = {(1u << 29) | (1u << 16) | 0x544u, uint32_t(want)};
+        dkCmdBufReplayCmds(cmd, words, 2);
+        boundUserClip = want;
+    }
+
     void Deko3DCommandList::drawInstanced(uint32_t vertexCount, uint32_t instanceCount, uint32_t startVertex, uint32_t startInstance) {
         if (!graphicsPipeline || !graphicsPipeline->valid)
             return;
@@ -525,7 +799,22 @@ namespace plume {
         if (graphicsPipeline->boundTextures)
             bindTextures();
         flushBarriers();
+        noteDepthWrite();  // sasrt-nx (2026-11-08, preciseDepthResolve)
+        noteUserClip();  // sasrt-nx (2026-11-08, sasrt_gpu_clip_spec)
+        if (g_deko3dTrace)
+            Deko3DTraceToken("D");
+        const bool discard = discardNextDraw;  // sasrt-nx (2026-11-08, sasrt_gpu_export_raster_discard)
+        discardNextDraw = false;
+        if (discard) {
+            const uint32_t off = (4u << 29) | (0u << 16) | (0u << 13) | 0x0DFu;
+            dkCmdBufReplayCmds(cmd, &off, 1);
+        }
+        workSinceFragmentWait = true;  // sasrt-nx (2026-11-08, leanBarrierSkip)
         dkCmdBufDraw(cmd, graphicsPipeline->primitive, vertexCount, instanceCount, startVertex, startInstance);
+        if (discard) {
+            const uint32_t on = (4u << 29) | (1u << 16) | (0u << 13) | 0x0DFu;
+            dkCmdBufReplayCmds(cmd, &on, 1);
+        }
         ++statDraws;
     }
 
@@ -548,7 +837,22 @@ namespace plume {
             dkCmdBufSetPrimitiveRestart(cmd, restart != 0, restart);
             boundRestart = restart;
         }
+        noteDepthWrite();  // sasrt-nx (2026-11-08, preciseDepthResolve)
+        noteUserClip();  // sasrt-nx (2026-11-08, sasrt_gpu_clip_spec)
+        if (g_deko3dTrace)
+            Deko3DTraceToken("D");
+        const bool discard = discardNextDraw;  // sasrt-nx (2026-11-08, sasrt_gpu_export_raster_discard)
+        discardNextDraw = false;
+        if (discard) {
+            const uint32_t off = (4u << 29) | (0u << 16) | (0u << 13) | 0x0DFu;
+            dkCmdBufReplayCmds(cmd, &off, 1);
+        }
+        workSinceFragmentWait = true;  // sasrt-nx (2026-11-08, leanBarrierSkip)
         dkCmdBufDrawIndexed(cmd, prim, indexCount, instanceCount, startIndex, baseVertex, startInstance);
+        if (discard) {
+            const uint32_t on = (4u << 29) | (1u << 16) | (0u << 13) | 0x0DFu;
+            dkCmdBufReplayCmds(cmd, &on, 1);
+        }
         ++statDraws;
     }
 
@@ -678,12 +982,43 @@ namespace plume {
             // Always, also with none: deko3d makes the attributes after the last one given constants and disables the
             // buffers after the last one, so a pipeline without vertex input leaves no earlier attribute fetching from
             // a buffer that may be gone. (banjo-nx: with the same attributes and buffers as bound, nothing to do.)
-            if (changed(8)) {
+            if (!Deko3DGetOptions().vsInputMask && changed(8)) {
                 dkCmdBufBindVtxAttribState(cmd, p->attribs, p->attribCount);
                 dkCmdBufBindVtxBufferState(cmd, p->vtxBuffers, p->vtxBufferCount);
             }
             boundStateHash = p->stateHash;
         }
+        // sasrt-nx (2026-11-08, Deko3DOptions::vsInputMask): after the state groups (whose hash leaves the vertex variant
+        // out): the same pipeline can be bound with another variant of its vertex shader, which reads other attributes.
+        if (Deko3DGetOptions().vsInputMask)
+            bindVertexInput(p, want[0]);
+    }
+
+    void Deko3DCommandList::bindVertexInput(const Deko3DGraphicsPipeline *p, const DkShader *vs) {
+        static_assert(offsetof(Deko3DShaderVariant, shader) == 0, "a pipeline's DkShader * is its variant's address");
+        const uint32_t used = vs ? reinterpret_cast<const Deko3DShaderVariant *>(vs)->vsInputs : ~0u;
+        const uint32_t drop = p->fetchedAttribs & ~used;
+        // The group's hash with the dropped attributes in it (0 dropped: the pipeline's own, as changed(8) has it).
+        const uint64_t h = drop ? p->groupHash[8] ^ ((uint64_t(drop) + 1) * 0x9E3779B97F4A7C15ull) : p->groupHash[8];
+        if (boundGroups[8] == h)
+            return;
+        boundGroups[8] = h;
+        if (!drop) {
+            dkCmdBufBindVtxAttribState(cmd, p->attribs, p->attribCount);
+        } else {
+            DkVtxAttribState a[32];
+            memcpy(a, p->attribs, sizeof(DkVtxAttribState) * p->attribCount);
+            for (uint32_t m = drop; m; m &= m - 1) {
+                DkVtxAttribState &st = a[__builtin_ctz(m)];
+                memset(&st, 0, sizeof(st));
+                st.isFixed = 1;  // a constant (zero), as an attribute no element feeds
+                st.size = DkVtxAttribSize_1x32;
+                st.type = DkVtxAttribType_Float;
+            }
+            dkCmdBufBindVtxAttribState(cmd, a, p->attribCount);
+            bumpRound(32);  // sasrt::gpu_round::kVsInputMask: binds with attributes left unfetched
+        }
+        dkCmdBufBindVtxBufferState(cmd, p->vtxBuffers, p->vtxBufferCount);
     }
 
     void Deko3DCommandList::setComputePipelineLayout(const RenderPipelineLayout *pipelineLayout) {
@@ -967,6 +1302,9 @@ namespace plume {
                 if (Deko3DGetOptions().depthResolveLazy && was && framebuffer->depthTexture &&
                     !(next && was->pImage == next->pImage))
                     deferBoundDepth();
+                // sasrt-nx (2026-11-08, lazyDepthResolve): its texture keeps depthUnresolved; its read decompresses it.
+                else if (framebuffer && lazyResolvable(framebuffer->depthTexture) && framebuffer->depthTexture->depthUnresolved)
+                    depthDirty = false;
                 else
                     resolveBoundDepth(true);
             }
@@ -990,22 +1328,48 @@ namespace plume {
                 depthDirty = true;
             }
         }
+        if (Deko3DGetOptions().diagBarriers) {  // sasrt-nx (2026-11-08): the census
+            bumpStat(GetDeko3DStats().diagFramebufferBinds);
+            const DkImage *was = framebuffer && framebuffer->hasDepth ? framebuffer->depth.pImage : nullptr;
+            const DkImage *next = f && f->hasDepth ? f->depth.pImage : nullptr;
+            if (next && was != next)
+                bumpStat(GetDeko3DStats().diagDepthChanges);
+        }
+        if (g_deko3dTrace) {
+            char t[32];
+            snprintf(t, sizeof(t), "T%u:%u", f && f->colorCount ? traceImage(f->colors[0].pImage) : 0u,
+                     f && f->hasDepth ? traceImage(f->depth.pImage) : 0u);
+            Deko3DTraceToken(t);
+        }
         framebuffer = f;
+        markTargetsWritten();  // sasrt-nx (2026-11-08, trackedReadWait): its targets are written from now (always kept)
         if (!f)
             return;
-        depthDirty = depthDirty || (f->hasDepth && f->depthCompressed && Deko3DGetOptions().depthResolve);
+        // sasrt-nx (2026-11-08, preciseDepthResolve): an image known decompressed since its last write is not dirty.
+        if (!depthDirty && f->hasDepth && f->depthCompressed && Deko3DGetOptions().depthResolve) {
+            if (!Deko3DGetOptions().preciseDepthResolve || !f->depthTexture || f->depthTexture->depthUnresolved)
+                depthDirty = true;
+            else
+                bumpRound(1);
+        }
 #if defined(PLUME_DEKO3D_GUARDS)
         if (g_traceTargets.fetch_add(1) < 40)
             logf("trace targets: %u colour (%ux%u, format %d%s), depth %s", f->colorCount, f->width, f->height,
                  f->colorCount ? int(f->colors[0].format ? f->colors[0].format : f->colors[0].pImage ? 0 : -1) : -1,
                  f->colorCount && f->srgb[0] ? ", sRGB" : "", f->hasDepth ? "yes" : "no");
 #endif
+        // sasrt-nx (2026-11-08, Deko3DOptions::sameTargetsKept): the GPU has these targets bound already.
+        if (Deko3DGetOptions().sameTargetsKept && f->serial == boundTargetsSerial) {
+            bumpRound(20);
+            return;
+        }
         const DkImageView *colors[8];
         for (uint32_t i = 0; i < f->colorCount; i++)
             colors[i] = &f->colors[i];
         flushBarriers();
         dkCmdBufBindRenderTargets(cmd, colors, f->colorCount, f->hasDepth ? &f->depth : nullptr);
         writeFramebufferSrgb(cmd, f->colorCount && f->srgb[0]);
+        boundTargetsSerial = f->serial;
     }
 
     void Deko3DCommandList::setDepthBias(float depthBias, float depthBiasClamp, float slopeScaledDepthBias) {
@@ -1034,6 +1398,10 @@ namespace plume {
             const DkScissor all = {0, 0, 16384, 16384};
             dkCmdBufSetScissors(cmd, 0, &all, 1);
             flushBarriers();
+            if (Deko3DGetOptions().diagBarriers)
+                bumpStat(GetDeko3DStats().diagClears);  // sasrt-nx (2026-11-08): the census
+            if (g_deko3dTrace)
+                Deko3DTraceToken("Cc");
             dkCmdBufClearColorFloat(cmd, attachmentIndex, DkColorMask_RGBA, color.r, color.g, color.b, color.a);
         }
         else {
@@ -1043,6 +1411,10 @@ namespace plume {
                                      uint32_t(std::max(r.right - r.left, 0)), uint32_t(std::max(r.bottom - r.top, 0))};
                 dkCmdBufSetScissors(cmd, 0, &s, 1);
                 flushBarriers();
+                if (Deko3DGetOptions().diagBarriers)
+                    bumpStat(GetDeko3DStats().diagClears);  // sasrt-nx (2026-11-08): the census
+                if (g_deko3dTrace)
+                    Deko3DTraceToken("Cc");
                 dkCmdBufClearColorFloat(cmd, attachmentIndex, DkColorMask_RGBA, color.r, color.g, color.b, color.a);
             }
         }
@@ -1054,6 +1426,10 @@ namespace plume {
             const DkScissor all = {0, 0, 16384, 16384};
             dkCmdBufSetScissors(cmd, 0, &all, 1);
             flushBarriers();
+            if (Deko3DGetOptions().diagBarriers)
+                bumpStat(GetDeko3DStats().diagClears);  // sasrt-nx (2026-11-08): the census
+            if (g_deko3dTrace)
+                Deko3DTraceToken("Cd");
             dkCmdBufClearDepthStencil(cmd, clearDepth, depthValue, clearStencil ? 0xFF : 0, uint8_t(stencilValue));
         }
         else {
@@ -1063,6 +1439,10 @@ namespace plume {
                                      uint32_t(std::max(r.right - r.left, 0)), uint32_t(std::max(r.bottom - r.top, 0))};
                 dkCmdBufSetScissors(cmd, 0, &s, 1);
                 flushBarriers();
+                if (Deko3DGetOptions().diagBarriers)
+                    bumpStat(GetDeko3DStats().diagClears);  // sasrt-nx (2026-11-08): the census
+                if (g_deko3dTrace)
+                    Deko3DTraceToken("Cd");
                 dkCmdBufClearDepthStencil(cmd, clearDepth, depthValue, clearStencil ? 0xFF : 0, uint8_t(stencilValue));
             }
         }
@@ -1070,6 +1450,8 @@ namespace plume {
         // sasrt-nx (2026-10-21, Deko3DOptions::depthResolve): a clear leaves compressed tiles.
         if (framebuffer && framebuffer->hasDepth && framebuffer->depthCompressed && Deko3DGetOptions().depthResolve)
             depthDirty = true;
+        if (framebuffer && framebuffer->depthTexture)
+            framebuffer->depthTexture->depthUnresolved = true;  // sasrt-nx (2026-11-08, preciseDepthResolve)
     }
 
     void Deko3DCommandList::copyBufferRegion(RenderBufferReference dst, RenderBufferReference src, uint64_t size) {
@@ -1079,6 +1461,9 @@ namespace plume {
             return;
         flushBarriers();
         GetDeko3DStats().copyBuffer.store(GetDeko3DStats().copyBuffer.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);  // banjo-nx (2026-10-19)
+        if (g_deko3dTrace)
+            Deko3DTraceToken("K");  // sasrt-nx (2026-11-08, the trace)
+        workSinceFragmentWait = true;  // sasrt-nx (2026-11-08, leanBarrierSkip)
         dkCmdBufCopyBuffer(cmd, s->gpu + src.offset, d->gpu + dst.offset, uint32_t(size));
     }
 
@@ -1113,7 +1498,19 @@ namespace plume {
         }
     }
 
+    // sasrt-nx (2026-11-08, Deko3DOptions::trackedTargetWait, trackedImageInvalidate): a texture a copy, resolve, blit
+    // or decompression uses now: the next move into a target layout waits for it (and a read move drops the cache).
+    static inline void markUsed(const RenderTexture *texture) {
+        if (const Deko3DTexture *t = static_cast<const Deko3DTexture *>(texture)) {
+            t->usedWaitEpoch = g_deko3dWaitEpoch.load(std::memory_order_relaxed);
+            t->writtenWaitEpoch = t->usedWaitEpoch;  // sasrt-nx (2026-11-08, trackedReadWait): a write, or so taken
+            t->sampledEpoch = g_deko3dTexDropEpoch.load(std::memory_order_relaxed);
+        }
+    }
+
     void Deko3DCommandList::copyTextureRegion(const RenderTextureCopyLocation &dstLoc, const RenderTextureCopyLocation &srcLoc, uint32_t dstX, uint32_t dstY, uint32_t dstZ, const RenderBox *srcBox) {
+        markUsed(dstLoc.texture);  // sasrt-nx (2026-11-08)
+        markUsed(srcLoc.texture);
 #if defined(PLUME_DEKO3D_GUARDS)
         if (g_traceCopies.fetch_add(1) < 60) {
             auto describe = [](const RenderTextureCopyLocation &l, char *out, size_t n) {
@@ -1147,6 +1544,9 @@ namespace plume {
             const DkImageRect rect = {dstX, dstY, layered ? dstZ : 0, fp.width, fp.height, std::max<uint32_t>(fp.depth, 1)};
             flushBarriers();
             GetDeko3DStats().copyUpload.store(GetDeko3DStats().copyUpload.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);  // banjo-nx (2026-10-19)
+            if (g_deko3dTrace)
+                Deko3DTraceToken("K");  // sasrt-nx (2026-11-08, the trace)
+            workSinceFragmentWait = true;  // sasrt-nx (2026-11-08, leanBarrierSkip)
             dkCmdBufCopyBufferToImage(cmd, &src, &v, &rect, 0);
             invalidateZcullAfterCopy(t);  // banjo-nx (2026-10-18): an upload into a depth target, the same as a copy
         }
@@ -1168,13 +1568,37 @@ namespace plume {
             else
                 rect = {0, 0, 0, fp.width, fp.height, std::max<uint32_t>(fp.depth, 1)};
             // The copy engine finishes, and its writes leave the GPU's L2, before the CPU reads them (after a fence).
-            flushBarriers();
-            dkCmdBufBarrier(cmd, DkBarrier_Full, DkInvalidateFlags_Image);
-            flushBarriers();
+            // sasrt-nx (2026-11-08, Deko3DOptions::readbackMerge): both full barriers as pending ones: the first with the
+            // pending one before it (the texture's move into the copy layout), the second with the next one after the
+            // copy (its move back), each emitted before the next work or at the list's end.
+            const bool merge = Deko3DGetOptions().mergeBarriers && Deko3DGetOptions().readbackMerge;
+            if (merge) {
+                bumpRound(6);
+                pendingBarrierMode = DkBarrier_Full;
+                pendingBarrierInvalidate |= DkInvalidateFlags_Image;
+                pendingBarrierWhy |= Deko3DWhyCopy | (pendingBarrier ? uint32_t(Deko3DWhyMerged) : 0u);
+                pendingBarrier = true;
+                flushBarriers();
+            } else {
+                flushBarriers();
+                dkCmdBufBarrier(cmd, DkBarrier_Full, DkInvalidateFlags_Image);
+                flushBarriers();
+            }
             GetDeko3DStats().copyReadback.store(GetDeko3DStats().copyReadback.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);  // banjo-nx (2026-10-19)
+            if (g_deko3dTrace)
+                Deko3DTraceToken("K");  // sasrt-nx (2026-11-08, the trace)
+            workSinceFragmentWait = true;  // sasrt-nx (2026-11-08, leanBarrierSkip)
             dkCmdBufCopyImageToBuffer(cmd, &v, &rect, &dst, 0);
-            flushBarriers();
-            dkCmdBufBarrier(cmd, DkBarrier_Full, DkInvalidateFlags_L2Cache);
+            if (merge) {
+                flushBarriers();
+                pendingBarrierMode = DkBarrier_Full;
+                pendingBarrierInvalidate |= DkInvalidateFlags_L2Cache;
+                pendingBarrierWhy = Deko3DWhyCopy;
+                pendingBarrier = true;
+            } else {
+                flushBarriers();
+                dkCmdBufBarrier(cmd, DkBarrier_Full, DkInvalidateFlags_L2Cache);
+            }
         }
         else {
             const Deko3DTexture *dt = static_cast<const Deko3DTexture *>(dstLoc.texture);
@@ -1193,12 +1617,16 @@ namespace plume {
             const DkImageRect drect = {dstX, dstY, dt->type == DkImageType_3D ? dstZ : 0, srect.width, srect.height, srect.depth};
             flushBarriers();
             GetDeko3DStats().copyImage.store(GetDeko3DStats().copyImage.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);  // banjo-nx (2026-10-19)
+            if (g_deko3dTrace)
+                Deko3DTraceToken("K");  // sasrt-nx (2026-11-08, the trace)
+            workSinceFragmentWait = true;  // sasrt-nx (2026-11-08, leanBarrierSkip)
             dkCmdBufCopyImage(cmd, &sv, &srect, &dv, &drect, 0);
             invalidateZcullAfterCopy(dt);
         }
     }
 
     void Deko3DCommandList::invalidateZcullAfterCopy(const Deko3DTexture *dst) {
+        dst->depthUnresolved = true;  // sasrt-nx (2026-11-08, preciseDepthResolve): written by a copy
         // banjo-nx (2026-10-18): deko3d drops the Zcull data only when another depth target is bound; a copy into the
         // bound one (the copy engine does not update Zcull) leaves it describing the old depth, which would cull draws
         // the new depth passes.
@@ -1254,14 +1682,29 @@ namespace plume {
         if (!depthDirty)
             return;
         depthDirty = false;
+        if (framebuffer && framebuffer->hasDepth)  // sasrt-nx (2026-11-08)
+            markUsed(framebuffer->depthTexture);
         if (!Deko3DGetOptions().depthResolve)
             return;
-        flushBarriers();
+        // sasrt-nx (2026-11-08, Deko3DOptions::decompressMerge): the pending barrier after the decompression, with the
+        // one that follows it (below): one barrier. The decompression is ordered after the draws before it as when
+        // nothing is pending (then nothing was emitted before it either). A full barrier (the copy engine) goes first.
+        const bool keepPending = barrierAfter && Deko3DGetOptions().mergeBarriers && Deko3DGetOptions().decompressMerge &&
+                                 pendingBarrier && pendingBarrierMode != DkBarrier_Full;
+        if (!keepPending)
+            flushBarriers();
+        else
+            bumpRound(5);
+        if (g_deko3dTrace)
+            Deko3DTraceToken("Z");
+        workSinceFragmentWait = true;  // sasrt-nx (2026-11-08, leanBarrierSkip)
         dkCmdBufResolveDepthValues(cmd);
         {
             Deko3DStats &st = GetDeko3DStats();
             st.depthResolvesBound.store(st.depthResolvesBound.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
         }
+        if (framebuffer && framebuffer->depthTexture)
+            framebuffer->depthTexture->depthUnresolved = false;  // sasrt-nx (2026-11-08, preciseDepthResolve)
         if (!barrierAfter)
             return;
         if (Deko3DGetOptions().mergeBarriers) {
@@ -1273,6 +1716,39 @@ namespace plume {
             emitBarrier(DkBarrier_Fragments, DkInvalidateFlags_Image);
     }
 
+    // sasrt-nx (2026-11-08, Deko3DOptions::lazyDepthResolve): the image bound alone as the depth target, decompressed,
+    // then this list's targets bound again (deko3d invalidates Zcull at each change of depth target: it is empty after,
+    // never another target's).
+    bool Deko3DCommandList::lazyResolvable(const Deko3DTexture *t) {
+        return t && t->desc.mipLevels <= 1 && t->desc.arraySize <= 1 && t->desc.depth <= 1 &&
+               Deko3DGetOptions().lazyDepthResolve && Deko3DGetOptions().preciseDepthResolve;
+    }
+
+    void Deko3DCommandList::resolveUnboundDepth(const Deko3DTexture *t) {
+        flushBarriers();
+        markUsed(t);  // sasrt-nx (2026-11-08)
+        const DkImageView v = t->defaultView();
+        dkCmdBufBindRenderTargets(cmd, nullptr, 0, &v);
+        boundTargetsSerial = 0;  // sasrt-nx (2026-11-08, sameTargetsKept): set again below
+        workSinceFragmentWait = true;  // sasrt-nx (2026-11-08, leanBarrierSkip)
+        dkCmdBufResolveDepthValues(cmd);
+        t->depthUnresolved = false;
+        {  // counted with renut-ultimate's later decompresses (lazyDepthResolve, sasrt-nx's item 14, off by default)
+            Deko3DStats &st = GetDeko3DStats();
+            st.depthResolvesLater.store(st.depthResolvesLater.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+        }
+        bumpRound(14);
+        if (framebuffer) {
+            const DkImageView *colors[8];
+            for (uint32_t i = 0; i < framebuffer->colorCount; i++)
+                colors[i] = &framebuffer->colors[i];
+            dkCmdBufBindRenderTargets(cmd, colors, framebuffer->colorCount, framebuffer->hasDepth ? &framebuffer->depth : nullptr);
+            boundTargetsSerial = framebuffer->serial;
+        } else {
+            dkCmdBufBindRenderTargets(cmd, nullptr, 0, nullptr);
+        }
+    }
+
     void Deko3DCommandList::copyBuffer(const RenderBuffer *dst, const RenderBuffer *src) {
         const Deko3DBuffer *d = static_cast<const Deko3DBuffer *>(dst);
         const Deko3DBuffer *s = static_cast<const Deko3DBuffer *>(src);
@@ -1280,12 +1756,17 @@ namespace plume {
             return;
         flushBarriers();
         GetDeko3DStats().copyBuffer.store(GetDeko3DStats().copyBuffer.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);  // banjo-nx (2026-10-19)
+        if (g_deko3dTrace)
+            Deko3DTraceToken("K");  // sasrt-nx (2026-11-08, the trace)
+        workSinceFragmentWait = true;  // sasrt-nx (2026-11-08, leanBarrierSkip)
         dkCmdBufCopyBuffer(cmd, s->gpu, d->gpu, uint32_t(std::min(d->desc.size, s->desc.size)));
     }
 
     void Deko3DCommandList::copyTexture(const RenderTexture *dst, const RenderTexture *src) {
         const Deko3DTexture *dt = static_cast<const Deko3DTexture *>(dst);
         const Deko3DTexture *st = static_cast<const Deko3DTexture *>(src);
+        markUsed(dst);  // sasrt-nx (2026-11-08)
+        markUsed(src);
         if (!dt || !st || !dt->valid || !st->valid)
             return;
         const uint32_t levels = std::min(std::max<uint32_t>(dt->desc.mipLevels, 1), std::max<uint32_t>(st->desc.mipLevels, 1));
@@ -1298,6 +1779,9 @@ namespace plume {
                                        st->type == DkImageType_3D ? mipDim(st->desc.depth, m) : 1};
                 flushBarriers();
                 GetDeko3DStats().copyImage.store(GetDeko3DStats().copyImage.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);  // banjo-nx (2026-10-19)
+                if (g_deko3dTrace)
+                    Deko3DTraceToken("K");  // sasrt-nx (2026-11-08, the trace)
+                workSinceFragmentWait = true;  // sasrt-nx (2026-11-08, leanBarrierSkip)
                 dkCmdBufCopyImage(cmd, &sv, &r, &dv, &r, 0);
             }
         }
@@ -1307,12 +1791,15 @@ namespace plume {
     void Deko3DCommandList::resolveTexture(const RenderTexture *dst, const RenderTexture *src) {
         const Deko3DTexture *dt = static_cast<const Deko3DTexture *>(dst);
         const Deko3DTexture *st = static_cast<const Deko3DTexture *>(src);
+        markUsed(dst);  // sasrt-nx (2026-11-08)
+        markUsed(src);
         if (!dt || !st || !dt->valid || !st->valid)
             return;
         DkImageView dv = dt->defaultView();
         DkImageView sv = st->defaultView();
         flushBarriers();
         GetDeko3DStats().copyResolve.store(GetDeko3DStats().copyResolve.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);  // banjo-nx (2026-10-19)
+        workSinceFragmentWait = true;  // sasrt-nx (2026-11-08, leanBarrierSkip)
         dkCmdBufResolveImage(cmd, &sv, &dv);
         invalidateZcullAfterCopy(dt);
     }
@@ -1320,6 +1807,8 @@ namespace plume {
     void Deko3DCommandList::resolveTextureRegion(const RenderTexture *dst, uint32_t dstX, uint32_t dstY, const RenderTexture *src, const RenderRect *srcRect, RenderResolveMode) {
         const Deko3DTexture *dt = static_cast<const Deko3DTexture *>(dst);
         const Deko3DTexture *st = static_cast<const Deko3DTexture *>(src);
+        markUsed(dst);  // sasrt-nx (2026-11-08)
+        markUsed(src);
         if (!dt || !st || !dt->valid || !st->valid)
             return;
         const bool whole = dstX == 0 && dstY == 0 && dt->desc.width == st->desc.width && dt->desc.height == st->desc.height &&
@@ -1337,6 +1826,7 @@ namespace plume {
         const DkImageRect drect = {dstX, dstY, 0, srect.width, srect.height, 1};
         flushBarriers();
         GetDeko3DStats().copyBlit.store(GetDeko3DStats().copyBlit.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);  // banjo-nx (2026-10-19)
+        workSinceFragmentWait = true;  // sasrt-nx (2026-11-08, leanBarrierSkip)
         dkCmdBufBlitImage(cmd, &sv, &srect, &dv, &drect, DkBlitFlag_FilterLinear, 0);
         invalidateZcullAfterCopy(dt);
     }
@@ -1387,8 +1877,102 @@ namespace plume {
             handles[k] = dkMakeTextureHandle(slots[k] & 0xFFFFFu, 0);
         dkCmdBufBindTextures(cl->cmd, DkStage_Fragment, first, handles, count);
         cl->boundTexCount[2] = 0;  // the next bindTextures binds the whole stage again
+        {  // sasrt-nx (2026-11-08): kept whatever the options
+            cl->extraFragTexCount = 0;
+            for (uint32_t k = 0; k < count; k++) {
+                cl->markSampled(slots[k] & 0xFFFFFu);
+                cl->extraFragTex[cl->extraFragTexCount++] = slots[k] & 0xFFFFFu;
+            }
+        }
         cl->texPipeline = nullptr;  // and does not skip its run
         return true;
+    }
+
+    bool g_deko3dTrace = false;
+    namespace {
+        std::string g_traceText, g_traceLast;
+        uint32_t g_traceRun = 0;
+        std::vector<const void *> g_traceImages;
+        void traceFlushRun() {
+            if (!g_traceRun)
+                return;
+            g_traceText += g_traceLast;
+            if (g_traceRun > 1)
+                g_traceText += "*" + std::to_string(g_traceRun);
+            g_traceText += ' ';
+            g_traceRun = 0;
+        }
+        uint32_t traceImage(const void *p) {
+            if (!p)
+                return 0;
+            for (uint32_t i = 0; i < g_traceImages.size(); i++)
+                if (g_traceImages[i] == p)
+                    return i + 1;
+            g_traceImages.push_back(p);
+            return uint32_t(g_traceImages.size());
+        }
+    }
+    void Deko3DTraceToken(const char *token) {
+        if (g_traceText.size() > (1u << 20))
+            return;
+        if (g_traceRun && g_traceLast == token) {
+            ++g_traceRun;
+            return;
+        }
+        traceFlushRun();
+        g_traceLast = token;
+        g_traceRun = 1;
+    }
+    std::string Deko3DTraceTake() {
+        traceFlushRun();
+        std::string t;
+        t.swap(g_traceText);
+        g_traceImages.clear();
+        return t;
+    }
+
+    void Deko3DBufferWait(RenderCommandList *commandList, uint32_t invalidate, bool countsAsBufferWait) {
+        Deko3DCommandList *cl = static_cast<Deko3DCommandList *>(commandList);
+        if (!cl)
+            return;
+        if (countsAsBufferWait)
+            ++cl->bufferWaits;
+        if (Deko3DGetOptions().mergeBarriers) {
+            cl->pendingBarrierMode = cl->pendingBarrier ? std::max(cl->pendingBarrierMode, DkBarrier_Primitives) : DkBarrier_Primitives;
+            cl->pendingBarrierInvalidate |= invalidate;
+            cl->pendingBarrierWhy = cl->pendingBarrier ? (cl->pendingBarrierWhy | Deko3DWhyBuffer | Deko3DWhyMerged) : uint32_t(Deko3DWhyBuffer);
+            cl->pendingBarrier = true;
+        } else {
+            cl->flushBarriers();
+            cl->pendingBarrierWhy = Deko3DWhyBuffer;
+            cl->emitBarrier(DkBarrier_Primitives, invalidate);
+        }
+    }
+
+    void Deko3DDiscardNextDraw(RenderCommandList *commandList) {
+        if (Deko3DCommandList *cl = static_cast<Deko3DCommandList *>(commandList))
+            cl->discardNextDraw = true;
+    }
+
+    uint64_t Deko3DBufferWaits(const RenderCommandList *commandList) {
+        const Deko3DCommandList *cl = static_cast<const Deko3DCommandList *>(commandList);
+        return cl ? cl->bufferWaits : 0;
+    }
+
+    void Deko3DFlushL2(RenderCommandList *commandList) {
+        Deko3DCommandList *cl = static_cast<Deko3DCommandList *>(commandList);
+        if (!cl)
+            return;
+        if (Deko3DGetOptions().mergeBarriers) {
+            cl->pendingBarrierMode = cl->pendingBarrier ? std::max(cl->pendingBarrierMode, DkBarrier_Primitives) : DkBarrier_Primitives;
+            cl->pendingBarrierInvalidate |= DkInvalidateFlags_L2Cache;
+            cl->pendingBarrierWhy |= Deko3DWhyBuffer | Deko3DWhyCompute;
+            cl->pendingBarrier = true;
+        } else {
+            cl->flushBarriers();
+            cl->pendingBarrierWhy = Deko3DWhyBuffer | Deko3DWhyCompute;
+            cl->emitBarrier(DkBarrier_Primitives, DkInvalidateFlags_L2Cache);
+        }
     }
 
     bool Deko3DBindFetchData(RenderCommandList *commandList, uint64_t address, uint32_t size) {
@@ -1504,7 +2088,7 @@ namespace plume {
             dkCmdBufAddMemory(cmd, cmdMem, 0, 64u << 10);
             DkImageView view;
             dkImageViewDefaults(&view, &image);
-            dkCmdBufBindRenderTarget(cmd, &view, nullptr);
+            dkCmdBufBindRenderTarget(cmd, &view, nullptr);  // (the start-up probe: its own list)
             const DkScissor all = {0, 0, 64, 64};
             dkCmdBufSetScissors(cmd, 0, &all, 1);
             dkCmdBufClearColorFloat(cmd, 0, DkColorMask_RGBA, 0.25f, 0.5f, 0.75f, 1.0f);

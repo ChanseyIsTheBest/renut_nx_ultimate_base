@@ -29,6 +29,23 @@
 // banjo-nx (2026-10-17, deko3d renderer): every graphics pipeline's shaders and specialization constants, one line each,
 // for tools/deko3d_variant_cache.py (the DKSH cache of the deko3d back end, compiled on the PC). Any back end: the
 // constants are the renderer's. Written next to the executable.
+// sasrt-nx (2026-11-08, the user's request: "replace fxaa with banjo's optimised SMAA").
+REXCVAR_DEFINE_BOOL(sasrt_smaa_replaces_fxaa, true, "SASRT/Graphics",
+                    "deko3d renderer, with banjo_renut_smaa on (NOT the game's picture: SMAA's anti-aliasing instead of "
+                    "the game's FXAA): the game's FXAA pass (pixel shader 6C215354C35798B8, the 1152x544 image after the "
+                    "composite, before the final 1280x720 pass) writes its centre sample only (constant 930, pass nofxaa: "
+                    "the edge search compiled out), and SMAA runs on its target right after it "
+                    "(banjo_renut_smaa_after_ps = 6C215354C35798B8 in sasrt_switch.toml). Read at start; the pipelines "
+                    "built with it keep it (no in-run A/B: configs/sasrt_fxaa_game.toml for the game's FXAA)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+namespace banjo::renut_gpu {
+bool SmaaOn();  // banjo_renut_tuning.h
+}
+bool SasrtSmaaReplacesFxaa() {
+  static const bool on = REXCVAR_GET(sasrt_smaa_replaces_fxaa) && banjo::renut_gpu::SmaaOn();
+  return on;
+}
+
 REXCVAR_DEFINE_BOOL(banjo_deko3d_variant_log, false, "Banjo/Renut",
                     "Write deko3d_variants.txt next to the executable: each graphics pipeline's vertex and pixel shader "
                     "and specialization constants (tools/deko3d_variant_cache.py builds the deko3d DKSH cache from it)");
@@ -60,6 +77,7 @@ extern "C" char *fake_heap_end;  // banjo-nx (2026-10-28): libnx: the end of the
 #include "renut_engine/gpu/render/shader_library.h"
 #include "renut_engine/gpu/banjo_renut_tuning.h"
 #include "renut_engine/gpu/ultimate.h"
+#include "renut_engine/gpu/sasrt_gpu_round.h"  // sasrt-nx (2026-11-08)
 #if defined(PLUME_DEKO3D)
 #include <plume_deko3d.h>  // banjo-nx (2026-10-21): Deko3DSetBackgroundThread
 #if defined(__aarch64__)
@@ -390,8 +408,32 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineKey &key, const Pipel
       spec[spec_count++] = plume::RenderSpecConstant(902, 1);  // the test: trimmed channels 60000
   }
   // banjo-nx (banjo_deko3d_alpha_spec, 2026-10-18): the alpha test's function (+1), constant 903 of the deko3d GLSL.
-  if (key.alpha_func)
+  if (key.alpha_func) {
     spec[spec_count++] = plume::RenderSpecConstant(903, key.alpha_func);
+    if (key.alpha_func == 8u)  // sasrt-nx (2026-11-08, sasrt_gpu_alpha_spec): pipelines built without the test
+      sasrt::gpu_round::Count(sasrt::gpu_round::kAlphaSpec);
+  }
+  // sasrt-nx (2026-11-08, sasrt_gpu_face_sign): constant 928 is 1 in the GLSL (the sign bit); 0 with the key off.
+  if (key.pixel_shader && !sasrt::gpu_round::On(sasrt::gpu_round::kFaceSign))
+    spec[spec_count++] = plume::RenderSpecConstant(928, 0);
+  // sasrt-nx (2026-11-08, sasrt_smaa_replaces_fxaa, the user's request): the game's FXAA pass as a copy of its centre
+  // sample (constant 930, tools/deko3d_glsl_opt.py pass nofxaa); banjo-nx's SMAA runs on its target after it
+  // (banjo_renut_smaa with banjo_renut_smaa_after_ps 6C215354C35798B8, sasrt_switch.toml).
+  if (key.pixel_shader && SasrtSmaaReplacesFxaa() &&
+      static_cast<const ShaderCacheEntry *>(key.pixel_shader)->hash == 0x6C215354C35798B8ull)
+    spec[spec_count++] = plume::RenderSpecConstant(930, 1);
+  // sasrt-nx (2026-11-08, sasrt_gpu_clip_spec; the second GPU round): a draw without a user clip plane (key bit 3
+  // clear): the vertex shader without its clip distance (constant 929 = 0, pass clipspec); plume_deko3d sets the clip slot
+  // off for the pipeline (Deko3DGraphicsPipeline::noUserClip).
+  if (key.vertex_shader && !(key.reserved & 8u)) {
+    spec[spec_count++] = plume::RenderSpecConstant(929, 0);
+    sasrt::gpu_round::Count(sasrt::gpu_round::kClipSpec, 1, 1);  // pipelines built without it (the 10 s line, /n)
+  }
+  // sasrt-nx (2026-11-08, sasrt_gpu_plain_fetches): the fetch constants without signs, gamma or exponent adjust.
+  if (key.pixel_shader && key.fetch_pad) {
+    spec[spec_count++] = plume::RenderSpecConstant(926, key.fetch_pad);
+    sasrt::gpu_round::Count(sasrt::gpu_round::kPlainFetches);  // pipelines built with it (the 10 s line)
+  }
   // banjo-nx (banjo_deko3d_tess_spec, 2026-10-18): not a tessellated draw: the vertex shader's patch kind is 0
   // (SharedConstants.tessellation[0], constant 904 + 1). Decided by the key: no new pipelines.
   if (!key.per_instance_streams && banjo::renut_gpu::TessSpecOn())
@@ -407,6 +449,27 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineKey &key, const Pipel
   for (uint32_t k = 0; k < 4; ++k) {
     if (key.fetch_types[k])
       spec[spec_count++] = plume::RenderSpecConstant(920 + k, key.fetch_types[k]);
+  }
+  // sasrt-nx (2026-11-08, the third GPU round; render/draw.cpp SasrtSpecWordsOf): the vertex shader's epilogue (932) and
+  // memory fetches' byte order (937-939), the pixel shader's 3D fetches (934-936), as the draw has them.
+  if (key.vertex_shader) {
+    if (key.sasrt_words[0])
+      spec[spec_count++] = plume::RenderSpecConstant(932, key.sasrt_words[0]);
+    if (key.sasrt_words[4]) {
+      spec[spec_count++] = plume::RenderSpecConstant(937, key.sasrt_words[4]);
+      spec[spec_count++] = plume::RenderSpecConstant(938, key.sasrt_words[5]);
+      spec[spec_count++] = plume::RenderSpecConstant(939, key.sasrt_words[6]);
+    }
+    if (key.sasrt_words[8]) {  // sasrt-nx (2026-11-08, sasrt_gpu_export_format_spec)
+      for (uint32_t k = 0; k < 4; ++k)
+        spec[spec_count++] = plume::RenderSpecConstant(940 + k, key.sasrt_words[8 + k]);
+    }
+  }
+  if (key.pixel_shader) {
+    for (uint32_t k = 1; k < 4; ++k) {
+      if (key.sasrt_words[k])
+        spec[spec_count++] = plume::RenderSpecConstant(933 + k, key.sasrt_words[k]);
+    }
   }
   // banjo-nx (banjo_deko3d_early_hoist, 2026-10-18): the main body's first texture region ahead of the early alpha test
   // (constant 907, 1 by default in the GLSL); off: after it, as Renut's shaders have it.
@@ -428,7 +491,8 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineKey &key, const Pipel
   }
   // banjo-nx (2026-10-19, GPU, A/B): the listed pixel shaders compiled with 32 GPRs at most (constant 910).
   // (key.reserved bit 1: the off half of the in-run A/B, banjo_renut_ab_target 16.)
-  if (key.pixel_shader && banjo::renut_gpu::Gpr32On() && !(key.reserved & 2u))
+  if (key.pixel_shader && ((banjo::renut_gpu::Gpr32On() && !(key.reserved & 2u)) ||
+                           (key.sasrt_words[7] & 3u)))  // sasrt-nx (2026-11-08): sasrt_gpu_gpr_cap(_filter)
     spec[spec_count++] = plume::RenderSpecConstant(910, 1);
   // banjo-nx (2026-10-20, GPU A/B): the listed lit shaders' lights in branches (constant 911, pass lightbranch).
   // (key.reserved bit 0: the off half of the in-run A/B, banjo_renut_ab_target 15.)
@@ -514,10 +578,12 @@ constexpr char kListMagic[4] = {'R', 'N', 'P', 'L'};
 // banjo-nx: 2, the key's bool words (banjo_gpu_bool_spec); 3, output_trim; 4, alpha_func (a version 3 list is kept,
 // LoadList).
 // vivapinata-nx: 5, fetch_types and tess_kind (banjo_gpu_fetch_spec; a version 4 list is kept the same way).
-constexpr u32 kListVersion = 5;
+// sasrt-nx (2026-11-08): 6, sasrt_words (the third GPU round; a version 5 list is kept the same way).
+constexpr u32 kListVersion = 6;
 constexpr u32 kListV3KeySize = 184;  // the key up to output_trim
 constexpr u32 kListV4KeySize = 192;  // the key up to reserved
-static_assert(sizeof(PipelineKey) == kListV4KeySize + 24, "the version 5 key: version 4's and six words");
+constexpr u32 kListV5KeySize = 216;  // the key up to fetch_pad
+static_assert(sizeof(PipelineKey) == kListV5KeySize + 48, "the version 6 key: version 5's and twelve words");
 
 struct ListHeader {
   char magic[4];
@@ -666,13 +732,32 @@ bool DecodeRecord(const char *data, size_t size, Job &job) {
     job.key.blend_skip = 0;
   if (!banjo::renut_gpu::OutputTrimOn())
     job.key.output_trim = 0;
-  if (!banjo::renut_gpu::AlphaSpecOn())
+  if (!banjo::renut_gpu::AlphaSpecOn() && !sasrt::gpu_round::On(sasrt::gpu_round::kAlphaSpec))  // sasrt-nx (2026-11-08)
     job.key.alpha_func = 0;
   if (!banjo::renut_gpu::PlainFetchesOn())  // port 44 (sasrt_gpu_plain_fetches)
     job.key.fetch_pad = 0;
   if (!banjo::renut_gpu::FetchSpecOn()) {
     std::memset(job.key.fetch_types, 0, sizeof(job.key.fetch_types));
     job.key.tess_kind = 0;
+  }
+  {  // sasrt-nx (2026-11-08, the third round): a listed key's words of items now off
+    uint32_t *w = job.key.sasrt_words;
+    if (!sasrt::gpu_round::On(sasrt::gpu_round::kVsScreenSpec))
+      w[0] &= ~3u;
+    if (!sasrt::gpu_round::On(sasrt::gpu_round::kVsRemapSpec))
+      w[0] &= ~12u;
+    if (!sasrt::gpu_round::On(sasrt::gpu_round::kStackSpec))
+      w[1] = 0;
+    if (!sasrt::gpu_round::On(sasrt::gpu_round::kStackFilterSpec))
+      w[2] = w[3] = 0;
+    if (!sasrt::gpu_round::On(sasrt::gpu_round::kFetchEndianSpec))
+      w[4] = w[5] = w[6] = 0;
+    if (!sasrt::gpu_round::On(sasrt::gpu_round::kGprCap))
+      w[7] &= ~1u;
+    if (!sasrt::gpu_round::On(sasrt::gpu_round::kGprCapFilter))
+      w[7] &= ~2u;
+    if (!sasrt::gpu_round::On(sasrt::gpu_round::kExportFmtSpec))
+      w[8] = w[9] = w[10] = w[11] = 0;
   }
   if (!banjo::renut_gpu::BoolSpecOn()) {
     std::memset(job.key.bool_mask, 0, sizeof(job.key.bool_mask));
@@ -839,8 +924,9 @@ std::vector<std::unique_ptr<Job>> LoadList() {
   const u32 old_key_size = !header_ok                                                        ? 0
                            : header.version == 3 && header.key_size == kListV3KeySize ? kListV3KeySize
                            : header.version == 4 && header.key_size == kListV4KeySize ? kListV4KeySize
+                           : header.version == 5 && header.key_size == kListV5KeySize ? kListV5KeySize
                                                                                      : 0;
-  const bool v3 = old_key_size != 0;  // an older list to convert (version 3 or 4)
+  const bool v3 = old_key_size != 0;  // an older list to convert (version 3, 4 or 5)
   if (!valid && !v3) {
     std::error_code ec;
     std::filesystem::remove(path, ec);
@@ -1072,6 +1158,10 @@ SpecState SpecialisedPipeline(const PipelineKey &key, uint64_t hash, const HostV
 bool Specialised(const PipelineKey &key) {
   if (key.alpha_func || key.tess_kind || key.fetch_pad)  // port 44: fetch_pad, constant 926
     return true;
+  for (const uint32_t w : key.sasrt_words) {  // sasrt-nx (2026-11-08, the third round)
+    if (w)
+      return true;
+  }
   for (const uint32_t w : key.fetch_types) {
     if (w)
       return true;
@@ -1304,6 +1394,7 @@ static plume::RenderPipeline *GetPipelineSlow(const PipelineKey &key, const Pipe
     std::memset(generic.fetch_types, 0, sizeof(generic.fetch_types));  // banjo-nx (banjo_gpu_fetch_spec)
     generic.tess_kind = 0;
     generic.fetch_pad = 0;  // port 44 (sasrt_gpu_plain_fetches)
+    std::memset(generic.sasrt_words, 0, sizeof(generic.sasrt_words));  // sasrt-nx (2026-11-08, the third round)
     plume::RenderPipeline *pipeline = GetPipelineLocked(generic, inputs);
     if (state == SpecState::Pending) {
       SpecPending &p = g_spec_pending[hash];

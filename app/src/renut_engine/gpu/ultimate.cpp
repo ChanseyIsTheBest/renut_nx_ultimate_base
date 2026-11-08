@@ -1,5 +1,6 @@
 // renut-ultimate: the switches of the fixes ported into this base from the other ports (see ultimate.h).
 #include "renut_engine/gpu/ultimate.h"
+#include "renut_engine/gpu/sasrt_gpu_round.h"  // sasrt-nx's GPU rounds (port 49): PlainFetchesOn reads item 2
 
 #include <rex/cvar.h>
 
@@ -274,14 +275,8 @@ REXCVAR_DEFINE_BOOL(ultimate_renut_held_exports_guard, true, "Banjo/Enhancements
 // the console: port 25's per-fetch sign path folded away per pipeline where the draw's fetch constants have none of it.
 // Ridge Racer 6's race on the ultimate renderer drew 3.2 ms a frame more on the GPU without it (its pixel shaders weighted
 // by GPU time 3.8 times the instructions: about 120 more per texture fetch, and more registers); with it, its game passes
-// are as rr6-nx's master build draws them (main pass 7.89 ms against 7.89).
-REXCVAR_DEFINE_BOOL(sasrt_gpu_plain_fetches, true, "Banjo/Enhancements",
-                    "From sasrt-nx: the pixel shader's fetches whose fetch-constant words have no signs, gamma or "
-                    "exponent adjust for a draw are compiled without that code (constant 926, a bit a fetch constant; "
-                    "tools/deko3d_glsl_opt.py pass plainfetch; render/draw.cpp PlainFetchMask): the same pixels, fewer "
-                    "instructions and registers. deko3d only; takes effect when a game's shader package is made again. "
-                    "Off: every fetch keeps the run-time branch")
-    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// are as rr6-nx's master build draws them (main pass 7.89 ms against 7.89). Since sasrt-nx's GPU rounds came in (port 49,
+// 2026-11-08, night): the key is the round's item 2 (sasrt_gpu_round.cpp defines it; A/B target 92), read through it.
 
 // renut-ultimate (port 47, 2026-11-08): rr6-nx's lock-free answer to "is this address one of Renut's objects".
 REXCVAR_DEFINE_BOOL(rr6_records_lockfree, true, "Banjo/Enhancements",
@@ -455,8 +450,7 @@ bool HeldExportsGuardOn() {
   return on;
 }
 bool PlainFetchesOn() {
-  static const bool on = REXCVAR_GET(sasrt_gpu_plain_fetches);
-  return on;
+  return sasrt::gpu_round::On(sasrt::gpu_round::kPlainFetches);  // sasrt_gpu_plain_fetches, the GPU round's item 2
 }
 bool RecordsLockFreeOn() {
   static const bool on = REXCVAR_GET(rr6_records_lockfree);
