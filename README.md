@@ -46,6 +46,8 @@ toml, so a port that finds one wrong for its game doesn't have to change the cod
 > (2026-11-08): see [docs/ultimate-fixes.md](docs/ultimate-fixes.md), "Ridge Racer 6 on the console".
 
 - Every fix builds for the Switch (the everyday NRO, and an LTO + PGO NRO) and for the PC.
+- Port 46 (sasrt-nx, from a console crash) puts the SDK's input system under one lock: a game that reads its
+  controllers from more than one thread could free the device list twice.
 - On the console the base first cost Ridge Racer 6 4.1 ms of GPU a frame against its own build, at the same frame rate
   but with no headroom left. Port 44 gives 3.2 ms of it back (its game passes at its own build's times), and port 45 (the
   depth decompress only for a read) 0.5 ms more. 0.4 ms, in the game-gamma ramp's present, is still open.
