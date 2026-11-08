@@ -439,6 +439,31 @@ REXCVAR_DEFINE_BOOL(sasrt_gpu_handover_with_smaa, false, "SASRT/GPU",
                     "writes it, so the hand-over stays on with SMAA. Every texel is the one the copy would write: same "
                     "pixels")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// sasrt-nx's fifth GPU round (2026-11-09; rr6-nx's port of its pixel-identical items). Items 49, 50 and 53 have no code
+// here (49 and 50 are SASRT's EDRAM depth restore; 53 is flat on its console): placeholders, so the A/B numbers stay
+// SASRT's (139-143).
+REXCVAR_DEFINE_BOOL(sasrt_gpu_depth_restore_direct, false, "SASRT/GPU", "SASRT only (fifth GPU round, item 49, A/B 139)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(sasrt_gpu_depth_restore_whole_clear, false, "SASRT/GPU",
+                    "SASRT only (fifth GPU round, item 50, A/B 140)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(sasrt_gpu_fetch_conversion_spec, true, "SASRT/GPU",
+                    "deko3d renderer (fifth GPU round, item 51, A/B 141): a pixel shader's texture fetch applies Xenos' "
+                    "signs, gamma and exponent adjust from the draw's words (SharedConstants: sampler bits 13-19, the 2D "
+                    "texture word's bits 20-25) for each of the four channels, choosing among the conversions at run time; "
+                    "item 3 (sasrt_gpu_plain_fetches) drops the block where a fetch constant has none of them. Here the "
+                    "words of fetch constants 0-7 are constants of the draw (950-957, pass fetchconv), so the shader keeps "
+                    "only the conversions the draw's texture has, on the channels that have them. The same operations on "
+                    "the same values: the same pixels")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(sasrt_gpu_fetch_exp_3d_spec, true, "SASRT/GPU",
+                    "deko3d renderer (fifth GPU round, item 52, A/B 142): item 51 for the exponent adjust a 3D or cube fetch "
+                    "reads from its own word (texture_indices[1] / [2] bits 20-25): constants 958-965 (3D) and 966-973 "
+                    "(cube) for fetch constants 0-7 (pass fetchconv). Same values: the same pixels")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(sasrt_gpu_convert_vertex_pass, false, "SASRT/GPU",
+                    "SASRT only (fifth GPU round, item 53, A/B 143: flat on its console; no code here)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 #if defined(PLUME_DEKO3D)
 #include <plume_deko3d.h>

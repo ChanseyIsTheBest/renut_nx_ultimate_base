@@ -6826,8 +6826,9 @@ inline u32 SasrtClipBit(const SharedConstants &sc) {
 //       vertex shader's constant buffer holds it (its literal's if it defines one; byte-swapped and NaN-flushed as
 //       CopyAndSwapGroup uploads it) is [9], [10] or [11] (941-943), by its order among the set bits (three at most)
 struct SasrtSpecWords {
-  u32 w[12];
+  u32 w[20];  // sasrt-nx (2026-11-09, the fifth round): [12]-[19] constants 950-973
 };
+static_assert(sizeof(SasrtSpecWords::w) == sizeof(PipelineKey::sasrt_words));
 // sasrt-nx (2026-11-08, sasrt_gpu_export_format_spec): [8]-[11] (cold: export shaders only).
 [[gnu::noinline]] void SasrtExportFormatWords(SasrtSpecWords &s, const ShaderCacheEntry &vs, const FloatConstants &vsc) {
   u32 n = 0;
@@ -6917,6 +6918,25 @@ struct SasrtSpecWords {
         s.w[2] = 0x80000000u | linear;
         s.w[3] = 0x80000000u | wrap;
       }
+    }
+  }
+  // sasrt-nx (2026-11-09, sasrt_gpu_fetch_conversion_spec; the fifth round): [12]-[15]. The sampler word packs Xenos'
+  // gamma at bits 16-19 and the biased signs at 13-15 below the sampler slot (bit 20), as sasrt-nx's tree does
+  // (checked by rr6-nx, 2026-11-09).
+  if (ps_entry && On(sasrt::gpu_round::kFetchConvSpec)) {
+    for (u32 bits = ps_entry->textureFetchMask & 0xFFu; bits; bits &= bits - 1) {
+      const u32 r = u32(std::countr_zero(bits));
+      const u32 sampler = sc.sampler_indices[r], word = sc.texture_indices[0][r];
+      const u32 field = 0x8000u | ((sampler >> 16) & 15u) | ((sampler >> 13) & 7u) << 4 | ((word >> 20) & 63u) << 7;
+      s.w[12 + r / 2] |= field << (16 * (r & 1));
+    }
+  }
+  // sasrt-nx (2026-11-09, sasrt_gpu_fetch_exp_3d_spec): [16]-[19].
+  if (ps_entry && On(sasrt::gpu_round::kFetchExpSpec)) {
+    for (u32 bits = ps_entry->textureFetchMask & 0xFFu; bits; bits &= bits - 1) {
+      const u32 r = u32(std::countr_zero(bits));
+      s.w[16 + r / 4] |= (0x80u | ((sc.texture_indices[1][r] >> 20) & 63u)) << (8 * (r & 3));
+      s.w[18 + r / 4] |= (0x80u | ((sc.texture_indices[2][r] >> 20) & 63u)) << (8 * (r & 3));
     }
   }
   return s;

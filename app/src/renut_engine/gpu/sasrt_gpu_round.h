@@ -63,7 +63,13 @@ namespace sasrt::gpu_round {
   X(kHandoverSmaa, sasrt_gpu_handover_with_smaa, "banjo's colour hand-over kept on with SMAA (SMAA's target settled first)") \
   X(kExportWindowUbo, sasrt_gpu_export_window_ubo, "memexport windows read from the constant buffer, not a local array (constant 944)") \
   X(kExportListTopology, sasrt_gpu_export_list_topology, "export draws with the rasterizer off drawn as triangle or line lists, not points") \
-  X(kExportNoPointGs, sasrt_gpu_export_no_point_gs, "export point lists with the rasterizer off drawn without the point-sprite geometry shader")
+  X(kExportNoPointGs, sasrt_gpu_export_no_point_gs, "export point lists with the rasterizer off drawn without the point-sprite geometry shader") \
+  /* the fifth round (2026-11-09, docs/gpu-round-1108.md "Round 5"): A/B 139 and up */                                     \
+  X(kRestoreDirect, sasrt_gpu_depth_restore_direct, "SASRT only: the EDRAM depth restore in one pass") \
+  X(kRestoreClear, sasrt_gpu_depth_restore_whole_clear, "SASRT only: the depth restore clears depth and stencil together") \
+  X(kFetchConvSpec, sasrt_gpu_fetch_conversion_spec, "a non-plain fetch's sign, gamma and exponent words as constants of the draw (950-957)") \
+  X(kFetchExpSpec, sasrt_gpu_fetch_exp_3d_spec, "a 3D or cube fetch's exponent adjust as a constant of the draw (958-973)") \
+  X(kConvertVertexPass, sasrt_gpu_convert_vertex_pass, "exported stream conversions drawn as a vertex pass (flat: off)")
 
 enum Item : int {
 #define SASRT_GPU_ROUND_ENUM(name, key, what) name,

@@ -59,6 +59,10 @@ toml, so a port that finds one wrong for its game doesn't have to change the cod
 - Port 50 is sasrt-nx's fourth GPU round: memexport draws drawn with the rasterizer off no longer go through the
   point-sprite geometry shader, and their export windows are read from the constant buffer. sasrt-nx's game went from
   46.6 to 38.8 ms of GPU a frame; games without memexport draws (Ridge Racer 6) are unchanged.
+- Port 51 is sasrt-nx's fifth GPU round (its pixel-identical items): a texture fetch's sign, gamma and exponent
+  conversions become constants of the draw, so each pixel shader keeps only the conversions its textures use (sasrt-nx:
+  -3.9 ms of GPU a frame; Ridge Racer 6, whose fetches are nearly all plain, flat). It also fixes the DKSH cache tool,
+  which read the pipeline list 4 bytes off since the first round.
 - Port 44 and the translator changes take effect when a game's shader package is made again. Before measuring on the
   console, build its DKSH cache on the PC (`tools/deko3d_variant_cache.py`): a first run that compiles its shaders while
   it draws is slower on the GPU than the build is.
