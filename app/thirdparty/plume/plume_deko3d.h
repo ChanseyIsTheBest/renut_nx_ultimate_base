@@ -576,6 +576,9 @@ namespace plume {
         bool dispatchSinceIdle = true;
         // sasrt-nx (2026-11-08, sasrt_gpu_export_raster_discard): the next draw with the rasterizer off (Deko3DDiscardNextDraw).
         bool discardNextDraw = false;
+        // sasrt-nx (2026-11-08, sasrt_gpu_export_list_topology): the next draw's primitive instead of the pipeline's
+        // (DkPrimitive + 1; 0 none), taken once.
+        uint32_t nextPrimitive = 0;
         uint32_t pendingBarrierWhy = 0;  // sasrt-nx (2026-11-08, Deko3DOptions::diagBarriers): Deko3DBarrierWhy bits
         // banjo-nx (2026-10-19, render-thread proposal 13): per-draw counters of this list, added to the totals at end()
         // (no atomic read-modify-write per draw: the A57 has no LSE).
@@ -866,6 +869,9 @@ namespace plume {
     // 0x0DF RasterizerEnable 0, then 1 again: plume's pipelines all rasterize): its vertex shader runs and exports, no
     // primitive reaches clipping, setup or the scissor.
     void Deko3DDiscardNextDraw(RenderCommandList *commandList);
+    // sasrt-nx (2026-11-08, sasrt_gpu_export_list_topology; the fourth GPU round): the next draw recorded with this
+    // DkPrimitive instead of its pipeline's (with the rasterizer off: only which vertices the vertex shader runs for).
+    void Deko3DSetNextPrimitive(RenderCommandList *commandList, uint32_t primitive);
     // sasrt-nx (2026-11-08, sasrt_gpu_convert_lead_wait): the list's buffer barriers so far (Deko3DCommandList::bufferWaits).
     uint64_t Deko3DBufferWaits(const RenderCommandList *commandList);
     // sasrt-nx (2026-11-08, Deko3DOptions::trackedImageInvalidate): the texture-cache drop epoch (plume_deko3d_commands.cpp).
@@ -1131,6 +1137,10 @@ namespace plume {
         // variant does not read (Deko3DShaderVariant::vsInputs) bound as constants: the vertex attribute fetch reads no
         // memory for them.
         bool vsInputMask = false;
+        // sasrt-nx (2026-11-09, sasrt_gpu_exp_sph_no_global_store): an EXPERIMENT: vertex programs loaded with their shader
+        // program header's DoesGlobalStore bit (word 0 bit 16) cleared; bit 0 of the value: that bit, bit 1: DoesLoadOrStore
+        // (bit 26) too.
+        uint32_t expSphStoreBits = 0;
         // sasrt-nx (2026-11-08, sasrt_gpu_texture_drop_tracked; the third GPU round): a texture moved into a read layout
         // drops the texture cache only when it was bound for sampling since the last drop that waited for the GPU
         // (Deko3DTexture::sampledEpoch): the cache holds no line of an image no draw sampled since.

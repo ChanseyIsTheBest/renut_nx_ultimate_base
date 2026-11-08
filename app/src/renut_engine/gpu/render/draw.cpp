@@ -423,6 +423,10 @@ inline bool ChainReuseOn() {
   return on && banjo::renut_gpu::g_ab_off.load(std::memory_order_relaxed) != 20;
 }
 
+// sasrt-nx's game-frame count (defined further down, where SasrtNoteExport uses it): declared here for the fourth round's
+// sasrt_gpu_diag_export_order, which reads it earlier in the file (rr6-nx, 2026-11-09).
+extern std::atomic<uint64_t> g_sasrt_game_frames;
+
 namespace {
 
 // banjo-nx (2026-10-20, from sa2-nx, banjo_renut_lean_diagnostics): whether the per-draw diagnostic counts are kept (their lines are
@@ -699,8 +703,34 @@ bool SameReference(const plume::RenderBufferReference &a, const plume::RenderBuf
 
 // plume's Vulkan pipelines have one viewport and scissor per color target
 // (all dynamic), each of which a draw must have set; they all get the same.
+// sasrt-nx (2026-11-08): EXPERIMENTS for the 33 ms goal, NOT pixel-identical, off by default (measurements only).
+REXCVAR_DEFINE_BOOL(sasrt_gpu_exp_shadow_nofill, false, "SASRT/GPU",
+                    "EXPERIMENT, NOT pixel-identical (2026-11-08): depth-only draws into a 1024x1024 viewport (the shadow "
+                    "cascades) get a 1x1 scissor: their vertex work stays, their pixels go. Measures the cascades' fill");
+REXCVAR_DEFINE_BOOL(sasrt_gpu_exp_no_exports, false, "SASRT/GPU",
+                    "EXPERIMENT, NOT pixel-identical (2026-11-08): export-only draws (the skinning) are not drawn at all: "
+                    "measures the skinning exports' own cost");
+REXCVAR_DEFINE_INT32(sasrt_gpu_exp_export_parts, 0, "SASRT/GPU",
+                     "EXPERIMENT, NOT pixel-identical (2026-11-09): memexport vertex shaders (constant 945, pass "
+                     "expparts) with bit 0 their export stores skipped, bit 1 their bone-row loads replaced by a constant, "
+                     "bit 2 their vertex inputs zero, bit 3 no export stores at all: what each part of a skinning export costs");
+REXCVAR_DEFINE_BOOL(sasrt_gpu_exp_export_twice, false, "SASRT/GPU",
+                    "EXPERIMENT (2026-11-08), same pixels: every memexport draw is drawn twice (the second writes the "
+                    "same bytes): what the export draws themselves cost the GPU, apart from the waits around them");
+bool SasrtExpShadowNofill() {
+  static const bool on = REXCVAR_GET(sasrt_gpu_exp_shadow_nofill);
+  return on;
+}
+bool SasrtExpNoExports() {
+  static const bool on = REXCVAR_GET(sasrt_gpu_exp_no_exports);
+  return on;
+}
+
 void SetViewport(plume::RenderCommandList *cmd, const plume::RenderViewport &viewport,
-                 const plume::RenderRect &scissor, uint32_t color_count) {
+                 const plume::RenderRect &scissor_in, uint32_t color_count) {
+  plume::RenderRect scissor = scissor_in;
+  if (SasrtExpShadowNofill() && color_count == 0 && viewport.width == 1024.0f && viewport.height == 1024.0f) [[unlikely]]
+    scissor = plume::RenderRect(0, 0, 1, 1);
   // Every index set so far is rewritten, so none keeps an older value.
   uint32_t count = std::clamp(color_count, 1u, uint32_t(d3d::kMaxRenderTargets));
   if (g_bound.viewport_set)
@@ -1879,6 +1909,61 @@ struct Targets {
 // FillTextures binds (a destination is not sampled from the image of a target of its own draw), and what is done
 // before a depth target is bound again.
 const Targets *g_handover_targets = nullptr;
+
+// sasrt-nx (2026-11-08, sasrt_gpu_diag_export_order; the fourth GPU round's census): one game frame's memexport draws,
+// stream conversions (their waits) and the draws between them, every N seconds, as one token line: E<window>[/n] an
+// export draw (its first window's offset / 256, n windows), C<w>x<h>[L] a conversion recorded for a draw into a w x h
+// target (L: with the wait before it) and its jobs <source offset / 256>:<vertices>, H<offset> a conversion found in
+// the memo (no dispatch, no wait), d<n> n other draws, T<w>x<h>[z] a full-path draw into another target size (z: depth
+// only). Nothing is changed.
+REXCVAR_DEFINE_INT32(sasrt_gpu_diag_export_order, 0, "SASRT/Diagnostics",
+                     "Diagnostic (2026-11-08): every N seconds (0 off), log one game frame's memexport draws, stream "
+                     "conversions and the draws between them in order ([sasrt] export order): whether the conversions' "
+                     "waits could be shared");
+uint64_t g_sasrt_order_draws = 0;  // every draw recorded (fast and full)
+struct SasrtOrder {
+  uint64_t frame = ~0ull, draws_at = 0;
+  bool on = false;
+  u32 tw = 0, th = 0;
+  std::string line;
+  std::chrono::steady_clock::time_point next;
+};
+SasrtOrder g_sasrt_order;
+int32_t SasrtOrderEvery() {
+  static const int32_t every = REXCVAR_GET(sasrt_gpu_diag_export_order);
+  return every;
+}
+void SasrtOrderToken(const std::string &token) {
+  SasrtOrder &o = g_sasrt_order;
+  const uint64_t frame = g_sasrt_game_frames.load(std::memory_order_relaxed);
+  if (frame != o.frame) {
+    if (o.on) {
+      RGPU_INFO("[sasrt] export order (sasrt_gpu_diag_export_order), game frame {}: {} characters", o.frame,
+                o.line.size());
+      for (size_t at = 0; at < o.line.size(); at += 900)
+        RGPU_INFO("[sasrt] export order {}: {}", at / 900, o.line.substr(at, 900));
+      o.on = false;
+    }
+    o.frame = frame;
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= o.next) {
+      o.on = o.next.time_since_epoch().count() != 0;  // the first frame seen only starts the clock
+      o.next = now + std::chrono::seconds(SasrtOrderEvery());
+      o.line.clear();
+      o.draws_at = g_sasrt_order_draws;
+      o.tw = o.th = 0;
+    }
+  }
+  if (!o.on)
+    return;
+  if (g_sasrt_order_draws > o.draws_at)
+    o.line += fmt::format("d{} ", g_sasrt_order_draws - o.draws_at);
+  o.draws_at = g_sasrt_order_draws;
+  if (!token.empty()) {
+    o.line += token;
+    o.line += ' ';
+  }
+}
 // kameo-nx (2026-11-03, banjo_deko3d_depth_handover_sampled): the draw writes neither depth nor stencil, so it may sample a
 // resolve left in the image of its own depth target (HandOverBeforeDrawLocked sets it, before the draw's textures).
 bool g_handover_depth_readonly = false;
@@ -2030,12 +2115,33 @@ uint32_t TargetsProfileLabel(const Targets &t) {
   return label;
 }
 
+// sasrt-nx (2026-11-08, sasrt_gpu_diag_profile_vs; the fourth GPU round): with banjo_renut_diag_gpu_shaders, the draws
+// without a pixel shader (the shadow cascades, the light volumes' stencil marking) split by their vertex shader too.
+REXCVAR_DEFINE_BOOL(sasrt_gpu_diag_profile_vs, false, "SASRT/Diagnostics",
+                    "Diagnostic (2026-11-08): with banjo_renut_diag_gpu_shaders, the GPU profile splits the draws without "
+                    "a pixel shader by their vertex shader (the shadow cascades' geometry cost)");
+bool SasrtProfileVsOn() {
+  static const bool on = REXCVAR_GET(sasrt_gpu_diag_profile_vs);
+  return on;
+}
+// sasrt-nx (2026-11-08, sasrt_gpu_diag_profile_vs): a memexport draw's label also names its size (the draw's vertex
+// count rounded down to a power of two, its primitive type and instances): set by DrawStateLocked around the label.
+u32 g_sasrt_label_export_count = 0, g_sasrt_label_export_prim = 0, g_sasrt_label_export_inst = 0;
+
 // banjo-nx (banjo_renut_diag_gpu_shaders, package 28b): the draw's pass split by its pixel shader and blending.
-uint32_t ShaderProfileLabel(const Targets &t, const ShaderRecord *ps, const PipelineKey &key) {
+uint32_t ShaderProfileLabel(const Targets &t, const ShaderRecord *ps, const PipelineKey &key,
+                            const ShaderRecord *vs = nullptr) {
   const uint32_t target = TargetsProfileLabel(t);
   // RB_BLENDCONTROL ONE / ZERO / ADD for colour and alpha (BlendDesc's no-blend case).
   const bool blended = key.color_count && (key.blend_control[0] & 0x1FFF1FFF) != 0x00010001;
-  const uint64_t k = (uint64_t(target) << 44) ^ (ps ? ps->hash : 0x5A5A5A5Au) ^ (blended ? (1ull << 63) : 0);
+  const ShaderRecord *by_vs = !ps && vs && SasrtProfileVsOn() ? vs : nullptr;  // sasrt-nx (sasrt_gpu_diag_profile_vs)
+  const u32 size_bits = by_vs && g_sasrt_label_export_count
+                            ? (31u - u32(std::countl_zero(g_sasrt_label_export_count))) |
+                                  (g_sasrt_label_export_prim & 15u) << 5 | std::min(g_sasrt_label_export_inst, 15u) << 9
+                            : 0u;
+  const uint64_t k = (uint64_t(target) << 44) ^ (ps ? ps->hash : 0x5A5A5A5Au) ^ (blended ? (1ull << 63) : 0) ^
+                     (by_vs ? (by_vs->hash << 17 | by_vs->hash >> 47) * 0x9E3779B97F4A7C15ull : 0) ^
+                     (uint64_t(size_bits + 1) * 0xD6E8FEB86659FD93ull * (size_bits != 0));
   // banjo-nx (2026-10-23, batch 6): a direct-mapped memo of the map's answers (a map search per draw of the timed frames).
   struct LabelMemo {
     uint64_t k = 0;
@@ -2053,7 +2159,14 @@ uint32_t ShaderProfileLabel(const Targets &t, const ShaderRecord *ps, const Pipe
   }
   const std::string name = ps ? fmt::format("{} | PS {:016X}{}", gpu_profile::Name(target), ps->hash,
                                             blended ? " blended" : "")
-                              : fmt::format("{} | no pixel shader", gpu_profile::Name(target));
+                              : by_vs && size_bits
+                                  ? fmt::format("{} | no pixel shader | VS {:016X} | export draw of {}-{} vertices, primitive "
+                                                "{}, {} instances",
+                                                gpu_profile::Name(target), by_vs->hash, 1u << (size_bits & 31u),
+                                                (2u << (size_bits & 31u)) - 1u, (size_bits >> 5) & 15u, size_bits >> 9)
+                              : by_vs ? fmt::format("{} | no pixel shader | VS {:016X}", gpu_profile::Name(target),
+                                                    by_vs->hash)
+                                      : fmt::format("{} | no pixel shader", gpu_profile::Name(target));
   const uint32_t label = gpu_profile::Label(name);
   labels.emplace(k, label);
   m = {k, label, true};
@@ -6754,6 +6867,17 @@ struct SasrtSpecWords {
     return s;
   if (vs_entry && vsc && vs_entry->memExportConstants[0] && sasrt::gpu_round::On(sasrt::gpu_round::kExportFmtSpec))
     [[unlikely]] SasrtExportFormatWords(s, *vs_entry, *vsc);
+  // sasrt-nx (2026-11-08, sasrt_gpu_export_window_ubo; the fourth GPU round): [7] bit 2, a memexport vertex shader's export
+  // windows read from the constant buffer (constant 944, pass expwin).
+  if (vs_entry && vs_entry->memExportConstants[0] && sasrt::gpu_round::On(sasrt::gpu_round::kExportWindowUbo)) {
+    s.w[7] |= 4u;
+    sasrt::gpu_round::Count(sasrt::gpu_round::kExportWindowUbo);
+  }
+  // sasrt-nx (2026-11-09, sasrt_gpu_exp_export_parts): an EXPERIMENT (pixels change): [7] bits 3-5, constant 945.
+  if (vs_entry && vs_entry->memExportConstants[0]) {
+    static const int32_t parts = REXCVAR_GET(sasrt_gpu_exp_export_parts);
+    s.w[7] |= u32(parts & 31) << 3;
+  }
   // sasrt-nx (2026-11-08, sasrt_gpu_gpr_cap, sasrt_gpu_gpr_cap_filter): [7] the listed pixel shaders' register cap.
   if (ps_entry) {
     const uint64_t h = ps_entry->hash;
@@ -7632,6 +7756,17 @@ const PendingExport *InPlaceWindow(const SlotExports &slot, const MemExportStrea
 // sasrt-nx (2026-11-08, sasrt_gpu_convert_lead_wait): the command list of the last memexport draw and its buffer
 // barriers then (plume::Deko3DBufferWaits): a buffer barrier requested since in the same list waits for that draw and
 // drops the data caches before any later work. (Moved here for sasrt_gpu_seed_cpu_direct.)
+// sasrt-nx (2026-11-08): an EXPERIMENT for the 33 ms goal, NOT pixel-identical, off by default: the stream
+// conversion's waits (before: the export draw's writes; after: the draw's vertex fetch) left out, to measure what the
+// export chains' waits cost the shadow pass. Skinned meshes may show garbage with it.
+REXCVAR_DEFINE_BOOL(sasrt_gpu_exp_no_chain_waits, false, "SASRT/GPU",
+                    "EXPERIMENT, NOT pixel-identical (2026-11-08): the stream conversion's two waits left out (skinned "
+                    "meshes may show garbage): measures what the export chains' waits cost");
+bool SasrtExpNoChainWaits() {
+  static const bool on = REXCVAR_GET(sasrt_gpu_exp_no_chain_waits);
+  return on;
+}
+
 struct SasrtExportWrite {
   const plume::RenderCommandList *cmd = nullptr;
   uint64_t waits = 0;
@@ -7880,6 +8015,8 @@ bool FinishMemExportLocked(VideoState &s, const MemExportStream *streams, u32 co
   if (IsDeko3D())
     g_sasrt_export_write = {cmd, plume::Deko3DBufferWaits(cmd)};
 #endif
+  if (SasrtOrderEvery() > 0 && count) [[unlikely]]  // sasrt-nx (2026-11-08, sasrt_gpu_diag_export_order)
+    SasrtOrderToken(count > 1 ? fmt::format("E{:x}/{}", offsets[0] / 256, count) : fmt::format("E{:x}", offsets[0] / 256));
   plume::RenderBuffer *buffer = s.memexport_buffer[s.frame].get();
   plume::RenderBuffer *readback = s.memexport_readback[s.frame].get();
   SlotExports &slot = g_exports[s.frame];
@@ -8188,6 +8325,8 @@ bool ConvertExportedStreamsLocked(VideoState &s, const GuestDevice &device, cons
         out.ref[stream] = plume::RenderBufferReference(memo.dest, hit->dest_offset);
         out.bytes[stream] = job.count * job.src.host_stride;
         ++memo.reused;
+        if (SasrtOrderEvery() > 0) [[unlikely]]  // sasrt-nx (2026-11-08, sasrt_gpu_diag_export_order)
+          SasrtOrderToken(fmt::format("H{:x}", offset / 256));
         if (hit->generation != g_export_generation)  // sasrt-nx (2026-11-08): banjo-nx's memo had forgotten it
           sasrt::gpu_round::Count(sasrt::gpu_round::kConvertMemoKeep);
         continue;
@@ -8254,6 +8393,8 @@ bool ConvertExportedStreamsLocked(VideoState &s, const GuestDevice &device, cons
     sasrt::gpu_round::Count(sasrt::gpu_round::kConvertLead);
   }
 #endif
+  if (lead && SasrtExpNoChainWaits())  // sasrt-nx (2026-11-08): an EXPERIMENT (not identical): no wait
+    lead = false;
   if (lead) {
 #if defined(PLUME_DEKO3D)
     // sasrt-nx (2026-11-08, sasrt_gpu_convert_lead_data_only; the second GPU round): the conversion reads the export
@@ -8265,6 +8406,14 @@ bool ConvertExportedStreamsLocked(VideoState &s, const GuestDevice &device, cons
     } else
 #endif
       cmd->barriers(plume::RenderBarrierStage::COMPUTE, barriers, barrier_count);
+  }
+  if (SasrtOrderEvery() > 0) [[unlikely]] {  // sasrt-nx (2026-11-08, sasrt_gpu_diag_export_order)
+    const Targets *t = g_handover_targets;
+    std::string token = fmt::format("C{}x{}{}", t ? t->width : 0, t ? t->height : 0, lead ? "L" : "");
+    for (u32 i = 0; i < job_count; ++i)
+      token += fmt::format(",{:x}:{}", u32(jobs[i].src.offset + uint64_t(jobs[i].first) * jobs[i].src.stride) / 256,
+                           jobs[i].count);
+    SasrtOrderToken(token);
   }
   cmd->setComputePipelineLayout(s.stream_convert_layout.get());
   cmd->setPipeline(s.stream_convert_pipeline.get());
@@ -8305,6 +8454,8 @@ bool ConvertExportedStreamsLocked(VideoState &s, const GuestDevice &device, cons
   // sasrt-nx (2026-11-08, sasrt_gpu_convert_tail_vertex_only; the second GPU round): the converted stream's reader is
   // the draw's vertex fetch: the wait drops the texture cache (as every buffer barrier did; the fetch is given it), not
   // the shaders' global-data and constant caches, which no reader of the stream buffer goes through.
+  if (SasrtExpNoChainWaits()) {  // sasrt-nx (2026-11-08): an EXPERIMENT (not identical): no wait
+  } else
   if (IsDeko3D() && sasrt::gpu_round::On(sasrt::gpu_round::kConvertTail)) {
     // sasrt-nx (2026-11-08, sasrt_gpu_convert_tail_no_texture_drop; the third GPU round): the converted streams were
     // written past 'used' (fresh in the frame: nothing read them since the last queue flush, which dropped the texture
@@ -8618,6 +8769,16 @@ void FlushVertexFillsLocked() {
   }
   g_copy_fills.clear();
   ++g_fetch_copy_generation;
+}
+
+// sasrt-nx (2026-11-08, sasrt_gpu_exp_shadow_d32f): stencil used on a depth target made without a stencil plane.
+void SasrtWarnStencilOnD32f(const HostSurface *d) {
+  if (d && d->depth && d->format == plume::RenderFormat::D32_FLOAT) {
+    static uint32_t logged = 0;
+    if (logged++ < 16)
+      RGPU_WARN("[sasrt] stencil on a depth target without stencil: {:08X} {}x{} (sasrt_gpu_exp_shadow_d32f)",
+                d->guest_va, d->width, d->height);
+  }
 }
 
 void SetTilesLocked(const ClearRect *rects, u32 count) {
@@ -10512,12 +10673,12 @@ int FastDrawLocked(const u8 *device_state, const DrawCall &call, const ReplayCon
             : !BindStreams(device, call, *vs, shader_strides, declaration->layout, declaration->layout_hash, geometry,
                            GpuStreams{}, nullptr))
     return -1;
-  if (targets_changed || (key_inputs && banjo::renut_gpu::DiagGpuShadersOn()))
+  if (targets_changed || (key_inputs && banjo::renut_gpu::DiagGpuShadersOn()) || SasrtProfileVsOn())
     f.profile_label = UINT32_MAX;  // the label reads the targets (and with the shaders' breakdown the shader and key)
   if (gpu_profile::Timed()) {
     const bool by_shader = banjo::renut_gpu::DiagGpuShadersOn();
     if (f.profile_label == UINT32_MAX)
-      f.profile_label = by_shader ? ShaderProfileLabel(targets, ps, *f.kp) : TargetsProfileLabel(targets);
+      f.profile_label = by_shader ? ShaderProfileLabel(targets, ps, *f.kp, vs) : TargetsProfileLabel(targets);
     if (by_shader)
       gpu_profile::Mark(s, f.profile_label);
     gpu_profile::CountDraw(s, f.profile_label);
@@ -10533,8 +10694,10 @@ int FastDrawLocked(const u8 *device_state, const DrawCall &call, const ReplayCon
       ++targets.depth->writes;
       targets.depth->write_seq = ++g_surface_write_seq;  // sasrt-nx: the EDRAM depth restore
     }
-    if (dc & 1)
+    if (dc & 1) {  // sasrt-nx's SasrtWarnStencilOnD32f inside it (rr6-nx, 2026-11-09)
       targets.depth->stencil_used = true;
+      SasrtWarnStencilOnD32f(targets.depth);
+    }
   }
   ++s.list_draws;  // Video::NoteDrawLocked
   if (geometry.indexed) {
@@ -10621,6 +10784,7 @@ int FastDrawLocked(const u8 *device_state, const DrawCall &call, const ReplayCon
   }
   f.sasrt_write_seq = g_surface_write_seq;  // sasrt-nx (2026-10-29): the EDRAM depth restore
   ++g_fast_draws;
+  ++g_sasrt_order_draws;  // sasrt-nx (2026-11-08, sasrt_gpu_diag_export_order)
   g_last_draw_kind = DrawKindOf(targets, ps);  // banjo-nx (2026-10-27): the census's
   g_last_draw_fields = fields;
   g_last_draw_fast = true;
@@ -10636,6 +10800,7 @@ void StoreFastStateLocked(const DrawCall &call, ShaderRecord *vs, ShaderRecord *
                           const TextureFetch *fetches, u32 alpha_test_func, bool per_instance, bool usable) {
   FastState &f = g_fast;
   ++g_full_draws;
+  ++g_sasrt_order_draws;  // sasrt-nx (2026-11-08, sasrt_gpu_diag_export_order)
   f.fetch_kept = false;  // banjo-nx (2026-10-27): DrawStateLocked bound its own
   g_last_draw_kind = DrawKindOf(targets, depth_only ? nullptr : device_ps);  // banjo-nx (2026-10-27): the census's
   g_last_draw_fields = g_chain_hint.fields;
@@ -11416,6 +11581,8 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
   // banjo-nx (2026-10-23): only shaders that export (DrawSummaryOf), without the entry's memo lookup per draw.
   if (DrawSummaryOf(*vs).exports)
     GatherMemExportStreams(vs->entry, vs_constants, exports, export_count);
+  if (export_count && vs->export_only && SasrtExpNoExports()) [[unlikely]]
+    return true;  // sasrt-nx (2026-11-08): an EXPERIMENT, not identical (sasrt_gpu_exp_no_exports)
   if (ps && DrawSummaryOf(*ps).exports)
     GatherMemExportStreams(ps->entry, ps_constants, exports, export_count);
   static const bool fast_census = REXCVAR_GET(banjo_renut_diag_fast_census);
@@ -11674,6 +11841,12 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
   HandOverBeforeDrawLocked(targets, u32(device.dev().m_ControlPacket.DepthControl),
                            u32(device.dev().m_ValuesPacket.StencilRefMask));  // kameo-nx (2026-11-03)
   g_handover_targets = &targets;  // banjo-nx (2026-10-19, banjo_deko3d_depth_handover)
+  if (SasrtOrderEvery() > 0 && g_sasrt_order.on &&
+      (targets.width != g_sasrt_order.tw || targets.height != g_sasrt_order.th)) [[unlikely]] {
+    g_sasrt_order.tw = targets.width;  // sasrt-nx (2026-11-08, sasrt_gpu_diag_export_order)
+    g_sasrt_order.th = targets.height;
+    SasrtOrderToken(fmt::format("T{}x{}{}", targets.width, targets.height, targets.color_count ? "" : "z"));
+  }
   // banjo-nx (2026-10-20, from sa2-nx, banjo_renut_chain_reuse): the previous chain draw's texture and sampler words when FillTextures'
   // memo would answer every bound slot as it did then: the device's fetch constants and texture words unchanged
   // (bytes 1152-1775, and the texture words: 12544-12647 in N&B, 12920-13023 in SA2), the same slots, frame, texture and depth epochs and depth target, and each bound
@@ -12191,6 +12364,19 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
   const FetchSpec fetch_spec = FetchSpecWords(sc, *vs, geometry.per_instance, ab_off);  // banjo-nx (banjo_gpu_fetch_spec)
   if (reused && geometry.per_instance && FetchSpecDiffers(reuse.key, fetch_spec))
     reused = false;
+  // sasrt-nx (2026-11-08, sasrt_gpu_export_raster_discard; decided here since the fourth round): an export draw recorded
+  // with the rasterizer off. The export-only draws this tree can tell: vivapinata-nx's export-mode shaders, or a memexport
+  // draw whose render state writes nothing (SasrtInertDrawLocked with the vertex shader's exports allowed).
+  const bool sasrt_export_discard =
+      IsDeko3D() && sasrt::gpu_round::On(sasrt::gpu_round::kExportDiscard) &&
+      ((vs->export_only && banjo::renut_gpu::ExportOnlyDrawsOn()) || (export_count && SasrtInertDrawLocked(device_state, true)));
+  // sasrt-nx (2026-11-09, sasrt_gpu_export_no_point_gs; the fourth GPU round): such a draw of a point list without Renut's
+  // point-sprite geometry shader. It made a quad of every point for a rasterizer that is off: SASRT's skinning exports
+  // (point lists, ~47,000 points a frame) cost ~120 ns a point whatever their vertex shader did (console: an empty vertex
+  // shader, its position moved, its stores flag cleared, other topologies: the same). The vertex shader runs once for
+  // each point either way: the same exports; no pixel either way.
+  const bool sasrt_no_point_gs = sasrt_export_discard && call.primitive == kPointList &&
+                                 sasrt::gpu_round::On(sasrt::gpu_round::kExportNoPointGs);
   PipelineKey key;
   if (reuse_on)
     CountReuse(3, reused);  // banjo-nx (2026-10-23)
@@ -12215,6 +12401,11 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
                   sc.alpha_test_func, fetch_spec);
   }
   key.fetch_pad = key.pixel_shader ? SasrtPlainFetchMask(sc, ps_entry) : 0u;  // sasrt-nx (2026-11-08, sasrt_gpu_plain_fetches)
+  if (call.primitive == kPointList && State().point_sprite_gs) {  // sasrt-nx (2026-11-09, sasrt_gpu_export_no_point_gs)
+    key.point_sprite = sasrt_no_point_gs ? 0 : 1;  // (a reused key holds the decision of the draw it came from)
+    if (sasrt_no_point_gs)
+      sasrt::gpu_round::Count(sasrt::gpu_round::kExportNoPointGs);
+  }
   key.reserved = (key.reserved & ~8u) | SasrtClipBit(sc);  // sasrt-nx (2026-11-08, sasrt_gpu_clip_spec)
   {  // sasrt-nx (2026-11-08, the third round: SasrtSpecWordsOf)
     const SasrtSpecWords words = SasrtSpecWordsOf(sc, vs->entry, ps_entry, &vs_constants);
@@ -12324,10 +12515,23 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
   // The export draws this tree can tell (vs->export_only is vivapinata-nx's analysis, not made here): a memexport draw
   // whose render state writes nothing (SasrtInertDrawLocked with the vertex shader's exports allowed: no colour channel, no
   // depth write, no stencil operation, no pixel shader exports).
-  if (IsDeko3D() && sasrt::gpu_round::On(sasrt::gpu_round::kExportDiscard) &&
-      (export_only_draw || (export_count && SasrtInertDrawLocked(device_state, true)))) {
+  if (sasrt_export_discard) {  // (export_only_draw implies it)
     plume::Deko3DDiscardNextDraw(cmd);
     sasrt::gpu_round::Count(sasrt::gpu_round::kExportDiscard);
+    // sasrt-nx (2026-11-08, sasrt_gpu_export_list_topology; the fourth GPU round): a point list drawn this way (the
+    // skinning exports) as a triangle list (count a multiple of 3) or a line list (even): with the rasterizer off only
+    // the vertex shader runs, once for each vertex of a list either way, so the same exports; the GPU packs a point
+    // list's vertices into vertex warps worse (SASRT: ~150 ns a skinned vertex).
+    if (call.primitive == 1 && sasrt::gpu_round::On(sasrt::gpu_round::kExportListTopology)) {
+      const u32 n = geometry.indexed ? geometry.index_count : geometry.vertex_count;
+      if (n >= 3 && n % 3 == 0) {
+        plume::Deko3DSetNextPrimitive(cmd, DkPrimitive_Triangles);
+        sasrt::gpu_round::Count(sasrt::gpu_round::kExportListTopology);
+      } else if (n >= 2 && n % 2 == 0) {
+        plume::Deko3DSetNextPrimitive(cmd, DkPrimitive_Lines);
+        sasrt::gpu_round::Count(sasrt::gpu_round::kExportListTopology);
+      }
+    }
   }
 #endif
 
@@ -12436,8 +12640,14 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
   if (gpu_profile::Timed()) {
     // banjo-nx (package 28b): the GPU profile's draws a frame, and with banjo_renut_diag_gpu_shaders its label.
     // banjo-nx (2026-10-19, render-thread proposal 7): only in the frames the profile times.
-    const uint32_t label = banjo::renut_gpu::DiagGpuShadersOn() ? ShaderProfileLabel(targets, ps, key)
+    if (export_count && SasrtProfileVsOn()) {  // sasrt-nx (2026-11-08, sasrt_gpu_diag_profile_vs)
+      g_sasrt_label_export_count = std::max(1u, geometry.indexed ? geometry.index_count : geometry.vertex_count);
+      g_sasrt_label_export_prim = call.primitive;
+      g_sasrt_label_export_inst = geometry.instance_count;
+    }
+    const uint32_t label = banjo::renut_gpu::DiagGpuShadersOn() ? ShaderProfileLabel(targets, ps, key, vs)
                                                                 : TargetsProfileLabel(targets);
+    g_sasrt_label_export_count = 0;
     if (banjo::renut_gpu::DiagGpuShadersOn())
       gpu_profile::Mark(s, label);
     gpu_profile::CountDraw(s, label);
@@ -12461,8 +12671,10 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
       ++targets.depth->writes;
       targets.depth->write_seq = ++g_surface_write_seq;  // sasrt-nx: the EDRAM depth restore
     }
-    if (dc & 1)
-      targets.depth->stencil_used = true;  // banjo-nx (2026-10-19, banjo_deko3d_depth_handover)
+    if (dc & 1) {  // sasrt-nx's SasrtWarnStencilOnD32f inside it (rr6-nx, 2026-11-09)
+      targets.depth->stencil_used = true;
+      SasrtWarnStencilOnD32f(targets.depth);  // banjo-nx (2026-10-19, banjo_deko3d_depth_handover)
+    }
   }
   CensusDraw(device_state, call, targets, vs, ps, vs_constants, ps_constants, prefetch_streams, prefetch_stream_count,
              prefetch_indexed ? &prefetch_index : nullptr);  // banjo-nx (2026-10-23, batch 6b): diagnostics only
@@ -12470,6 +12682,9 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
     UnleashedCensusDraw(device, call, texture_mask, declaration->layout.used_mask, prefetch_streams,
                         prefetch_stream_count, prefetch_indexed ? &prefetch_index : nullptr);
   Video::NoteDrawLocked();  // banjo-nx (2026-10-19, banjo_deko3d_kick_submit): the open list's draws
+  // sasrt-nx (2026-11-08, sasrt_gpu_exp_export_twice): a memexport draw drawn twice (the second writes the same bytes).
+  static const bool export_twice = REXCVAR_GET(sasrt_gpu_exp_export_twice);
+  for (int pass = 0; pass < (export_count && export_twice ? 2 : 1); ++pass) {
   if (geometry.indexed) {
     SetIndexBuffer(cmd, geometry.index_view);
     // banjo-nx: instanced for a tessellation grid (banjo_gpu_tess_grid); 1 for every other indexed draw.
@@ -12479,6 +12694,7 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
   } else {
     cmd->drawInstanced(geometry.vertex_count, geometry.instance_count, 0, 0);
   }
+  }
   if (export_count && FinishMemExportLocked(s, exports, export_count, export_offsets))
     g_bound.framebuffer = nullptr;  // the copies end any render pass
   // banjo-nx (2026-10-21, banjo_renut_smaa): SMAA right after the frame's final composite, before the HUD is drawn over
@@ -12486,6 +12702,10 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
   // (render/ui_scale.cpp). The passes leave their own targets, pipeline, layout and viewport bound.
   // banjo-nx (2026-10-23, batch 6): the record's answer (DrawSummaryOf), not the list's scan at every draw.
   if (ps && targets.color_count == 1 && !export_count && DrawSummaryOf(*ps).composite) {
+    // sasrt-nx (2026-11-08, sasrt_gpu_handover_with_smaa): a texture still sharing the target's image gets its resolve
+    // drawn before SMAA writes the image (the composite draw settled them already; this keeps SMAA safe on its own).
+    if (targets.colors[0]->handed && SmaaAfterPs(ps->hash))
+      DepthHandOverBeforeBindLocked(targets.colors[0], nullptr, 0);
     const bool smaa = SmaaAfterPs(ps->hash) && SmaaRunLocked(targets.colors[0]);
     const bool scaled = UiScaleAfterCompositeLocked(targets.colors[0]);
     if (smaa || scaled) {
@@ -13333,8 +13553,10 @@ void ClearTargets(const Targets &t, u32 flags, const plume::RenderRect &rect, co
     if (t.colors[i]->handed) [[unlikely]]
       DepthHandOverBeforeBindLocked(t.colors[i], &rect, (flags >> i) & 1u);
   }
-  if (t.depth && (flags & 0x20))
+  if (t.depth && (flags & 0x20)) {  // sasrt-nx's SasrtWarnStencilOnD32f inside it (rr6-nx, 2026-11-09)
     t.depth->stencil_used = true;
+    SasrtWarnStencilOnD32f(t.depth);
+  }
   if (!BindTargets(t))
     return;
   plume::RenderCommandList *cmd = State().command_list;
@@ -13627,7 +13849,9 @@ bool HandOverResolveLocked(HostSurface *s, HostTexture *d, const ClearRect &src,
   const bool whole = src.x1 == 0 && src.y1 == 0 && src.x2 == int32_t(s->width) && src.y2 == int32_t(s->height) &&
                      dest_x == 0 && dest_y == 0;
   const bool kind_on = s->depth ? banjo::renut_gpu::DepthHandOverOn() && !words
-                                : banjo::renut_gpu::ColorHandOverOn() && !banjo::renut_gpu::SmaaOn() &&
+                                : banjo::renut_gpu::ColorHandOverOn() &&
+                                      (!banjo::renut_gpu::SmaaOn() ||  // sasrt-nx (2026-11-08, sasrt_gpu_handover_with_smaa)
+                                       sasrt::gpu_round::On(sasrt::gpu_round::kHandoverSmaa)) &&
                                       ResolveCopyPossible(s, d) &&
                                       !(s->sasrt_fixed16 && banjo::renut_gpu::Fixed16ClampOn()) &&  // its resolve clamps
                                       !detail::ReadbackDestination(d);  // the CPU reads it (sasrt_renut_resolve_readback)
@@ -14231,6 +14455,19 @@ void ResolveStateLocked(const u8 *device_state, u32 flags, const ClearRect *sour
   const u32 source_va = source == 4 ? device.U32(d3d::kDeviceOffsetDepthStencil)
                                     : device.U32(d3d::kDeviceOffsetRenderTargets + source * 4);
   HostSurface *surface = GetHostSurfaceLocked(source_va);
+  // sasrt-nx (2026-11-09, sasrt_gpu_diag_profile_vs; the fourth round): with the shaders' breakdown, each resolve's own
+  // label: its source's size and format, colour or depth, and whether it clears after.
+  if (surface && banjo::renut_gpu::DiagGpuShadersOn() && SasrtProfileVsOn() && gpu_profile::Timed()) [[unlikely]] {
+    static std::unordered_map<uint64_t, uint32_t> labels;
+    const uint64_t k = uint64_t(surface->width) | uint64_t(surface->height) << 14 | uint64_t(int(surface->format)) << 28 |
+                       uint64_t(surface->depth) << 40 | uint64_t((flags >> 8) & 3) << 41;
+    uint32_t &label = labels[k];
+    if (!label)
+      label = gpu_profile::Label(fmt::format("resolves | {} {}x{} format {}{}", surface->depth ? "depth" : "colour",
+                                             surface->width, surface->height, int(surface->format),
+                                             (flags & 0x300) ? " and clear" : "")) + 1;
+    gpu_profile::Mark(s, label - 1);
+  }
   // vivapinata-nx (2026-11-04, the white fog at the cuts): this target's EDRAM was wiped by a clear through another layout and
   // nothing has written here since (ClearTargets): the resolve reads that clear. Viva Pinata blanks its 1280x720 mask this way at a
   // fade (the scene's tile clears, then a resolve of the mask's target into the mask's texture).
@@ -14291,6 +14528,10 @@ void ResolveStateLocked(const u8 *device_state, u32 flags, const ClearRect *sour
                     dest_level, dest_slice);
         }
       } else if (fit(dest, src)) {
+        if (SasrtOrderEvery() > 0 && g_sasrt_order.on) [[unlikely]]  // sasrt-nx (2026-11-08, sasrt_gpu_diag_export_order)
+          SasrtOrderToken(fmt::format("Z{}x{}f{}[{},{},{},{}]>{}x{}f{}@{},{}", surface->width, surface->height,
+                                      int(surface->format), src.x1, src.y1, src.x2, src.y2, dest->width, dest->height,
+                                      int(dest->host_format), dest_x, dest_y));
         // banjo-nx (2026-10-19, banjo_renut_resolve_skip): the same resolve of an unchanged source is in dest already.
         const uint64_t sig = ResolveSignature(surface, src, dest_x, dest_y, dest_level, dest_slice);
         // banjo-nx (2026-10-19, banjo_renut_depth_words_lazy): the words only where something reads them (or while
@@ -14328,6 +14569,14 @@ void ResolveStateLocked(const u8 *device_state, u32 flags, const ClearRect *sour
       const uint32_t slice = volume ? 0 : dest_slice;
       const uint32_t z = volume ? dest_slice : 0;
       const bool fits = fit(dest, src);
+      // sasrt-nx (2026-11-08, sasrt_gpu_diag_export_order): R<target w>x<h>f<host format>[<rect>]><texture w>x<h>f<host
+      // format, guest format>@<x>,<y> (l: a level or slice; x: ResolveCopyPossible says no; s: stacked or not 2D)
+      if (SasrtOrderEvery() > 0 && g_sasrt_order.on && fits) [[unlikely]]
+        SasrtOrderToken(fmt::format("R{}x{}f{}[{},{},{},{}]>{}x{}f{},{}@{},{}{}{}{}", surface->width, surface->height,
+                                    int(surface->format), src.x1, src.y1, src.x2, src.y2, dest->width, dest->height,
+                                    int(dest->host_format), int(dest->guest_format), dest_x, dest_y,
+                                    dest_level || dest_slice ? "l" : "", ResolveCopyPossible(surface, dest) ? "" : "x",
+                                    dest->stacked || dest->dimension != TextureDimension::Tex2D ? "s" : ""));
       const uint64_t sig = fits ? ResolveSignature(surface, src, dest_x, dest_y, dest_level, dest_slice) : 0;
       if (fits && banjo::renut_gpu::ResolveSkipOn() && dest->resolve_signature == sig) {
         // banjo-nx (2026-10-19, banjo_renut_resolve_skip): the same resolve of an unchanged source is in dest already.
@@ -14431,6 +14680,10 @@ void ResolveStateLocked(const u8 *device_state, u32 flags, const ClearRect *sour
 
   // Resolve-and-clear.
   if ((flags & 0x300) && surface) {
+    if (banjo::renut_gpu::DiagGpuShadersOn() && SasrtProfileVsOn() && gpu_profile::Timed()) [[unlikely]] {
+      static const uint32_t kClearLabel = gpu_profile::Label("resolves | the clear after");  // sasrt-nx (2026-11-09)
+      gpu_profile::Mark(s, kClearLabel);
+    }
     Targets t;
     if (surface->depth)
       t.depth = surface;

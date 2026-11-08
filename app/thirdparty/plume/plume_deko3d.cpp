@@ -1982,6 +1982,32 @@ namespace plume {
         auto &cb = codeBlocks.back();
         const uint32_t at = alignUp(cb.second, DK_SHADER_CODE_ALIGNMENT);
         memcpy(static_cast<uint8_t *>(dkMemBlockGetCpuAddr(cb.first)) + at, dksh.data(), size);
+        // sasrt-nx (2026-11-09, Deko3DOptions::expSphStoreBits): an EXPERIMENT on a vertex program's header bits
+        if (g_deko3dOptions.expSphStoreBits) {
+            uint32_t controlSz = 0, programsOff = 0, type = 1, entry = 0, w0 = 0;
+            memcpy(&controlSz, dksh.data() + 8, 4);
+            memcpy(&programsOff, dksh.data() + 16, 4);
+            if (uint64_t(programsOff) + 8 <= size) {
+                memcpy(&type, dksh.data() + programsOff, 4);
+                memcpy(&entry, dksh.data() + programsOff + 4, 4);
+            }
+            const uint64_t sph = uint64_t(controlSz) + entry;
+            if (type == 0 && sph + 4 <= size) {
+                uint8_t *word = static_cast<uint8_t *>(dkMemBlockGetCpuAddr(cb.first)) + at + sph;
+                memcpy(&w0, word, 4);
+                if ((w0 & 0x1F) == 1 && ((w0 >> 10) & 0xF) == 1 && (w0 & (1u << 16))) {
+                    const uint32_t before = w0;
+                    w0 &= ~(1u << 16);
+                    if (g_deko3dOptions.expSphStoreBits & 2u)
+                        w0 &= ~(1u << 26);
+                    memcpy(word, &w0, 4);
+                    static uint32_t logged = 0;
+                    if (logged++ < 8)
+                        logf("[sasrt] EXPERIMENT: vertex program %s header word 0 %08X -> %08X (sasrt_gpu_exp_sph_no_global_store)",
+                             what, before, w0);
+                }
+            }
+        }
         DkShaderMaker m;
         dkShaderMakerDefaults(&m, cb.first, at);
         dkShaderInitialize(&shader, &m);

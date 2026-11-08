@@ -229,6 +229,10 @@ def sasrt_guess(hashes, spec):
         g[932] = 5
     if hashes[1] in GPR_CAP_PS:
         g[910] = 1
+    # sasrt-nx (2026-11-08, the fourth round): the export window from the constant buffer (944; only the memexport vertex
+    # shaders declare it, the others get no define)
+    if hashes[0] != '0' * 16 and 944 not in g:
+        g[944] = 1
     return g
 
 
@@ -289,6 +293,8 @@ def read_list(path, blend_skip_on, alpha_guess=ALPHA_GUESS):
                 spec[933 + k] = sw[k]
         if sw[7] & 3 and ps:  # sasrt-nx (2026-11-08): sasrt_gpu_gpr_cap(_filter), constant 910
             spec[910] = 1
+        if sw[7] & 4 and vs:  # sasrt-nx (2026-11-08): sasrt_gpu_export_window_ubo, constant 944
+            spec[944] = 1
         if sw[8] and vs:  # sasrt-nx (2026-11-08): sasrt_gpu_export_format_spec, constants 940-943
             for k in range(4):
                 spec[940 + k] = sw[8 + k]

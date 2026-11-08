@@ -58,7 +58,12 @@ namespace sasrt::gpu_round {
   X(kExportFmtSpec, sasrt_gpu_export_format_spec, "a memexport's format word as a constant of the draw: its one pack compiled") \
   X(kTexDropTracked, sasrt_gpu_texture_drop_tracked, "a texture made readable drops the texture cache only if it was sampled since the last drop") \
   X(kTargetWaitTracked, sasrt_gpu_target_wait_tracked, "a texture made a target waits only if it was sampled or copied since the last wait") \
-  X(kReadWaitTracked, sasrt_gpu_read_wait_tracked, "a texture made readable waits only if it was written since the last wait (or drops the cache)")
+  X(kReadWaitTracked, sasrt_gpu_read_wait_tracked, "a texture made readable waits only if it was written since the last wait (or drops the cache)") \
+  /* the fourth round (2026-11-08, night: the 33 ms goal; docs/gpu-round-1108.md "Round 4"): A/B 135 and up */          \
+  X(kHandoverSmaa, sasrt_gpu_handover_with_smaa, "banjo's colour hand-over kept on with SMAA (SMAA's target settled first)") \
+  X(kExportWindowUbo, sasrt_gpu_export_window_ubo, "memexport windows read from the constant buffer, not a local array (constant 944)") \
+  X(kExportListTopology, sasrt_gpu_export_list_topology, "export draws with the rasterizer off drawn as triangle or line lists, not points") \
+  X(kExportNoPointGs, sasrt_gpu_export_no_point_gs, "export point lists with the rasterizer off drawn without the point-sprite geometry shader")
 
 enum Item : int {
 #define SASRT_GPU_ROUND_ENUM(name, key, what) name,

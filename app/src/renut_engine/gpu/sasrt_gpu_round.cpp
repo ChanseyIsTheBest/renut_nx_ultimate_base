@@ -403,6 +403,43 @@ REXCVAR_DEFINE_BOOL(sasrt_gpu_read_wait_tracked, false, "SASRT/GPU",
                     "the bound targets again at each wait. Same order of every write and read: same pixels")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
+// sasrt-nx (2026-11-08, night): the fourth GPU round (the user: "our goal is getting down to 33 ms GPU time, pixel
+// identical"). A/B 135 and up.
+REXCVAR_DEFINE_BOOL(sasrt_gpu_export_window_ubo, true, "SASRT/GPU",
+                    "deko3d renderer (fourth GPU round, item 46, A/B 136): a memexport vertex shader finds each export's "
+                    "window in a loop over a local copy of the four windows (SharedConstants 61-64), indexed at run time, "
+                    "so in local memory (192 bytes a thread in SASRT's skinning shader, whose draws cost ~180 ns a vertex). "
+                    "With constant 944 (pass expwin) the loop reads the constant buffer itself: the same words, no local "
+                    "memory. Needs the shader package and the DKSH cache made with pass expwin")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_INT32(sasrt_gpu_exp_sph_no_global_store, 0, "SASRT/GPU",
+                     "EXPERIMENT (2026-11-09): vertex programs loaded with their header's DoesGlobalStore bit cleared (1), "
+                     "and DoesLoadOrStore too (3): whether the store flag makes the GPU run SASRT's memexport vertex "
+                     "shaders (~120 ns a vertex whatever they compute) one way that is slow");
+REXCVAR_DEFINE_BOOL(sasrt_gpu_export_list_topology, false, "SASRT/GPU",
+                    "deko3d renderer (fourth GPU round, item 47, A/B 137): a memexport draw recorded with the rasterizer "
+                    "off (item 29) that is a point list is drawn as a triangle list when its count is a multiple of 3, "
+                    "else as a line list when it is even: only its vertex shader runs, once for each vertex either way, "
+                    "so the exports are the same and no pixel is drawn. SASRT's skinning exports are point lists of up "
+                    "to 34,000 vertices that cost ~150 ns a vertex")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(sasrt_gpu_export_no_point_gs, true, "SASRT/GPU",
+                    "deko3d renderer (fourth GPU round, item 48, A/B 138): an export draw recorded with the rasterizer off "
+                    "(item 29) that is a point list is built without Renut's point-sprite geometry shader, which made a "
+                    "quad of every point for a rasterizer that is off. SASRT's skinning exports (~47,000 points a frame) "
+                    "cost ~120 ns a point whatever their vertex shader did. The vertex shader runs once a point either way: "
+                    "the same exports, and no pixel either way. Its vertex variant then gets constant 905 (no outputs)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(sasrt_gpu_handover_with_smaa, false, "SASRT/GPU",
+                    "deko3d renderer (fourth GPU round, item 45, A/B 135): banjo's colour hand-over "
+                    "(banjo_deko3d_color_handover: a whole resolve into a texture of its size and format left in the "
+                    "target's image, not copied) was off whenever SMAA was on, so every resolve was drawn since the SMAA "
+                    "swap (+0.8 ms of resolves). Here SMAA runs only right after the composite draw, on that draw's first "
+                    "target; any texture still sharing that target's image is settled (its resolve drawn) before SMAA "
+                    "writes it, so the hand-over stays on with SMAA. Every texel is the one the copy would write: same "
+                    "pixels")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
 #if defined(PLUME_DEKO3D)
 #include <plume_deko3d.h>
 #endif
@@ -439,6 +476,7 @@ void ApplyPlume() {
   plume::g_deko3dOptions.trackedImageInvalidate = On(kTexDropTracked);
   plume::g_deko3dOptions.trackedTargetWait = On(kTargetWaitTracked);
   plume::g_deko3dOptions.trackedReadWait = On(kReadWaitTracked);
+  plume::g_deko3dOptions.expSphStoreBits = uint32_t(REXCVAR_GET(sasrt_gpu_exp_sph_no_global_store));  // an experiment
 #endif
 }
 

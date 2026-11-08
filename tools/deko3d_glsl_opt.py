@@ -2398,6 +2398,91 @@ VSKILL_NAN_RE = re.compile(r'^(\s*)gl_Position = (mix\((\w+), vec4\(uintBitsToFl
                            r'bvec4\((\w+)\)\));$', re.M)
 
 
+# ---------------------------------------------------------------------------------------------------------------------
+# pass: expwin - sasrt-nx (2026-11-08, sasrt_gpu_export_window_ubo; the fourth GPU round, the 33 ms goal): Renut's
+# memexport writes each exported value into the first of the draw's four export windows that holds its address, a loop
+# over `uvec4 _N[4] = uvec4[](g_UboShared.v[61u], ... v[64u])` indexed by the loop counter. A local array indexed at run
+# time lives in local memory: SASRT's skinning export shader (three exports a vertex) kept 192 bytes a thread there, and
+# its draws cost ~180 ns a vertex on the console (8.5 ms a race frame, measured by drawing every export twice). With
+# constant 944 = 1 each use `_N[i]` reads the constant buffer itself, `g_UboShared.v[61u + min(i, 3u)]`: the same four
+# words (i < 4 wherever the loop reads them; the min only bounds an index the loop never makes), no local memory.
+# 944 = 0 (default) expands every use back to `_N[i]` and keeps the array: the code is the same as without this pass.
+EXPWIN_RE = re.compile(r'^([ \t]*)uvec4 (_\d+)\[4\] = uvec4\[\]\(g_UboShared\.v\[(\d+)u\], g_UboShared\.v\[(\d+)u\], '
+                       r'g_UboShared\.v\[(\d+)u\], g_UboShared\.v\[(\d+)u\]\);$', re.M)
+EXPWIN_DECL = '#ifndef SPIRV_CROSS_CONSTANT_ID_944\n#define SPIRV_CROSS_CONSTANT_ID_944 0u\n#endif\n'
+
+
+def pass_expwin(text):
+    if 'SPIRV_CROSS_CONSTANT_ID_944' in text or 'uvec4[](g_UboShared.v[' not in text:
+        return text
+    done = 0
+    for m in list(EXPWIN_RE.finditer(text)):
+        indent, name = m.group(1), m.group(2)
+        regs = [int(m.group(k)) for k in range(3, 7)]
+        if regs != list(range(regs[0], regs[0] + 4)):
+            continue
+        uses = re.findall(r'(?<![\w.])' + re.escape(name) + r'\b', text)
+        indexed = re.findall(r'(?<![\w.])' + re.escape(name) + r'\[_\d+\]', text)
+        if len(uses) != len(indexed) + 1:  # the declaration, then only `_N[_M]` reads
+            continue
+        decl = m.group(0)
+        if text.count(decl) != 1:
+            continue
+        text = text.replace(decl, f'#if SPIRV_CROSS_CONSTANT_ID_944 != 0u\n'
+                                  f'#define DKW{name}(i) g_UboShared.v[{regs[0]}u + min((i), 3u)]\n'
+                                  f'#else\n{decl}\n#define DKW{name}(i) {name}[i]\n#endif')
+        text = re.sub(r'(?<![\w.])' + re.escape(name) + r'\[(_\d+)\]', f'DKW{name}(\\1)', text)
+        done += 1
+    return insert_globals(text, EXPWIN_DECL) if done else text
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# pass: expparts - sasrt-nx (2026-11-09, sasrt_gpu_exp_export_parts; the fourth GPU round): an EXPERIMENT that changes
+# pixels, to find what makes a memexport vertex shader cost ~150 ns a vertex on the console. Constant 945 (0 by default:
+# the code exactly as before): bit 0 its export stores skipped (the values still computed), bit 1 its bone-row loads from
+# the address window replaced by a constant-buffer word, bit 2 its vertex inputs replaced by zero, bit 3 no export
+# store at all (the export work then compiles away), bit 4 the position (2, 2, 2, 1): outside the view volume.
+EXPPARTS_DECL = ('#ifndef SPIRV_CROSS_CONSTANT_ID_945\n#define SPIRV_CROSS_CONSTANT_ID_945 0u\n#endif\n'
+                 'const uint g_sasrtExpParts = SPIRV_CROSS_CONSTANT_ID_945;\n')
+EXPPARTS_STORE_RE = re.compile(r'^(\s*)(g_DkMemExport\._m0\[.+\]) = (_\d+);$', re.M)
+EXPPARTS_IN_RE = re.compile(r'^layout\(location = \d+\) in (\w+) (in_var_\w+);$', re.M)
+
+
+def pass_expparts(text):
+    if 'SPIRV_CROSS_CONSTANT_ID_945' in text or 'g_DkMemExport._m0[' not in text:
+        return text
+    text = EXPPARTS_STORE_RE.sub(lambda m: f'{m.group(1)}if ((g_sasrtExpParts & 8u) == 0u && ((g_sasrtExpParts & 1u) == 0u || '
+                                           f'{m.group(3)} == 2654435769u)) {{ {m.group(2)} = {m.group(3)}; }}', text)
+    key = 'g_DkAddressWindow4._m0['
+    out, at = [], 0
+    while True:
+        k = text.find(key, at)
+        if k < 0:
+            out.append(text[at:])
+            break
+        depth, j = 1, k + len(key)
+        while depth:
+            depth += {'[': 1, ']': -1}.get(text[j], 0)
+            j += 1
+        out.append(text[at:k])
+        out.append(f'(((g_sasrtExpParts & 2u) != 0u) ? g_UboShared.v[1u] : {text[k:j]})')
+        at = j
+    text = ''.join(out)
+    text = re.sub(r'^(\s*)gl_Position = (_\d+);$', lambda m: f'{m.group(1)}gl_Position = ((g_sasrtExpParts & 16u) != 0u) ? '
+                  f'vec4(2.0, 2.0, 2.0, 1.0) : {m.group(2)};', text, flags=re.M)
+    ins = EXPPARTS_IN_RE.findall(text)
+    span = main_span(text)
+    if ins and span:
+        a, b = span
+        body = text[a:b]
+        for ty, name in ins:
+            body = re.sub(r'(?<![\w.])' + name + r'\b', 'dkx_' + name, body)
+        decl = ''.join(f'\n    {ty} dkx_{name} = ((g_sasrtExpParts & 4u) != 0u) ? {ty}(0.0) : {name};' for ty, name in ins)
+        body = decl + body  # main_span's body starts after main's brace
+        text = text[:a] + body + text[b:]
+    return insert_globals(text, EXPPARTS_DECL)
+
+
 def pass_vskill(text):
     """vivapinata-nx (2026-11-03): the XDK's vertex kill (oPts.z) drops a primitive only when all its vertices are killed
     (PA_CL_CLIP_CNTL.vtx_kill_or off; the SDK's translators do the same). XenosRecomp's SPIR-V has only the NaN position,
@@ -2660,6 +2745,8 @@ PASSES = [
     ('fetchendian', pass_fetchendian),  # sasrt-nx (2026-11-08): the third GPU round, constants 937-939
     ('expfmt', pass_expfmt),  # sasrt-nx (2026-11-08): the third GPU round, constants 940-943
     ('vskill', pass_vskill),  # vivapinata-nx (2026-11-03): last
+    ('expwin', pass_expwin),  # sasrt-nx (2026-11-08): the fourth GPU round, constant 944
+    ('expparts', pass_expparts),  # sasrt-nx (2026-11-09): an EXPERIMENT, constant 945 (0: as before)
 ]
 # banjo-nx (2026-10-21): scaled targets (648p / 900p): scale1 and fragscale (1x only) are not in the default.
 DEFAULT = ','.join(name for name, _ in PASSES if name not in ('scale1', 'fragscale'))
@@ -2667,7 +2754,7 @@ DEFAULT = ','.join(name for name, _ in PASSES if name not in ('scale1', 'fragsca
 
 # The passes for one stage only.
 STAGE_OF = {'plainfetch': 'frag', 'onex': 'frag', 'facesign': 'frag', 'clipspec': 'vert', 'nofxaa': 'frag',
-            'vsepi': 'vert', 'stack3d': 'frag', 'fetchendian': 'vert', 'expfmt': 'vert', 'skinonce': 'vert', 'bonesel': 'vert', 'aw4': 'vert', 'lightbranch': 'frag', 'nullps': 'frag', 'gpr32': 'frag', 'earlyz': 'frag', 'txq': 'frag', 'alpha': 'frag', 'alphamask': 'frag', 'earlyhoist': 'frag', 'tess': 'vert', 'vsout': 'vert', 'vszero': 'vert', 'pszero': 'frag'}
+            'vsepi': 'vert', 'expwin': 'vert', 'expparts': 'vert', 'stack3d': 'frag', 'fetchendian': 'vert', 'expfmt': 'vert', 'skinonce': 'vert', 'bonesel': 'vert', 'aw4': 'vert', 'lightbranch': 'frag', 'nullps': 'frag', 'gpr32': 'frag', 'earlyz': 'frag', 'txq': 'frag', 'alpha': 'frag', 'alphamask': 'frag', 'earlyhoist': 'frag', 'tess': 'vert', 'vsout': 'vert', 'vszero': 'vert', 'pszero': 'frag'}
 
 
 def optimise(text, passes=DEFAULT, stage=None, name=None):

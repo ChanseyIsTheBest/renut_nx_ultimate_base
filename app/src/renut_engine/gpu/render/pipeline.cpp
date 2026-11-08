@@ -384,7 +384,7 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineKey &key, const Pipel
 
   // banjo-nx (banjo_gpu_bool_spec): the key's bools as the shaders' specialization constants (banjo_bool_spec.h). One
   // list for every stage: a stage takes the ids it declares (vertex and pixel shader bools have distinct ones).
-  plume::RenderSpecConstant spec[280];  // 256 bools, 900-914 and 920-926
+  plume::RenderSpecConstant spec[300];  // 256 bools, 900-914, 920-930 and sasrt-nx's 932-944
   uint32_t spec_count = 0;
   for (uint32_t w = 0; w < 8; ++w) {
     for (uint32_t m = key.bool_mask[w]; m; m &= m - 1) {
@@ -464,6 +464,10 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineKey &key, const Pipel
       for (uint32_t k = 0; k < 4; ++k)
         spec[spec_count++] = plume::RenderSpecConstant(940 + k, key.sasrt_words[8 + k]);
     }
+    if (key.sasrt_words[7] & 4u)  // sasrt-nx (2026-11-08, sasrt_gpu_export_window_ubo; the fourth round)
+      spec[spec_count++] = plume::RenderSpecConstant(944, 1);
+    if ((key.sasrt_words[7] >> 3) & 31u)  // sasrt-nx (2026-11-09, sasrt_gpu_exp_export_parts: an experiment)
+      spec[spec_count++] = plume::RenderSpecConstant(945, (key.sasrt_words[7] >> 3) & 31u);
   }
   if (key.pixel_shader) {
     for (uint32_t k = 1; k < 4; ++k) {

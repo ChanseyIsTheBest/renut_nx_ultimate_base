@@ -810,7 +810,10 @@ namespace plume {
             dkCmdBufReplayCmds(cmd, &off, 1);
         }
         workSinceFragmentWait = true;  // sasrt-nx (2026-11-08, leanBarrierSkip)
-        dkCmdBufDraw(cmd, graphicsPipeline->primitive, vertexCount, instanceCount, startVertex, startInstance);
+        // sasrt-nx (2026-11-08, sasrt_gpu_export_list_topology): Deko3DSetNextPrimitive's, once
+        const DkPrimitive drawPrim = nextPrimitive ? DkPrimitive(nextPrimitive - 1) : graphicsPipeline->primitive;
+        nextPrimitive = 0;
+        dkCmdBufDraw(cmd, drawPrim, vertexCount, instanceCount, startVertex, startInstance);
         if (discard) {
             const uint32_t on = (4u << 29) | (1u << 16) | (0u << 13) | 0x0DFu;
             dkCmdBufReplayCmds(cmd, &on, 1);
@@ -827,7 +830,9 @@ namespace plume {
             bindTextures();
         flushBarriers();
         // sasrt-nx (2026-10-30, Deko3DOptions::stripRestart): a strip cut at the all-ones index, as on Vulkan.
-        const DkPrimitive prim = graphicsPipeline->primitive;
+        // sasrt-nx (2026-11-08, sasrt_gpu_export_list_topology): Deko3DSetNextPrimitive's, once
+        const DkPrimitive prim = nextPrimitive ? DkPrimitive(nextPrimitive - 1) : graphicsPipeline->primitive;
+        nextPrimitive = 0;
         uint32_t restart = 0;
         if ((prim == DkPrimitive_TriangleStrip || prim == DkPrimitive_LineStrip) && Deko3DGetOptions().stripRestart) {
             restart = boundIndexFormat == DkIdxFormat_Uint32 ? 0xFFFFFFFFu : boundIndexFormat == DkIdxFormat_Uint8 ? 0xFFu : 0xFFFFu;
@@ -1952,6 +1957,11 @@ namespace plume {
     void Deko3DDiscardNextDraw(RenderCommandList *commandList) {
         if (Deko3DCommandList *cl = static_cast<Deko3DCommandList *>(commandList))
             cl->discardNextDraw = true;
+    }
+
+    void Deko3DSetNextPrimitive(RenderCommandList *commandList, uint32_t primitive) {
+        if (Deko3DCommandList *cl = static_cast<Deko3DCommandList *>(commandList))
+            cl->nextPrimitive = primitive + 1;
     }
 
     uint64_t Deko3DBufferWaits(const RenderCommandList *commandList) {
