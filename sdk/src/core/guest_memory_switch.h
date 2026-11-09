@@ -119,6 +119,10 @@ bool RexGmCommit(size_t offset, size_t length, RexGmAccess access);
 /* The reverse. Frees the backing. */
 bool RexGmDecommit(size_t offset, size_t length);
 
+/* Zero a range through the committed chunks' RW aliases, leaving view protections alone (peggle2-nx: decommit and
+ * release semantics, see memory_switch.cpp). */
+bool RexGmZero(size_t offset, size_t length);
+
 /*
  * Maps into the window the chunk that covers window_address, and only in the
  * view that address belongs to. Chunks are not mapped when they are committed:

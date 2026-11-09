@@ -663,6 +663,29 @@ bool RexGmDecommit(size_t offset, size_t length) {
     return true;
 }
 
+/*
+ * peggle2-nx: zero a range of the mapping through each committed chunk's always-RW alias (shadow), whatever the
+ * protection of its views. memory_switch.cpp calls it when the guest decommits or releases memory: the backing
+ * stays committed there (see that file's header), and the Xbox 360, like VirtualAlloc on the PC, hands out
+ * zero-filled pages when the range is committed again. Without this the next commit found the old contents.
+ * Chunks never committed are left alone (they are zero-filled when created).
+ */
+bool RexGmZero(size_t offset, size_t length) {
+    State& s = S();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    if (!s.base || !length) return false;
+    const size_t begin = offset, end = offset + length;
+    for (auto& entry : s.chunks) {
+        const Chunk& c = entry.second;
+        const size_t lo = std::max(begin, c.offset);
+        const size_t hi = std::min(end, c.offset + c.length);
+        if (lo < hi && c.shadow) {
+            memset(static_cast<uint8_t*>(c.shadow) + (lo - c.offset), 0, hi - lo);
+        }
+    }
+    return true;
+}
+
 bool RexGmProtect(uint8_t* address, size_t length, RexGmAccess access, RexGmAccess* out_old) {
     State& s = S();
     std::lock_guard<std::mutex> lock(s.mutex);

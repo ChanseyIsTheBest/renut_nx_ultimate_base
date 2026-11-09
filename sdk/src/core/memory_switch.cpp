@@ -209,6 +209,9 @@ bool DeallocFixed(void* base_address, size_t length, DeallocationType deallocati
   switch (deallocation_type) {
     case DeallocationType::kDecommit:
     case DeallocationType::kRelease:
+      // peggle2-nx: the backing stays, so clear it now: committed again later, the range must read as zeros, as on
+      // the Xbox 360 and with VirtualFree/VirtualAlloc on the PC (guest code relies on fresh pages being zero).
+      RexGmZero(static_cast<size_t>(static_cast<uint8_t*>(base_address) - RexGmBase()), length);
       return RexGmProtect(static_cast<uint8_t*>(base_address), length, REX_GM_NONE, nullptr);
     default:
       return false;

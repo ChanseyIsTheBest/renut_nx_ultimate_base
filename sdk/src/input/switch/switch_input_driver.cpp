@@ -36,15 +36,16 @@
 // Face buttons. By position (the default since 2026-10-07, the user's choice): as on the Xbox 360 pad the game was
 // made for, the bottom button (B on Switch controllers) acts as A, the right one (A) as B, the left one (Y) as X and
 // the top one (X) as Y. false = by letter (the Switch's A acts as A), as in other Switch games. It applies at once;
-// the settings menu reads it too (window_switch.cpp). input_p1_* / input_p2_* below override single buttons.
+// the settings menu reads it too (window_switch.cpp). input_p1_* ... input_p4_* below override single buttons.
 REXCVAR_DEFINE_BOOL(input_xbox_layout, true, "Input",
                     "Face buttons by position, as on an Xbox 360 pad (the bottom button, B, acts as A). "
                     "false = by letter: the Switch's A acts as A");
 
 // Remapping, per player: which Switch buttons press each Xbox 360 button, read at start (renut.toml sections
-// [input_p1] and [input_p2]: a = "B, ZR" there is input_p1_a). Empty = the default (the layout above for A/B/X/Y; for
+// [input_p1] to [input_p4]: a = "B, ZR" there is input_p1_a). Empty = the default (the layout above for A/B/X/Y; for
 // the rest, the button in the same place). A comma-separated list of: A B X Y L R ZL ZR PLUS MINUS LSTICK RSTICK UP
-// DOWN LEFT RIGHT SL SR, or NONE. Player 1's map also serves players 3 and 4. Single Joy-Cons held sideways name their
+// DOWN LEFT RIGHT SL SR, or NONE. Players 3 and 4 have their own maps (port 55, from feedingfrenzy2-nx's SDK, which
+// had them from peggle2-nx; before, player 1's map served them). Single Joy-Cons held sideways name their
 // four face buttons by the place they take there (the right one is A, the bottom one B, the top one X, the left one Y),
 // as two-handed controllers do.
 #define REX_INPUT_MAP_CVARS(P, WHO)                                                                                 \
@@ -66,6 +67,8 @@ REXCVAR_DEFINE_BOOL(input_xbox_layout, true, "Input",
   REXCVAR_DEFINE_STRING(input_##P##_right, "", "Input", WHO ": Switch buttons for D-pad right (default RIGHT)")
 REX_INPUT_MAP_CVARS(p1, "Player 1");
 REX_INPUT_MAP_CVARS(p2, "Player 2");
+REX_INPUT_MAP_CVARS(p3, "Player 3");
+REX_INPUT_MAP_CVARS(p4, "Player 4");
 #undef REX_INPUT_MAP_CVARS
 
 // Single Joy-Cons (one per player, for multiplayer) are held sideways: the system is told so (it then turns the
@@ -119,18 +122,17 @@ constexpr uint32_t kRepeatRateMs = 100;
 // counter, so a pad that reconnects never gets an id it had before.
 constexpr uint64_t kDeviceIdTag = 0x4E5800;  // "NX"
 
-// Which Switch buttons press each Xbox 360 button: per player (1, and 2; players 3-4 use player 1's), one table per
-// face-button layout (input_xbox_layout), that player's overrides (input_p1_* / input_p2_*) applied to both. Built
-// once at Setup.
+// Which Switch buttons press each Xbox 360 button: per player (1 to 4), one table per face-button layout
+// (input_xbox_layout), that player's overrides (input_p1_* ... input_p4_*) applied to both. Built once at Setup.
 struct ButtonTable {
   std::array<uint64_t, 16> buttons{};  // per XInput button bit (X_INPUT_GAMEPAD_*: bit i)
   uint64_t left_trigger = 0, right_trigger = 0;
 };
-std::array<std::array<ButtonTable, 2>, 2> g_tables;  // [player 1 / 2][0 by letter, 1 by position]
+std::array<std::array<ButtonTable, 2>, 4> g_tables;  // [player 1 to 4][0 by letter, 1 by position]
 
 constexpr int BitIndex(uint16_t bit) { return std::countr_zero(bit); }
 
-// One name of input_p1_* / input_p2_*: the Switch buttons it stands for (0 for NONE), false when unknown.
+// One name of input_pN_*: the Switch buttons it stands for (0 for NONE), false when unknown.
 bool SwitchButtonByName(std::string name, uint64_t& out) {
   for (char& c : name) c = char(std::toupper(static_cast<unsigned char>(c)));
   static const std::pair<const char*, uint64_t> kNames[] = {
@@ -229,7 +231,8 @@ void BuildButtonTables() {
     {"input_" #P "_left", REXCVAR_GET(input_##P##_left), BitIndex(X_INPUT_GAMEPAD_DPAD_LEFT)},    \
     {"input_" #P "_right", REXCVAR_GET(input_##P##_right), BitIndex(X_INPUT_GAMEPAD_DPAD_RIGHT)}, \
   }
-  const Override overrides[2][16] = {REX_INPUT_OVERRIDES(p1), REX_INPUT_OVERRIDES(p2)};
+  const Override overrides[4][16] = {REX_INPUT_OVERRIDES(p1), REX_INPUT_OVERRIDES(p2), REX_INPUT_OVERRIDES(p3),
+                                     REX_INPUT_OVERRIDES(p4)};
 #undef REX_INPUT_OVERRIDES
   for (size_t player = 0; player < g_tables.size(); ++player) {
     for (const Override& o : overrides[player]) {
@@ -250,7 +253,7 @@ void BuildButtonTables() {
 // button is A, the bottom one B, the top one X, the left one Y). The system names a single Joy-Con's buttons as they
 // are printed; held sideways the left Joy-Con's arrow buttons and the right Joy-Con's letters turn a quarter: same
 // table as devkitPro's SDL (pad_mapping_left_joy / pad_mapping_right_joy). SL / SR are the triggers (ZL / ZR) and stay
-// readable as SL / SR for input_p1_* / input_p2_*; minus or plus is Start; the stick
+// readable as SL / SR for input_p1_* ... input_p4_*; minus or plus is Start; the stick
 // click is LSTICK.
 uint64_t SidewaysLeftJoyCon(uint64_t p) {
   uint64_t v = 0;
@@ -380,7 +383,7 @@ struct SwitchInputDriver::Slot {
   bool connected = false;
   DeviceId id = DeviceId::kInvalid;
   // The guest player this controller is (0 = player 1), as the input system assigned it (OnDevicesAssigned): picks
-  // the button table (player 2's map for player 2, player 1's for the others).
+  // the button table (each of players 1 to 4 its own map; port 55).
   uint32_t ordinal = 0;
   // sasrt-nx (2026-11-03, input_switch_disconnect_grace_ms; port 52): when HID first reported the pad absent (0: it is
   // there), and the connection count then (another pad connecting ends the grace).
@@ -654,7 +657,8 @@ void SwitchInputDriver::Poll(size_t index) {
   }
   DispatchMenuShortcuts(slot, held);
   X_INPUT_GAMEPAD gamepad{};
-  const ButtonTable& table = g_tables[slot.ordinal == 1 ? 1 : 0][REXCVAR_GET(input_xbox_layout) ? 1 : 0];
+  const ButtonTable& table = g_tables[slot.ordinal < g_tables.size() ? slot.ordinal : 0]
+                                     [REXCVAR_GET(input_xbox_layout) ? 1 : 0];
   uint16_t buttons = 0;
   for (int i = 0; i < 16; ++i) {
     if (held & table.buttons[i]) {
