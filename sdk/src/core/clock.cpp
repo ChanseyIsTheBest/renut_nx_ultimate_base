@@ -20,6 +20,7 @@
 
 #include <rex/chrono/clock.h>
 #include <rex/cvar.h>
+#include <rex/logging.h>
 #include <rex/math.h>
 #include <rex/platform.h>
 #include <rex/sys_counters.h>
@@ -163,6 +164,20 @@ REXCVAR_DEFINE_BOOL(clock_count_calls, false, "Clock",
                     "Count UpdateGuestClock's calls for the runtime census (banjo_diag_runtime_census's clock line). "
                     "Off, a time-base read takes no thread pointer and no counter (the census shows 0 calls)");
 
+// ds3-nx (2026-10-24, sdk-patches/0013; port 57): the guest never saw its console sleep. While the process is
+// suspended (the Switch asleep or at HOME; a PC asleep) no thread reads the clock, so the first read after it carried
+// the whole nap in one step, and a game takes that as one enormous frame (Dead Space 2's RenderWare Audio crashed
+// within seconds of waking). Here a gap of more than 250 ms in which nothing read the clock is cut out of the guest's
+// time. ds3-nx clamped each read's delta, with a shared write per read; this lock-free count (ports 46/48) keeps its
+// reads free of shared writes: they compare the host count with a shared mark that moves at most every 5 ms. As in
+// ds3-nx, the reads alone keep it fresh: a running game reads the clock far more often than every 250 ms (a stretch
+// with no read at all, such as the start before the guest runs, is cut too, which only slows its time). A thread of
+// its own to keep the mark fresh stopped the Switch build at start in Ryujinx (port 57's first try).
+REXCVAR_DEFINE_BOOL(clock_nap_clamp, true, "Clock",
+                    "A gap of more than 250 ms with no clock read at all (the console asleep or at HOME, the PC "
+                    "asleep: the process suspended) is cut out of the guest's time, which goes on from where it was. "
+                    "false: the guest sees the whole gap at once, as one huge frame");
+
 namespace rex::chrono {
 
 // Time scalar applied to all time operations.
@@ -208,6 +223,14 @@ struct alignas(64) AlignedTickBase {
 AlignedTickBase tick_base_slots_[8];
 size_t tick_base_slots_used_ = 0;  // under tick_mutex_
 alignas(64) std::atomic<bool> fast_read_{false};
+
+// port 57 (clock_nap_clamp): the host count of a recent clock read, on a line of its own. Every read has a host count
+// at most one mark step above it, so the guest time any read returned is at most the time at mark + step.
+alignas(64) std::atomic<uint64_t> clock_mark_{0};
+// Set by RecomputeGuestTickScalar before nap_clamp_ is turned on: 5 ms and 250 ms of host ticks.
+uint64_t mark_step_ticks_ = 0;
+uint64_t nap_ticks_ = 0;
+std::atomic<bool> nap_clamp_{false};
 
 // The host count, inline where the platform's is one register read.
 [[gnu::always_inline]] inline uint64_t HostTicksNow() {
@@ -256,6 +279,46 @@ inline uint64_t GuestTicksAt(const TickBase& base, uint64_t host_tick_count) {
   return base.guest + delta / base.den * base.num + delta % base.den * base.num / base.den;
 }
 
+// port 57: a gap found by a read (UpdateGuestClock). Under the lock the gap is checked again (the first
+// thread to find it cuts it, the others find the mark moved), then the lock-free base goes on from the guest time at
+// mark + step (the latest any read can have returned) at host count now. The locked path's state too.
+[[gnu::noinline, gnu::cold]] void CutNap(uint64_t now) {
+  std::lock_guard<std::mutex> lock(tick_mutex_);
+  const uint64_t mark = clock_mark_.load(std::memory_order_relaxed);
+  if (now <= mark + nap_ticks_) return;
+  const uint64_t resume = mark + mark_step_ticks_;
+  const TickBase* old_base = tick_base_.load(std::memory_order_relaxed);
+  TickBase next = *old_base;
+  next.guest = GuestTicksAt(*old_base, resume);
+  next.host = now;
+  TickBase* slot = tick_base_slots_used_ < std::size(tick_base_slots_)
+                       ? &tick_base_slots_[tick_base_slots_used_++].base
+                       : new TickBase;  // a reader may still hold the old one: never freed (one per nap)
+  *slot = next;
+  tick_base_.store(slot, std::memory_order_release);
+  last_host_tick_count_ = now;
+  clock_mark_.store(now, std::memory_order_release);
+  static uint32_t naps = 0;
+  ++naps;
+  REXLOG_INFO("[clock] {} ms with no clock read cut out of the guest's time (the process suspended: asleep "
+              "or at HOME; or no reads yet, at the start) ({} so far; clock_nap_clamp)",
+              (now - resume) * 1000 / std::max<uint64_t>(1, Clock::QueryHostTickFrequency()), naps);
+}
+
+// port 57: a read's check against the mark (acquire: a base published by CutNap before the mark is seen with it).
+[[gnu::always_inline]] inline void NoteClockRead(uint64_t now) {
+  uint64_t mark = clock_mark_.load(std::memory_order_acquire);
+  if (now > mark + mark_step_ticks_) [[unlikely]] {
+    if (now - mark > nap_ticks_) {
+      CutNap(now);
+      return;
+    }
+    // Only forward: a thread holding an older count must not move it back.
+    while (now > mark && !clock_mark_.compare_exchange_weak(mark, now, std::memory_order_relaxed)) {
+    }
+  }
+}
+
 void RecomputeGuestTickScalar() {
   // Create a rational number with numerator (first) and denominator (second)
   auto frac = std::make_pair(guest_tick_frequency_, Clock::QueryHostTickFrequency());
@@ -292,14 +355,25 @@ void RecomputeGuestTickScalar() {
   fast_read_.store(REXCVAR_GET(clock_lock_free) && !REXCVAR_GET(clock_no_scaling) &&
                        !REXCVAR_GET(clock_count_calls) && !raw,
                    std::memory_order_release);
+  // port 57 (clock_nap_clamp): the steps in host ticks, the mark at now, then the switch.
+  const uint64_t host_frequency = std::max<uint64_t>(1, Clock::QueryHostTickFrequency());
+  mark_step_ticks_ = host_frequency / 200;
+  nap_ticks_ = host_frequency / 4;
+  clock_mark_.store(host_now, std::memory_order_release);
+  const bool clamp = REXCVAR_GET(clock_nap_clamp) && !REXCVAR_GET(clock_no_scaling);
+  nap_clamp_.store(clamp, std::memory_order_release);
 }
 
 // Update the guest timer for all threads.
 // Return a copy of the value so locking is reduced.
 uint64_t UpdateGuestClock() {
   if (fast_read_.load(std::memory_order_relaxed)) [[likely]] {  // rr6-nx (2026-11-08, clock_count_calls)
+    const uint64_t now = HostTicksNow();
+    if (nap_clamp_.load(std::memory_order_relaxed)) [[likely]] {
+      NoteClockRead(now);  // port 57: before the base is loaded
+    }
     const TickBase& base = *tick_base_.load(std::memory_order_acquire);
-    return GuestTicksAt(base, HostTicksNow());
+    return GuestTicksAt(base, now);
   }
   uint64_t host_tick_count = Clock::QueryHostTickCount();
 
@@ -315,6 +389,9 @@ uint64_t UpdateGuestClock() {
       calls = 0;
       REX_SYS_COUNT(rex::syscount::kClockCall, 64);
     }
+    if (nap_clamp_.load(std::memory_order_relaxed)) {
+      NoteClockRead(host_tick_count);  // port 57
+    }
     return GuestTicksAt(*tick_base_.load(std::memory_order_acquire), host_tick_count);
   }
 
@@ -325,6 +402,10 @@ uint64_t UpdateGuestClock() {
     uint64_t host_tick_delta =
         host_tick_count > last_host_tick_count_ ? host_tick_count - last_host_tick_count_ : 0;
     last_host_tick_count_ = host_tick_count;
+    // ds3-nx (sdk-patches/0013; port 57): the locked path's own form: a delta longer than 250 ms is cut to it.
+    if (nap_clamp_.load(std::memory_order_relaxed) && host_tick_delta > nap_ticks_) {
+      host_tick_delta = nap_ticks_;
+    }
     uint64_t guest_tick_delta =
         host_tick_delta * guest_tick_ratio_.first / guest_tick_ratio_.second;
     const uint64_t guest_tick_count =

@@ -1106,7 +1106,9 @@ void XmaContext::StoreContextMerged(const XMA_CONTEXT_DATA& data,
   fresh.input_buffer_read_offset = data.input_buffer_read_offset;
   fresh.error_status = data.error_status;
   fresh.current_buffer = data.current_buffer;
-  fresh.output_buffer_read_offset = data.output_buffer_read_offset;
+  // ds3-nx (2026-10-24, sdk-patches/0007; port 57): not output_buffer_read_offset. The guest owns it
+  // (XMASetOutputBufferReadOffset), and storing this snapshot's value back undid the guest's update made during the
+  // decode and replayed output it had already consumed (Hell's Gate, Dante's Inferno's PC port, found it first).
 
   fresh.Store(context_ptr);
 }

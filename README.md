@@ -78,6 +78,9 @@ toml, so a port that finds one wrong for its game doesn't have to change the cod
   boot hang, audio that keeps going when the output stalls, a fix for huge stray triangles, one-pass shader compiles
   while a draw waits, the first controller to press Start as player 1, and polling threads that sleep instead of
   spinning a core.
+- Port 57 is ds3-nx's SDK fixes: the time a console spends asleep or at HOME no longer reaches the game as one huge
+  frame, package reads are one at a time, XMA audio no longer replays sound it has played, modules are found by file
+  name when a game remaps its paths, and multi-disc games can take the disc swap over.
 - Port 44 and the translator changes take effect when a game's shader package is made again. Before measuring on the
   console, build its DKSH cache on the PC (`tools/deko3d_variant_cache.py`): a first run that compiles its shaders while
   it draws is slower on the GPU than the build is.
