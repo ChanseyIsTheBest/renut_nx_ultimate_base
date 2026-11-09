@@ -33,6 +33,18 @@ REXCVAR_DEFINE_BOOL(sasrt_deko3d_diag_barriers, false, "SASRT/Diagnostics",
                     "deko3d renderer, a measurement: the barriers emitted counted by what they wait for and why (the "
                     "layouts and stages of every call merged into them); the 10 s deko3d line then lists the commonest "
                     "causes since the start");
+// renut-ultimate (2026-11-10, port 59, from LostOdysseyRecomp ff013164): descriptor writes. LostOdysseyRecomp writes a
+// descriptor set for every draw, and these two were about 3 % of its command thread; Renut writes a texture slot when a
+// texture, view or surface is made (a bindless table), so far fewer writes go through here.
+REXCVAR_DEFINE_BOOL(lo_deko3d_descriptor_cache, true, "Banjo/Enhancements",
+                    "deko3d renderer (from LostOdysseyRecomp): a sampled image descriptor is made once per texture view "
+                    "and copied at later writes of that view, instead of being made again every time. Same descriptors")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(lo_deko3d_relaxed_descriptor_counters, true, "Banjo/Enhancements",
+                    "deko3d renderer (from LostOdysseyRecomp): a descriptor write's count and epoch use relaxed atomic "
+                    "increments, so the write does not wait for its store into the uncached descriptor memory to drain. "
+                    "false: the ordered increments as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 #if defined(PLUME_DEKO3D)
 #include <plume_deko3d.h>
@@ -478,6 +490,8 @@ void InstallShaderCache() {
   options.depthResolve = Deko3DDepthResolveOn();  // sasrt-nx (2026-10-21)
   options.depthResolveLazy = Deko3DDepthResolveLazyOn();  // renut-ultimate (2026-11-08)
   options.diagBarriers = REXCVAR_GET(sasrt_deko3d_diag_barriers);  // sasrt-nx (2026-11-08)
+  options.descriptorCache = REXCVAR_GET(lo_deko3d_descriptor_cache);                       // port 59
+  options.relaxedDescriptorCounters = REXCVAR_GET(lo_deko3d_relaxed_descriptor_counters);  // port 59
   plume::Deko3DSetOptions(options);
   sasrt::gpu_round::ApplyPlume();  // sasrt-nx (2026-11-08): the GPU round's items in plume (preciseDepthResolve)
   // banjo-nx (2026-10-28, the console's OOM): a block that finds no room in the heap gets the spare command buffers'.
@@ -636,6 +650,9 @@ std::string ReportBody(const plume::Deko3DStats &st, uint64_t compiles) {
     r += fmt::format("; depth decompresses (sasrt_deko3d_depth_resolve): {} where the target was bound, {} left for "
                      "later, {} done later for a read", st.depthResolvesBound.load(), st.depthResolvesDeferred.load(),
                      st.depthResolvesLater.load());
+  // renut-ultimate (2026-11-10, port 59): descriptor writes and the ones lo_deko3d_descriptor_cache served.
+  r += fmt::format("; descriptor writes {} ({} from the cache: lo_deko3d_descriptor_cache)", st.descriptorWrites.load(),
+                   st.descriptorCacheHits.load());
   return r;
 }
 

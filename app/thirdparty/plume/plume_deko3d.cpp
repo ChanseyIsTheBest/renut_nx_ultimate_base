@@ -835,6 +835,18 @@ namespace plume {
         e.size = uint32_t(std::min<uint64_t>(size, 0xFFFFFFFFull));
     }
 
+    // renut-ultimate (2026-11-10, port 59, from LostOdysseyRecomp ff013164; Deko3DOptions::relaxedDescriptorCounters): the
+    // count and the epoch of a descriptor write. Relaxed, nothing waits for the uncached descriptor store to drain.
+    static void noteDescriptorWrite(Deko3DDevice *device) {
+        if (g_deko3dOptions.relaxedDescriptorCounters) {
+            g_deko3dStats.descriptorWrites.fetch_add(1, std::memory_order_relaxed);
+            device->descriptorEpoch.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        g_deko3dStats.descriptorWrites++;
+        device->descriptorEpoch.fetch_add(1, std::memory_order_release);
+    }
+
     void Deko3DDescriptorSet::setTexture(uint32_t descriptorIndex, const RenderTexture *texture, RenderTextureLayout, const RenderTextureView *textureView) {
         if (!imageBlock || descriptorIndex < imageFirst || descriptorIndex - imageFirst >= imageCount)
             return;
@@ -850,7 +862,22 @@ namespace plume {
             // Written into a local copy first: the GPU may read the descriptor block (other slots) while the CPU
             // writes it, so a slot is written whole, with one copy.
             DkImageDescriptor local;
-            dkImageDescriptorInitialize(&local, &view, loadStore, false);
+            // renut-ultimate (2026-11-10, port 59, from LostOdysseyRecomp; Deko3DOptions::descriptorCache): a sampled
+            // descriptor made once per view (or per texture for its default view), then copied.
+            if (g_deko3dOptions.descriptorCache && !loadStore) {
+                const Deko3DTextureView *tv = static_cast<const Deko3DTextureView *>(textureView);
+                DkImageDescriptor &cached = tv ? tv->sampledDescriptor : t->sampledDescriptor;
+                std::atomic<bool> &ready = tv ? tv->sampledDescriptorReady : t->sampledDescriptorReady;
+                if (ready.load(std::memory_order_acquire)) {
+                    g_deko3dStats.descriptorCacheHits.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    dkImageDescriptorInitialize(&cached, &view, false, false);
+                    ready.store(true, std::memory_order_release);
+                }
+                local = cached;
+            } else {
+                dkImageDescriptorInitialize(&local, &view, loadStore, false);
+            }
             memcpy(d, &local, sizeof(local));
             // banjo-nx (2026-10-19, GPU, txq): the size a texture query of this view returns at level 0: the image's
             // size at the view's first level; the depth of a 3D image there, else the view's layers (all from its first
@@ -877,8 +904,7 @@ namespace plume {
             if (id < imageTextures.size())
                 imageTextures[id] = nullptr;
         }
-        g_deko3dStats.descriptorWrites++;
-        device->descriptorEpoch.fetch_add(1, std::memory_order_release);
+        noteDescriptorWrite(device);
     }
 
     void Deko3DDescriptorSet::setSampler(uint32_t descriptorIndex, const RenderSampler *sampler) {
@@ -889,8 +915,7 @@ namespace plume {
             memset(d, 0, sizeof(*d));
         else
             memcpy(d, &static_cast<const Deko3DSampler *>(sampler)->descriptor, sizeof(*d));
-        g_deko3dStats.descriptorWrites++;
-        device->descriptorEpoch.fetch_add(1, std::memory_order_release);
+        noteDescriptorWrite(device);
     }
 
     void Deko3DDescriptorSet::setAccelerationStructure(uint32_t, const RenderAccelerationStructure *) {}

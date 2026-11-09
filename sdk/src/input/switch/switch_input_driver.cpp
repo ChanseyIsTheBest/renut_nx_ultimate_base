@@ -1001,12 +1001,25 @@ X_RESULT SwitchInputDriver::SetDeviceVibration(DeviceId id, X_INPUT_VIBRATION* v
                                               static_cast<HidNpadStyleTag>(style));
     if (R_FAILED(rc)) {
       slot->vibration_count = 0;
+      // renut-ultimate (2026-11-10, rumble on by default): the first few failures logged, as the sends below.
+      static uint32_t init_failures = 0;
+      if (init_failures++ < 4)
+        REXLOG_WARN("input: rumble could not be set up on npad {} (style 0x{:X}): 0x{:X}", unsigned(npad_id), style,
+                    unsigned(rc));
       return X_ERROR_FUNCTION_FAILED;
     }
     slot->vibration_npad_id = npad_id;
     slot->vibration_style = style;
     slot->vibration_count = count;
     slot->vibration_sent = false;  // new or reassigned controller: it needs the state sent
+    // renut-ultimate (2026-11-10): once per controller layout (a new pad, a Joy-Con pair split or joined).
+    REXLOG_INFO("input: rumble ready on npad {} ({}, {} motor{})", unsigned(npad_id),
+                style == HidNpadStyleTag_NpadHandheld   ? "handheld"
+                : style == HidNpadStyleTag_NpadFullKey  ? "Pro Controller"
+                : style == HidNpadStyleTag_NpadJoyDual  ? "Joy-Con pair"
+                : style == HidNpadStyleTag_NpadJoyLeft  ? "left Joy-Con"
+                                                        : "right Joy-Con",
+                count, count == 1 ? "" : "s");
   }
 
   // See the vibration_sent comment in Slot: same value as the last one sent, nothing to do.
@@ -1025,10 +1038,20 @@ X_RESULT SwitchInputDriver::SetDeviceVibration(DeviceId id, X_INPUT_VIBRATION* v
   value.amp_high = float(uint16_t(vibration->right_motor_speed)) / 65535.0f;
   value.freq_high = 320.0f;
   std::array<HidVibrationValue, 2> values = {value, value};
-  if (R_FAILED(hidSendVibrationValues(slot->vibration_handles.data(), values.data(),
-                                      slot->vibration_count))) {
+  if (const Result rc = hidSendVibrationValues(slot->vibration_handles.data(), values.data(), slot->vibration_count);
+      R_FAILED(rc)) {
     slot->vibration_sent = false;  // retried on the next call
+    static uint32_t send_failures = 0;  // renut-ultimate (2026-11-10)
+    if (send_failures++ < 4)
+      REXLOG_WARN("input: rumble send failed on npad {}: 0x{:X}", unsigned(npad_id), unsigned(rc));
     return X_ERROR_FUNCTION_FAILED;
+  }
+  // renut-ultimate (2026-11-10): the game's first rumble, once a run (the tests' proof that it reaches the pad).
+  static bool first_rumble_logged = false;
+  if (!first_rumble_logged && (left || right)) {
+    first_rumble_logged = true;
+    REXLOG_INFO("input: first rumble sent to npad {} (heavy motor {:.2f}, light {:.2f})", unsigned(npad_id),
+                value.amp_low, value.amp_high);
   }
   slot->vibration_sent = true;
   slot->vibration_left = left;

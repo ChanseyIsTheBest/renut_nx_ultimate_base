@@ -63,6 +63,9 @@ namespace plume {
         std::atomic<uint64_t> compileBoosts{0}, compileBoostNs{0};
         std::atomic<uint64_t> imageBytes{0}, bufferBytes{0}, codeBytes{0}, commandBytes{0};
         std::atomic<uint64_t> descriptorWrites{0}, pipelineBinds{0}, stateBinds{0}, draws{0};
+        // renut-ultimate (2026-11-10, Deko3DOptions::descriptorCache): image descriptor writes served from a view's or
+        // texture's cached descriptor.
+        std::atomic<uint64_t> descriptorCacheHits{0};
         std::atomic<uint64_t> windowDraws{0}; // draws whose shaders read fetch data from memory (storage binding 15)
         // banjo-nx (2026-10-27): bindTextures' whole runs and the draws it skipped (Deko3DSetTextureSkip).
         std::atomic<uint64_t> textureRuns{0}, textureSkips{0};
@@ -174,12 +177,20 @@ namespace plume {
         void setName(const std::string &name) override;
         // The view of the whole texture as plume's default (no view given).
         DkImageView defaultView() const;
+        // renut-ultimate (2026-11-10, from LostOdysseyRecomp ff013164; Deko3DOptions::descriptorCache): the sampled image
+        // descriptor of defaultView(), made at its first write (the image never changes once made).
+        mutable DkImageDescriptor sampledDescriptor{};
+        mutable std::atomic<bool> sampledDescriptorReady{false};
     };
 
     struct Deko3DTextureView : RenderTextureView {
         const Deko3DTexture *texture = nullptr;
         DkImageView view{};
         RenderTextureViewDesc desc;
+        // renut-ultimate (2026-11-10, Deko3DOptions::descriptorCache): the view's sampled image descriptor, made at its
+        // first write. Renut gives every texture slot a view, so this is the cache that serves it.
+        mutable DkImageDescriptor sampledDescriptor{};
+        mutable std::atomic<bool> sampledDescriptorReady{false};
     };
 
     struct Deko3DSampler : RenderSampler {
@@ -1192,6 +1203,16 @@ namespace plume {
         // sasrt-nx (2026-11-08, sasrt_deko3d_diag_barriers): count the barriers emitted by their causes
         // (Deko3DStats::barrierWhy, Deko3DBarrierWhy). A diagnostic: one array add per barrier.
         bool diagBarriers = false;
+        // renut-ultimate (2026-11-10, port 59, from LostOdysseyRecomp ff013164; lo_deko3d_descriptor_cache): a sampled image
+        // descriptor is made once per view (or per texture for its default view) and copied at later writes, instead of
+        // dkImageDescriptorInitialize at every write.
+        bool descriptorCache = true;
+        // renut-ultimate (2026-11-10, lo_deko3d_relaxed_descriptor_counters): the descriptor write count and the device's
+        // descriptor epoch counted with relaxed increments. The sequentially consistent and release increments made each
+        // write wait for its store into the uncached descriptor block to drain (most of setTexture's cost in
+        // LostOdysseyRecomp's profile). Nothing on the CPU reads a descriptor after the epoch: the epoch only decides an
+        // invalidate in the list being recorded, and the GPU sees the stores after the submission's system call.
+        bool relaxedDescriptorCounters = true;
     };
     // sasrt-nx (2026-11-08, Deko3DOptions::dataOnlyInvalidate): plume's own invalidate bit, above deko3d's flags.
     constexpr uint32_t Deko3DDataInvalidate = 1u << 30;

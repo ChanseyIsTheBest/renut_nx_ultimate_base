@@ -37,6 +37,9 @@ input_xbox_layout = true
 # controller, change the order, split a Joy-Con pair into two). Single Joy-Cons are held sideways, one per player: the
 # four buttons under the right thumb are the face buttons, SL / SR are ZL / ZR, minus or plus is Start.
 input_joycon_sideways = true
+# Rumble (2026-11-10, your request): the game's own vibration on every controller that has it (HD rumble on the
+# Joy-Cons and the Pro Controller). false = no vibration.
+input_rumble = true
 # Per-player button maps: the [input_p1] and [input_p2] sections at the end of this file.
 # The game's on-screen keyboard (naming things) opens the Switch's own keyboard (2026-10-21, your request): type with
 # the touch screen or the controller, + or OK accepts, Cancel keeps the old name. false = the old ImGui text box.

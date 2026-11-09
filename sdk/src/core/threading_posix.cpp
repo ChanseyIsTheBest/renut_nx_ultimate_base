@@ -488,14 +488,15 @@ class PosixConditionBase {
   // `wake` (optional): wake point registered by the caller (and, for alertable calls, with its thread). With
   // it the call parks instead of sleeping 1 ms between polls: it re-polls when a registered handle is
   // signalled (poke), when `interrupt` is raised, at the end of the timeout, or after the safety interval.
-  static std::pair<WaitResult, size_t> WaitMultiple(std::vector<PosixConditionBase*>&& handles,
+  // port 59 (2026-11-10): the handles as a pointer and a count (they were a vector, made and copied per call).
+  static std::pair<WaitResult, size_t> WaitMultiple(PosixConditionBase* const* handles, size_t count,
                                                     bool wait_all,
                                                     std::chrono::milliseconds timeout,
                                                     WakePoint* wake = nullptr,
                                                     const std::atomic<bool>* interrupt = nullptr) {
-    assert_true(!handles.empty());
+    assert_true(count != 0);
 
-    if (handles.size() == 1) {
+    if (count == 1) {
       auto result = handles[0]->Wait(timeout, interrupt);
       return std::make_pair(result, 0);
     }
@@ -507,24 +508,33 @@ class PosixConditionBase {
 
     // Registered for the whole call; the guard unregisters on every exit path.
     struct MultiRegistration {
-      std::vector<PosixConditionBase*>& handles;
+      PosixConditionBase* const* handles;
+      size_t count;
       WakePoint* wake;
-      MultiRegistration(std::vector<PosixConditionBase*>& h, WakePoint* w) : handles(h), wake(w) {
+      MultiRegistration(PosixConditionBase* const* h, size_t n, WakePoint* w) : handles(h), count(n), wake(w) {
         if (wake) {
-          for (auto* handle : handles) handle->RegisterMulti(wake);
+          for (size_t i = 0; i < count; ++i) handles[i]->RegisterMulti(wake);
         }
       }
       ~MultiRegistration() {
         if (wake) {
-          for (auto* handle : handles) handle->UnregisterMulti(wake);
+          for (size_t i = 0; i < count; ++i) handles[i]->UnregisterMulti(wake);
         }
       }
-    } registration(handles, wake);
+    } registration(handles, count, wake);
     const auto safety = std::chrono::milliseconds(std::max(1, REXCVAR_GET(thread_multiwait_safety_ms)));
 
     // Reuse the allocation between polls; clear() releases the locks, not the memory.
-    std::vector<std::unique_lock<std::mutex>> locks;
-    locks.reserve(handles.size());
+    // port 59 (2026-11-10): and between calls: the thread's own list (no heap allocation once it has grown), emptied
+    // (the locks released) on every way out, as the local list's destructor did. Nothing in here waits again.
+    thread_local std::vector<std::unique_lock<std::mutex>> thread_locks;
+    auto& locks = thread_locks;
+    struct LocksReleased {
+      std::vector<std::unique_lock<std::mutex>>& list;
+      ~LocksReleased() { list.clear(); }
+    } locks_released{locks};
+    locks.clear();
+    locks.reserve(count);
     while (true) {
       // Sampled BEFORE the poll: a handle signalled after this point bumps the sequence, so the park
       // below returns at once instead of missing it.
@@ -533,7 +543,7 @@ class PosixConditionBase {
       bool condition_met = false;
       bool all_locked = true;
 
-      for (size_t i = 0; i < handles.size(); ++i) {
+      for (size_t i = 0; i < count; ++i) {
 #if REX_PLATFORM_LINUX
         auto native_mutex = static_cast<pthread_mutex_t*>(handles[i]->mutex_.native_handle());
         int result = pthread_mutex_trylock(native_mutex);
@@ -581,7 +591,7 @@ class PosixConditionBase {
 
       if (wait_all) {
         bool all_signaled = true;
-        for (size_t i = 0; i < handles.size(); ++i) {
+        for (size_t i = 0; i < count; ++i) {
           if (!handles[i]->signaled()) {
             all_signaled = false;
             break;
@@ -592,7 +602,7 @@ class PosixConditionBase {
         }
         condition_met = all_signaled;
       } else {
-        for (size_t i = 0; i < handles.size(); ++i) {
+        for (size_t i = 0; i < count; ++i) {
           if (handles[i]->signaled()) {
             first_signaled = i;
             condition_met = true;
@@ -603,7 +613,7 @@ class PosixConditionBase {
 
       if (condition_met) {
         if (wait_all) {
-          for (size_t i = 0; i < handles.size(); ++i) {
+          for (size_t i = 0; i < count; ++i) {
             handles[i]->post_execution();
           }
         } else {
@@ -1995,34 +2005,42 @@ WaitResult SignalAndWait(WaitHandle* wait_handle_to_signal, WaitHandle* wait_han
 std::pair<WaitResult, size_t> WaitMultiple(WaitHandle* wait_handles[], size_t wait_handle_count,
                                            bool wait_all, bool is_alertable,
                                            std::chrono::milliseconds timeout) {
-  std::vector<PosixConditionBase*> conditions;
-  conditions.reserve(wait_handle_count);
+  // port 59 (2026-11-10, from LostOdysseyRecomp 299ac550): no heap allocation per call: up to 64 objects
+  // (the 360's MAXIMUM_WAIT_OBJECTS) on the stack, more on the heap as before (newlib's malloc has one lock
+  // for every thread).
+  PosixConditionBase* inline_conditions[64];
+  std::vector<PosixConditionBase*> heap_conditions;
+  PosixConditionBase** conditions = inline_conditions;
+  if (wait_handle_count > 64) {
+    heap_conditions.resize(wait_handle_count);
+    conditions = heap_conditions.data();
+  }
+  const size_t count = wait_handle_count;
   for (size_t i = 0u; i < wait_handle_count; ++i) {
     auto handle = AsPosixWaitHandle(wait_handles[i]);
     if (handle == nullptr) {
       return std::make_pair(WaitResult::kFailed, 0);
     }
-    conditions.push_back(&handle->condition());
+    conditions[i] = &handle->condition();
   }
   // Parked (event-driven) waits need a wake point; legacy mode keeps the 1 ms polling.
   const bool blocking = REXCVAR_GET(thread_wait_blocking);
   WakePoint wake_point;
-  WakePoint* wake = blocking && conditions.size() > 1 ? &wake_point : nullptr;
+  WakePoint* wake = blocking && count > 1 ? &wake_point : nullptr;
   if (!is_alertable) {
-    return PosixConditionBase::WaitMultiple(std::move(conditions), wait_all, timeout, wake, nullptr);
+    return PosixConditionBase::WaitMultiple(conditions, count, wait_all, timeout, wake, nullptr);
   }
 
   ScopedAlertableState alertable_state_guard(true);
   auto deadline = ComputeAlertableDeadline(timeout);
   // A single handle parks in Wait() itself; several park on the wake point.
-  ScopedAlertWake alert_wake(blocking && conditions.size() == 1 ? conditions[0] : nullptr, wake);
+  ScopedAlertWake alert_wake(blocking && count == 1 ? conditions[0] : nullptr, wake);
   const std::atomic<bool>* interrupt = alert_wake.flag();
   while (true) {
     if (DispatchCurrentThreadUserCallback()) {
       return std::make_pair(WaitResult::kUserCallback, 0);
     }
-    auto result = PosixConditionBase::WaitMultiple(std::vector<PosixConditionBase*>(conditions),
-                                                   wait_all, ComputeAlertableWaitTimeout(deadline),
+    auto result = PosixConditionBase::WaitMultiple(conditions, count, wait_all, ComputeAlertableWaitTimeout(deadline),
                                                    wake, interrupt);
     if (result.first != WaitResult::kTimeout) {
       return result;

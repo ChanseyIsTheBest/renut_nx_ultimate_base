@@ -85,6 +85,9 @@ toml, so a port that finds one wrong for its game doesn't have to change the cod
   targets, kept thread stacks and GPU memory back before it runs out (SASRT's docked races went from crashing to
   1,080-1,220 MB of CPU-side heap in use, from 1,526), and the fix for a pipeline shortcut that could draw with the
   previous draw's specialised pipeline (SASRT's broken octopus).
+- Port 59 turns controller rumble on by default (the game's own vibration, HD rumble on the Switch's controllers;
+  `input_rumble = false` turns it off) and brings two small fixes from LostOdysseyRecomp: texture descriptors made once
+  per view, and multiple-object waits without heap allocations.
 - Port 44 and the translator changes take effect when a game's shader package is made again. Before measuring on the
   console, build its DKSH cache on the PC (`tools/deko3d_variant_cache.py`): a first run that compiles its shaders while
   it draws is slower on the GPU than the build is.

@@ -256,7 +256,16 @@ X_STATUS XObject::SignalAndWait(XObject* signal_object, XObject* wait_object, ui
 X_STATUS XObject::WaitMultiple(uint32_t count, XObject** objects, uint32_t wait_type,
                                uint32_t wait_reason, uint32_t processor_mode, uint32_t alertable,
                                uint64_t* opt_timeout) {
-  std::vector<rex::thread::WaitHandle*> wait_handles(count);
+  // port 59 (2026-11-10, from LostOdysseyRecomp 299ac550): no heap allocation per call: up to 64 objects
+  // (the 360's MAXIMUM_WAIT_OBJECTS) on the stack, more on the heap as before (newlib's malloc has one lock
+  // for every thread).
+  rex::thread::WaitHandle* inline_handles[64];
+  std::vector<rex::thread::WaitHandle*> heap_handles;
+  rex::thread::WaitHandle** wait_handles = inline_handles;
+  if (count > 64) {
+    heap_handles.resize(count);
+    wait_handles = heap_handles.data();
+  }
   for (size_t i = 0; i < count; ++i) {
     wait_handles[i] = objects[i]->GetWaitHandle();
     assert_not_null(wait_handles[i]);
@@ -269,7 +278,7 @@ X_STATUS XObject::WaitMultiple(uint32_t count, XObject** objects, uint32_t wait_
   XThread::CheckTitleTermination();
   if (wait_type) {
     auto result =
-        rex::thread::WaitAny(std::move(wait_handles), alertable ? true : false, timeout_ms);
+        rex::thread::WaitAny(wait_handles, count, alertable ? true : false, timeout_ms);
     XThread::CheckTitleTermination();
     switch (result.first) {
       case rex::thread::WaitResult::kSuccess:
@@ -290,7 +299,7 @@ X_STATUS XObject::WaitMultiple(uint32_t count, XObject** objects, uint32_t wait_
     }
   } else {
     auto result =
-        rex::thread::WaitAll(std::move(wait_handles), alertable ? true : false, timeout_ms);
+        rex::thread::WaitAll(wait_handles, count, alertable ? true : false, timeout_ms);
     XThread::CheckTitleTermination();
     switch (result) {
       case rex::thread::WaitResult::kSuccess:
