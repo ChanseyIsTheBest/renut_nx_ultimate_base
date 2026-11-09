@@ -348,6 +348,7 @@ int Deko3DCompileCore();
 int Deko3DCompilePriority();
 int Deko3DBackgroundCompileShare();  // banjo_deko3d_background_compile_share (2026-10-23)
 bool Deko3DCompileWaitBoostOn();  // banjo_deko3d_compile_wait_boost (2026-10-23)
+bool Deko3DFastFirstCompileOn();  // banjo_deko3d_fast_first_compile (port 56, from mk9-nx)
 bool Deko3DAsyncCacheReadsOn();  // banjo_deko3d_async_cache_reads (2026-10-23)
 void CountDrawnResolve();
 void CountSmaa();  // banjo_renut_smaa: a frame done

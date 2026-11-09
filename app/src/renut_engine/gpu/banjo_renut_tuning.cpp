@@ -493,6 +493,11 @@ REXCVAR_DEFINE_BOOL(banjo_deko3d_compile_wait_boost, true, "Banjo/Enhancements",
                     "(appletSetCpuBoostMode FastLoad: CPU 1785 MHz, the GPU at 76.8 MHz, which has nothing new to do "
                     "while the frame waits), normal again the moment the compile is done. Background compiles and "
                     "those the pipeline prebuild waits for never boost. The deko3d report line counts the boosts");
+REXCVAR_DEFINE_BOOL(banjo_deko3d_fast_first_compile, true, "Banjo/Enhancements",
+                    "deko3d renderer (mk9-nx 2026-10-24; port 56): a shader compile a draw waits for (a generic variant "
+                    "missing from the DKSH cache; the game stopped) is a single back-end pass, about a quarter of a "
+                    "pixel shader's full compile, and is stored in the cache as it is. Background compiles stay full. "
+                    "false: every compile full");
 REXCVAR_DEFINE_BOOL(banjo_deko3d_barrier_merge, true, "Banjo/Enhancements",
                     "deko3d renderer (2026-10-19, GPU): barriers recorded one after another with no GPU work between "
                     "them are emitted as one (the strongest wait, every invalidation) right before the next command "
@@ -1587,6 +1592,7 @@ int Deko3DCompileCore() {
 }
 int Deko3DCompilePriority() { return REXCVAR_GET(banjo_deko3d_compile_priority); }
 bool Deko3DCompileWaitBoostOn() { return REXCVAR_GET(banjo_deko3d_compile_wait_boost); }
+bool Deko3DFastFirstCompileOn() { return REXCVAR_GET(banjo_deko3d_fast_first_compile); }  // port 56
 bool Deko3DAsyncCacheReadsOn() { return REXCVAR_GET(banjo_deko3d_async_cache_reads); }
 int Deko3DBackgroundCompileShare() {
   return std::clamp<int32_t>(REXCVAR_GET(banjo_deko3d_background_compile_share), 1, 100);

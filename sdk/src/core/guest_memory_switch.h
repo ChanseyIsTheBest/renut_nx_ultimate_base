@@ -199,6 +199,12 @@ int RexGmProtectionMode(void);
  */
 uint32_t RexGmLastResult(void);
 
+/* port 56 (mk9-nx's boot-hang fallbacks): the waits of 100 ms for the kernel's memory blocks (RexGmCommit), the
+ * chunks FaultIn mapped page by page, the unmaps done page by page and their failed pages, and the result of the first
+ * chunk map that failed (1 when it was none recorded). memory_switch.cpp logs them when they change. */
+void RexGmFallbacks(uint64_t* block_retries, uint64_t* pagewise_maps, uint64_t* unmap_fallbacks,
+                    uint64_t* unmap_page_failures, uint32_t* first_map_failure);
+
 #define REX_GM_ERR_NOMEM    0xFFFF0001u  /* memalign of the backing store failed */
 #define REX_GM_ERR_NOCODEVA 0xFFFF0002u  /* no free space left in the code region */
 

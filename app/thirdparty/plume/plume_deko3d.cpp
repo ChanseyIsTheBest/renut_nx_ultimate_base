@@ -1658,7 +1658,12 @@ namespace plume {
                          uint32_t(job->stage), src.size(), body + (src.size() - rest), base, defines.c_str());
                 }
             }
-            uam::Result r = uam::compile(stages[std::min<uint32_t>(job->stage, 5)], job->source->c_str());
+            // port 56 (mk9-nx, fastFirstCompile): one pass for a compile a drawing thread waits for.
+            const bool fast = !job->async && job->drawWaits && g_deko3dOptions.fastFirstCompile;
+            uam::Result r = fast ? uam::compileFast(stages[std::min<uint32_t>(job->stage, 5)], job->source->c_str())
+                                 : uam::compile(stages[std::min<uint32_t>(job->stage, 5)], job->source->c_str());
+            if (fast)
+                g_deko3dStats.fastCompiles++;
             g_deko3dStats.shaderCompileNs += armTicksToNs(armGetSystemTick()) - t0;
             g_deko3dStats.shaderCompiles++;
             if (job->async) {

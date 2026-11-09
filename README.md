@@ -74,6 +74,10 @@ toml, so a port that finds one wrong for its game doesn't have to change the cod
 - Port 55 is feedingfrenzy2-nx's SDK fixes: controllers 2 to 4 sign in as guests when a game opens the sign-in screen,
   players 3 and 4 get their own button maps, the leaderboard calls fail safely, the exit no longer crashes, freed memory
   reads as zeros when it is used again, and five opt-in VMX accuracy keys for the code generator.
+- Port 56 is mk9-nx's fixes and ds3-nx's polling back-off: faster physical allocations at loads, fallbacks for a rare
+  boot hang, audio that keeps going when the output stalls, a fix for huge stray triangles, one-pass shader compiles
+  while a draw waits, the first controller to press Start as player 1, and polling threads that sleep instead of
+  spinning a core.
 - Port 44 and the translator changes take effect when a game's shader package is made again. Before measuring on the
   console, build its DKSH cache on the PC (`tools/deko3d_variant_cache.py`): a first run that compiles its shaders while
   it draws is slower on the GPU than the build is.

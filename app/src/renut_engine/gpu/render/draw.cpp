@@ -6543,6 +6543,11 @@ UploadAllocation UploadVertexFetchData(const GuestDevice &device, const DrawCall
   // chunk the allocation goes to are read there (before, their room was taken anyway, and cleaned at the submit). If
   // the allocation lands in another chunk, none is (that chunk has none of them): then room for all.
   bool reused[32] = {};
+  // mk9-nx (2026-10-21; port 56): the queued copy's offset, taken when it is found. g_fetch_copies is direct-mapped: a
+  // copy this draw makes below for another buffer whose key lands on the same entry overwrites it, and reading the entry
+  // again then gave the reused stream the other buffer's offset (two streams of a draw with one slot, the other's bytes
+  // decoded as positions: mk9-nx's huge flat triangles on the Switch, where host pointers collide differently).
+  u32 reused_offset[32] = {};
   u32 needed = total;
   const plume::RenderBuffer *chunk = shared ? Video::UploadsLocked().CurrentBuffer() : nullptr;
   if (shared && chunk) {
@@ -6551,7 +6556,9 @@ UploadAllocation UploadVertexFetchData(const GuestDevice &device, const DrawCall
       const Copy &c = copies[i];
       if (c.size && !c.exported && !(c.index == up_fetch_index && call.up_vertices)) {
         // banjo-nx (2026-10-23, batch 6): or kept from an earlier flush of the frame (FetchCopyHeld).
-        reused[i] = FetchCopyHeld(FetchCopyFor(c.src, c.size), c.src, c.size, chunk);
+        FetchCopy &known = FetchCopyFor(c.src, c.size);
+        reused[i] = FetchCopyHeld(known, c.src, c.size, chunk);
+        reused_offset[i] = known.offset;
       }
       if (!reused[i])
         needed += (c.size + 15u) & ~15u;
@@ -6573,7 +6580,7 @@ UploadAllocation UploadVertexFetchData(const GuestDevice &device, const DrawCall
     u32 at = u32(chunk_offset) + offset;
     if (reused[i]) {
       // Queued in this chunk by an earlier draw: read there, no room here.
-      sc.vertex_fetch_slots[c.index] = FetchCopyFor(c.src, c.size).offset | c.endian;
+      sc.vertex_fetch_slots[c.index] = reused_offset[i] | c.endian;  // port 56: as found (see reused_offset)
       continue;
     }
     if (c.size && !c.exported) {

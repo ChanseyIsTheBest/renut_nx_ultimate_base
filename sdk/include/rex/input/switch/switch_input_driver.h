@@ -63,6 +63,8 @@ class SwitchInputDriver final : public InputDriver {
   // All of these require mutex_.
   Slot* FindSlot(DeviceId id);
   void Poll(size_t index);
+  /* port 56 (mk9-nx, input_first_press_is_player1): the controller in slot 'index' becomes guest player 1. */
+  bool TakePlayer1(size_t index);
   /* SDK menus on the gamepad: L+R+D-pad. See the .cpp. */
   void DispatchMenuShortcuts(Slot& slot, uint64_t held);
   /* The system's controller applet (connect, reorder, split Joy-Cons), on the UI thread. */
@@ -72,6 +74,7 @@ class SwitchInputDriver final : public InputDriver {
   std::array<std::unique_ptr<Slot>, kSlotCount> slots_;
   uint32_t connection_counter_ = 0;
   bool initialized_ = false;
+  bool player1_chosen_ = false;  // port 56: input_first_press_is_player1 decided for this run
   std::atomic<rex::ui::Window*> window_ui_{nullptr};
 };
 
