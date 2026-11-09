@@ -57,6 +57,22 @@ namespace plume {
 
     static constexpr uint32_t alignUp(uint32_t v, uint32_t a) { return (v + a - 1) / a * a; }
 
+    // sasrt-nx (2026-11-09; port 58): the device for Deko3DReleaseEmptyImageChunks (one device), and
+    // Deko3DSetDedicatedTargets.
+    static Deko3DDevice *g_imageDevice = nullptr;
+    static std::atomic<bool> g_dedicatedTargets{true};
+    uint64_t Deko3DHeapFreeBytes() {  // plume_deko3d.h
+        uint64_t heapFree = 0, processFree = 0;
+        memoryFigures(heapFree, processFree);
+        return heapFree;
+    }
+    uint64_t Deko3DHeapRoomBytes() {  // plume_deko3d.h
+        char *brk = static_cast<char *>(sbrk(0));
+        return fake_heap_end > brk ? uint64_t(fake_heap_end - brk) : 0;
+    }
+    static std::atomic<bool> g_memoryEmergency{false};  // Deko3DTakeMemoryEmergency
+    bool Deko3DTakeMemoryEmergency() { return g_memoryEmergency.exchange(false, std::memory_order_relaxed); }
+
     // banjo-nx (2026-10-28, the console's OOM): see makeBlock. Cold paths only (a block that did not fit, a new chunk).
     static thread_local bool t_inImageAlloc = false;
     static void (*g_memoryPressure)() = nullptr;
@@ -76,7 +92,9 @@ namespace plume {
     static bool g_regionOn = true;
     void Deko3DSetGpuRegion(bool on) { g_regionOn = on; }
     static constexpr uint64_t kRegionMinBlock = 64ull << 10, kRegionGrain = 64ull << 10, kRegionStep = 2ull << 20;
-    static constexpr uint64_t kRegionNewlibSlack = 32ull << 20, kRegionGiveBackAt = 128ull << 20, kRegionKeep = 64ull << 20;
+    // sasrt-nx (2026-11-09; port 58): back from 32 MB free at the bottom, 16 kept (128 and 64 before: SASRT's docked race
+    // never gave any back, and its CPU side ran out beside 500-700 MB free in the region)
+    static constexpr uint64_t kRegionNewlibSlack = 32ull << 20, kRegionGiveBackAt = 32ull << 20, kRegionKeep = 16ull << 20;
     static std::mutex g_regionMutex;
     static GpuRegionRanges g_region;
     static std::unordered_map<DkMemBlock, std::pair<uintptr_t, uint64_t>> g_regionBlocks;
@@ -91,6 +109,21 @@ namespace plume {
             fake_heap_end = reinterpret_cast<char *>(end);
         __malloc_unlock(_REENT);
         return ok;
+    }
+
+    uint64_t Deko3DRegionGiveBack() {  // sasrt-nx (2026-11-09; port 58): plume_deko3d.h
+        std::lock_guard<std::mutex> lock(g_regionMutex);
+        if (!g_regionOn || !g_region.high)
+            return 0;
+        return g_region.giveBackBottom(kRegionStep, [](uintptr_t low) { return regionMoveHeapEnd(low, false); });
+    }
+
+    static std::atomic<bool> g_imageBestFit{true};  // sasrt-nx (2026-11-09 night; port 58): Deko3DSetImageBestFit
+    void Deko3DSetImageBestFit(bool on) { g_imageBestFit.store(on, std::memory_order_relaxed); }
+
+    void Deko3DSetRegionBestFit(bool on) {  // sasrt-nx (2026-11-09 night; port 58): plume_deko3d.h
+        std::lock_guard<std::mutex> lock(g_regionMutex);
+        g_region.bestFit = on;
     }
 
     void Deko3DGpuRegionFigures(Deko3DGpuRegionInfo &out) {
@@ -627,7 +660,10 @@ namespace plume {
         dkImageLayoutInitialize(&layout, &m);
         const uint64_t size = dkImageLayoutGetSize(&layout);
         const uint32_t alignment = dkImageLayoutGetAlignment(&layout);
-        if (size > 0xFFFFFFFFull || !device->imageAlloc(uint32_t(size), alignment, alloc)) {
+        // sasrt-nx (2026-11-09, Deko3DSetDedicatedTargets; port 58): a render or depth target of 1 MB or more in its own chunk.
+        const bool dedicated = render && size >= (uint64_t(1) << 20) && g_dedicatedTargets.load(std::memory_order_relaxed);
+        if (size > 0xFFFFFFFFull || !device->imageAlloc(uint32_t(size), alignment, alloc, dedicated)) {
+            g_memoryEmergency.store(true, std::memory_order_relaxed);  // sasrt-nx (2026-11-09 night; port 58)
             logf("texture %ux%ux%u format %d: no memory for %" PRIu64 " bytes", desc.width, desc.height, desc.depth,
                  int(desc.format), size);
             return;
@@ -892,7 +928,17 @@ namespace plume {
         logf("deko3d says (%s, result %d): %s", context ? context : "", int(result), message ? message : "");
     }
 
-    Deko3DDevice::Deko3DDevice() {}
+    void Deko3DSetDedicatedTargets(bool on) { g_dedicatedTargets.store(on, std::memory_order_relaxed); }
+
+    Deko3DDevice::Deko3DDevice() { g_imageDevice = this; }
+
+    uint64_t Deko3DReleaseEmptyImageChunks() {  // sasrt-nx (2026-11-09; port 58): plume_deko3d.h
+        Deko3DDevice *d = g_imageDevice;
+        if (!d)
+            return 0;
+        std::lock_guard<std::mutex> heap(d->heapMutex);
+        return d->releaseEmptyChunksLocked();
+    }
 
     static void *compileThreadEntry(void *arg) {
         static_cast<Deko3DDevice *>(arg)->compileWorker();
@@ -1125,6 +1171,7 @@ namespace plume {
                 tick - failedTick.load(std::memory_order_relaxed) < armNsToTicks(250000000ull)) {
                 quick.fetch_add(1, std::memory_order_relaxed);
                 total.fetch_sub(m.size);
+                g_memoryEmergency.store(true, std::memory_order_relaxed);  // sasrt-nx (2026-11-09 night; port 58)
                 return nullptr;
             }
             uint64_t freed = 0;
@@ -1149,6 +1196,7 @@ namespace plume {
                      quick.load(std::memory_order_relaxed));
             }
             if (!probe) {
+                g_memoryEmergency.store(true, std::memory_order_relaxed);  // sasrt-nx (2026-11-09 night; port 58)
                 failedSize.store(m.size, std::memory_order_relaxed);
                 failedTick.store(armGetSystemTick(), std::memory_order_relaxed);
                 total.fetch_sub(m.size);
@@ -1230,8 +1278,10 @@ namespace plume {
         return true;
     }
 
-    // Image heap: 64 MB chunks (bigger for a bigger image), first fit.
-    static constexpr uint32_t ImageChunkSize = 64u << 20;
+    // Image heap: 32 MB chunks (bigger for a bigger image), first fit. sasrt-nx (2026-11-09; port 58): 64 MB before; a
+    // chunk goes back to the GPU region only when empty, and a few textures left in a 64 MB one held it all (render and
+    // depth targets have chunks of their own: Deko3DSetDedicatedTargets).
+    static constexpr uint32_t ImageChunkSize = 32u << 20;
 
     // banjo-nx (2026-10-28, the console's OOM): what the heap's room is short of: the image heap's empty chunks go back
     // below it (the application's rule for its own spares, f7b), and kept above it (a chunk given back is made again by
@@ -1271,14 +1321,84 @@ namespace plume {
         }
     }
 
-    bool Deko3DDevice::imageAlloc(uint32_t size, uint32_t alignment, Deko3DImageAlloc &out) {
+    bool Deko3DDevice::imageAlloc(uint32_t size, uint32_t alignment, Deko3DImageAlloc &out, bool dedicated) {
         size = alignUp(size, 256);
         alignment = std::max<uint32_t>(alignment, 256);
         collectRetired();
         std::lock_guard<std::mutex> lock(heapMutex);
+        if (dedicated) {
+            // sasrt-nx (2026-11-09, Deko3DSetDedicatedTargets; port 58): a chunk of the image's own size (in a slot a
+            // freed one left, if any), placed as the first fit places an image at a chunk's start.
+            const uint32_t own = alignUp(size + alignment, DK_MEMBLOCK_ALIGNMENT);
+            t_inImageAlloc = true;
+            DkMemBlock block = makeBlock(own, DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image, "render target (own chunk)");
+            if (!block) {
+                releaseEmptyChunksLocked();
+                block = makeBlock(own, DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image, "render target (own chunk)");
+            }
+            t_inImageAlloc = false;
+            if (block) {
+                size_t ci = chunks.size();
+                for (size_t i = 0; i < chunks.size(); i++)
+                    if (!chunks[i].block && chunks[i].size == 0) {
+                        ci = i;
+                        break;
+                    }
+                if (ci == chunks.size())
+                    chunks.emplace_back();
+                Chunk &c = chunks[ci];
+                c.block = block;
+                c.size = own;
+                c.dedicated = true;
+                c.freeList.clear();
+                if (size < own)
+                    c.freeList.push_back({size, own - size});
+                out.block = block;
+                out.offset = 0;
+                out.size = size;
+                out.chunk = int32_t(ci);
+                return true;
+            }
+            // no block of its own: the shared chunks as before
+        }
         for (int pass = 0; pass < 2; pass++) {
+            if (g_imageBestFit.load(std::memory_order_relaxed)) {
+                // sasrt-nx (2026-11-09 night, Deko3DSetImageBestFit; port 58): the smallest free range that fits, in any
+                // shared chunk
+                size_t bc = SIZE_MAX, bi = 0;
+                uint32_t blen = UINT32_MAX;
+                for (size_t ci = 0; ci < chunks.size(); ci++) {
+                    const Chunk &c = chunks[ci];
+                    if (c.dedicated || !c.block)
+                        continue;
+                    for (size_t i = 0; i < c.freeList.size(); i++) {
+                        const auto [off, len] = c.freeList[i];
+                        const uint32_t at = alignUp(off, alignment);
+                        if (at - off + uint64_t(size) > len || len >= blen)
+                            continue;
+                        bc = ci, bi = i, blen = len;
+                    }
+                }
+                if (bc != SIZE_MAX) {
+                    Chunk &c = chunks[bc];
+                    const auto [off, len] = c.freeList[bi];
+                    const uint32_t at = alignUp(off, alignment);
+                    c.freeList.erase(c.freeList.begin() + long(bi));
+                    if (at > off)
+                        chunkFree(c, off, at - off);
+                    if (at + size < off + len)
+                        chunkFree(c, at + size, off + len - at - size);
+                    out.block = c.block;
+                    out.offset = at;
+                    out.size = size;
+                    out.chunk = int32_t(bc);
+                    return true;
+                }
+            }
             for (size_t ci = 0; ci < chunks.size(); ci++) {
                 Chunk &c = chunks[ci];
+                if (c.dedicated)
+                    continue;  // sasrt-nx (2026-11-09; port 58): one target's
                 for (size_t i = 0; i < c.freeList.size(); i++) {
                     const auto [off, len] = c.freeList[i];
                     const uint32_t at = alignUp(off, alignment);
@@ -1362,7 +1482,18 @@ namespace plume {
                     destroyBlock(r.block);
                 if (r.image.chunk >= 0) {
                     std::lock_guard<std::mutex> heap(heapMutex);
-                    chunkFree(chunks[size_t(r.image.chunk)], r.image.offset, r.image.size);
+                    Chunk &c = chunks[size_t(r.image.chunk)];
+                    chunkFree(c, r.image.offset, r.image.size);
+                    // sasrt-nx (2026-11-09, Deko3DSetDedicatedTargets; port 58): a target's own chunk goes back at once
+                    // (its slot stays, empty, for the next one).
+                    if (c.dedicated && c.block && c.freeList.size() == 1 && c.freeList[0].first == 0 &&
+                        c.freeList[0].second == c.size) {
+                        destroyBlock(c.block);
+                        c.block = nullptr;
+                        c.size = 0;
+                        c.freeList.clear();
+                        c.dedicated = false;
+                    }
                 }
             }
             else {

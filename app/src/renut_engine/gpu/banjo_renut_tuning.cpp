@@ -1814,8 +1814,53 @@ uint64_t TextureReserveBytes() {
   return REXCVAR_GET(banjo_renut_memory_policy) ? uint64_t(REXCVAR_GET(banjo_renut_textures_reserve_mb)) << 20 : 0;
 }
 
+// sasrt-nx (2026-11-09; port 58; SASRT: "improve our memory management ... 4 player mode will probably be memory
+// intensive"; its docked race at max clocks: the 3D at 1080 lines, the race's load took the stream cache to 239 MB in its
+// 240 MB pool and the upload rings to 160 MB, two buffers found no room with 97 and 72 MB of the heap free, and the game
+// went on at one frame in 12 s until the system closed it). A look at the heap's and the GPU region's free memory every
+// 10 frames (surfaces.cpp, the Switch), and what it does: below the low mark dynamic resolution takes no step up,
+// render targets of other scales go sooner, the stream cache is capped at 96 MB, the upload rings' heavy-frame chunks
+// go at the next reset, unused prebuilt pipelines after 10 s, the thread stacks kept for the next threads, the I/O range
+// cache and the image heap's empty chunks go back; below the critical mark dynamic resolution steps down and the cache
+// is capped at 48 MB. Copies, targets and pipelines are made again when needed: the same pixels.
+REXCVAR_DEFINE_BOOL(sasrt_memory_governor, true, "SASRT/Graphics",
+                    "When the heap's free memory (with the GPU region's) is under sasrt_memory_low_mb: no dynamic "
+                    "resolution step up, the stream cache capped at 96 MB, idle render targets, caches and kept stacks "
+                    "given back sooner; under sasrt_memory_critical_mb: a step down and the cache at 48 MB. The same "
+                    "pixels (copies made again)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_INT32(sasrt_memory_low_mb, 256, "SASRT/Graphics", "sasrt_memory_governor: the low mark (MB free)")
+    .range(16, 2048)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_INT32(sasrt_memory_critical_mb, 128, "SASRT/Graphics", "sasrt_memory_governor: the critical mark (MB free)")
+    .range(8, 2048)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+std::atomic<uint32_t> g_heap_free_mb{UINT32_MAX};
+std::atomic<uint32_t> g_memory_emergency_looks{0};
+bool MemoryLow() {
+  static const bool on = REXCVAR_GET(sasrt_memory_governor);
+  static const uint32_t mark = uint32_t(REXCVAR_GET(sasrt_memory_low_mb));
+  return on && (g_heap_free_mb.load(std::memory_order_relaxed) < mark ||
+                g_memory_emergency_looks.load(std::memory_order_relaxed) != 0);
+}
+bool MemoryCritical() {
+  static const bool on = REXCVAR_GET(sasrt_memory_governor);
+  static const uint32_t mark = uint32_t(REXCVAR_GET(sasrt_memory_critical_mb));
+  return on && (g_heap_free_mb.load(std::memory_order_relaxed) < mark ||
+                g_memory_emergency_looks.load(std::memory_order_relaxed) != 0);
+}
+uint32_t MemoryLowMarkMb() {
+  static const uint32_t mark = uint32_t(REXCVAR_GET(sasrt_memory_low_mb));
+  return mark;
+}
+
 uint64_t StreamCacheMaxBytes(uint64_t renut_max) {
-  return REXCVAR_GET(banjo_renut_memory_policy) ? uint64_t(REXCVAR_GET(banjo_renut_stream_cache_mb)) << 20 : renut_max;
+  uint64_t cap = REXCVAR_GET(banjo_renut_memory_policy) ? uint64_t(REXCVAR_GET(banjo_renut_stream_cache_mb)) << 20 : renut_max;
+  if (MemoryCritical())  // sasrt-nx (2026-11-09, sasrt_memory_governor; port 58)
+    cap = std::min<uint64_t>(cap, uint64_t(48) << 20);
+  else if (MemoryLow())
+    cap = std::min<uint64_t>(cap, uint64_t(96) << 20);
+  return cap;
 }
 
 uint64_t StreamCacheIdleFrames(uint64_t renut_frames) {
@@ -1826,6 +1871,8 @@ uint64_t StreamCacheIdleFrames(uint64_t renut_frames) {
 uint32_t UploadTrimResets(uint32_t renut_resets, uint32_t frames_in_flight) {
   if (!REXCVAR_GET(banjo_renut_memory_policy))
     return renut_resets;
+  if (MemoryLow())  // sasrt-nx (2026-11-09, sasrt_memory_governor; port 58): a heavy frame's chunks go at the next reset
+    return 1;
   return std::max<uint32_t>(1, uint32_t(REXCVAR_GET(banjo_renut_upload_trim_frames)) / std::max<uint32_t>(frames_in_flight, 1));
 }
 
@@ -2073,7 +2120,9 @@ void OnPrebuildWorkerStart() {
 
 uint32_t PrebuildReleaseSeconds() {
   static const uint32_t s = uint32_t(std::max(0, int(REXCVAR_GET(banjo_renut_prebuild_release_s))));
-  return s;
+  // sasrt-nx (2026-11-09, sasrt_memory_governor; port 58): prebuilt pipelines no draw took for 10 s go while memory is low
+  // (3,080 of 3,617 were held unused in SASRT's docked race's load; a draw that asks for one builds it again)
+  return s && MemoryLow() ? std::min<uint32_t>(s, 10) : s;
 }
 
 uint32_t PrebuildWorkers(uint32_t renut_count) {

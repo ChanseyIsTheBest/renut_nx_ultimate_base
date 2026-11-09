@@ -198,6 +198,16 @@ void CountStreamCachePressure(uint64_t refused, uint64_t dropped_bytes);
 //     banjo_renut_upload_trim_frames frames without such a frame (render/upload_ring.cpp).
 uint64_t TextureReserveBytes();
 uint64_t StreamCacheMaxBytes(uint64_t renut_max);
+// sasrt-nx (2026-11-09, sasrt_memory_governor; port 58): the heap's free MB (surfaces.cpp's governor, every 10 frames on
+// the Switch; UINT32_MAX before the first look and on other platforms), and whether it is under sasrt_memory_low_mb /
+// sasrt_memory_critical_mb.
+extern std::atomic<uint32_t> g_heap_free_mb;
+bool MemoryLow();
+bool MemoryCritical();
+// sasrt-nx (2026-11-09 night, sasrt_memory_emergency; port 58): the governor's looks left in an emergency (a texture or
+// a block plume could not make); MemoryLow and MemoryCritical answer true meanwhile. And the low mark in MB.
+extern std::atomic<uint32_t> g_memory_emergency_looks;
+uint32_t MemoryLowMarkMb();
 uint64_t StreamCacheIdleFrames(uint64_t renut_frames);
 uint32_t UploadTrimResets(uint32_t renut_resets, uint32_t frames_in_flight);
 void CountReserveEviction(uint64_t textures);

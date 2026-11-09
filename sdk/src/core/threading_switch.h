@@ -237,6 +237,15 @@ bool RexSwitchCoreIdleSample(int core, unsigned long long* idle_ticks, unsigned 
  */
 void RexSwitchDescribeThreadFailure(size_t stack_size, char* out, size_t out_len);
 
+/* sasrt-nx (2026-11-09; port 58, for a title's memory governor): the guest thread stacks kept for the next threads
+ * (the pool, switch_thread_stack_pool) back to the heap now; the bytes given. A thread made later takes a new block. */
+size_t RexSwitchReleaseSpareStacks(void);
+/* sasrt-nx (2026-11-09 night; port 58): the pooled-size (guest) stacks in use, and the kept ones with their bytes. */
+void RexSwitchStackFigures(size_t* live, size_t* kept, size_t* kept_bytes);
+/* sasrt-nx (2026-11-09 night; port 58): pooled-size stacks taken so far (new and reused): a count that stops moving
+ * when no guest thread is being made (a governor can give the kept stacks back after a minute of that). */
+uint64_t RexSwitchStacksTaken(void);
+
 #ifdef __cplusplus
 }
 #endif

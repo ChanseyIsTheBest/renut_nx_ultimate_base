@@ -109,6 +109,7 @@ using PipelineMap = std::unordered_map<uint32_t, std::unique_ptr<plume::RenderPi
 
 struct Smaa {
   bool failed = false;  // a shader or pipeline could not be made: SMAA stays off
+  uint64_t retry_frame = 0;  // sasrt-nx (2026-11-09 night; port 58): its textures could not be made: tried again then
   std::unique_ptr<plume::RenderShader> vs, edge_ps, weights_ps[2], blend_ps;
   std::unique_ptr<plume::RenderPipeline> weights_pipeline[2];
   PipelineMap edge_pipelines, blend_pipelines;
@@ -301,6 +302,8 @@ bool Fail(const char *what) {
 
 bool Prepare(VideoState &s, HostSurface *surface, uint32_t width, uint32_t height) {
   Smaa &m = g_smaa;
+  if (TextureFrameLocked() < m.retry_frame)
+    return false;  // sasrt-nx (2026-11-09 night; port 58): see below
   if (!m.vs && !MakeShaders(s))
     return Fail("its shaders or pipelines");
   if (!m.area.texture &&
@@ -325,8 +328,25 @@ bool Prepare(VideoState &s, HostSurface *surface, uint32_t width, uint32_t heigh
     if (!MakeTexture(s, m.src, width, height, surface->format, "renut SMAA source") ||
         !MakeTexture(s, m.edges, width, height, kEdgesFormat, "renut SMAA edges") ||
         !MakeTexture(s, m.weights, width, height, kWeightsFormat, "renut SMAA weights") ||
-        !MakeTexture(s, m.mask, width, height, kMaskFormat, "renut SMAA mask"))
-      return Fail("its textures");
+        !MakeTexture(s, m.mask, width, height, kMaskFormat, "renut SMAA mask")) {
+      // sasrt-nx (2026-11-09 night; port 58; SASRT's run mem12: a memory emergency, 27 textures not made in a second):
+      // out of memory for a moment, most likely: frames without SMAA for 60 frames, then tried again, not off for the
+      // rest of the session
+      m.src.Release();
+      m.edges.Release();
+      m.weights.Release();
+      m.mask.Release();
+      m.edge_framebuffer.reset();
+      m.weights_framebuffer.reset();
+      m.target_framebuffer.reset();
+      m.width = m.height = 0;
+      m.retry_frame = TextureFrameLocked() + 60;
+      static uint32_t retry_logged = 0;
+      if (retry_logged++ < 16)
+        RGPU_WARN("[smaa] its textures could not be made ({}x{}): SMAA left out for 60 frames, then tried again",
+                  width, height);
+      return false;
+    }
     m.edge_framebuffer = MakeFramebuffer(s, {m.edges.texture.get(), m.src.texture.get()}, m.mask.texture.get());
     m.weights_framebuffer = MakeFramebuffer(s, {m.weights.texture.get()}, m.mask.texture.get());
     m.target_framebuffer.reset();

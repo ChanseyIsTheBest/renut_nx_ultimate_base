@@ -49,6 +49,20 @@ REXCVAR_DEFINE_BOOL(ignore_thread_priorities, true, "Kernel",
 REXCVAR_DEFINE_BOOL(ignore_thread_affinities, true, "Kernel",
                     "Ignores game-specified thread affinities");
 
+// sasrt-nx (2026-11-09; port 58): a guest thread's host stack, 16 MB (Xenia's) unless the key says less: on the Switch
+// it is heap (SASRT's 31 guest threads at once held ~500 MB). The profiler's thread lines give each thread's deepest
+// sampled stack (switch_profile_stacks) to choose from: measure a game before lowering it. threading_posix.cpp pools
+// stacks of this size and more.
+REXCVAR_DEFINE_INT32(switch_guest_stack_mb, 16, "Threading",
+                     "The host stack of each guest thread, in MB (16 as Xenia; heap on the Switch). Lower only after "
+                     "the profiler's deepest sampled stack says so, with a wide margin")
+    .range(2, 64)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+static size_t GuestHostStackBytes() {
+  static const size_t bytes = size_t(REXCVAR_GET(switch_guest_stack_mb)) << 20;
+  return bytes;
+}
+
 #if REX_PLATFORM_SWITCH
 namespace {
 // banjo-nx (2026-10-20, from sa2-nx, RexSetGuestThreadCoreLayout): the guest threads' cores besides the main thread's (0: the
@@ -476,7 +490,7 @@ X_STATUS XThread::Create() {
   RetainHandle();
 
   rex::thread::Thread::CreationParameters params;
-  params.stack_size = 16_MiB;  // Allocate a big host stack.
+  params.stack_size = GuestHostStackBytes();  // Allocate a big host stack (port 58: switch_guest_stack_mb).
   params.create_suspended = true;
   thread_ = rex::thread::Thread::Create(params, [this]() {
     rex::initialize_seh_thread();
@@ -1476,7 +1490,7 @@ object_ref<XThread> XThread::Restore(KernelState* kernel_state, stream::ByteStre
 
     rex::thread::Thread::CreationParameters params;
     params.create_suspended = true;  // Not done restoring yet.
-    params.stack_size = 16_MiB;
+    params.stack_size = GuestHostStackBytes();  // port 58: switch_guest_stack_mb
     thread->thread_ = rex::thread::Thread::Create(params, [thread, state]() {
       // Set thread ID override. This is used by logging.
       rex::thread::set_current_thread_id(thread->handle());

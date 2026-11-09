@@ -26,12 +26,14 @@
 #include "renut_engine/gpu/backend/video.h"
 #include "renut_engine/perf/frame_stats.h"  // sasrt-nx (2026-11-09, sasrt_dynamic_cpu_aware; port 52)
 #include "renut_engine/gpu/sasrt_gpu_round.h"  // sasrt-nx (2026-11-09, sasrt_rt_restore_candidates; port 54)
+#include <rex/filesystem/devices/host_path_file.h>  // sasrt-nx (2026-11-09; port 58): TrimRangeCache (the governor)
 #if defined(PLUME_DEKO3D)
 #include <plume_deko3d.h>  // banjo-nx (2026-10-21, from sa2-nx 1.0.3.1): Deko3DSetSwapChainSize
 #endif
 #if defined(__SWITCH__)
 #include <switch.h>
 #include <rex/ui/switch_saltynx.h>  // banjo-nx (2026-10-21): the console's mode, Reverse-NX obeyed
+#include <threading_switch.h>  // sasrt-nx (2026-11-09; port 58): RexSwitchReleaseSpareStacks (the governor)
 #endif
 
 REXCVAR_DEFINE_STRING(renut_resolution, "720p", "Nuts&Bolts/Graphics",
@@ -48,6 +50,10 @@ namespace {
 // ResolutionScale, once latched.
 RenderScale g_resolution_scale;
 bool g_resolution_latched = false;
+// sasrt-nx (2026-11-09 night, sasrt_retire_stale_sets; port 58): the 3D's scale before its last change, and the MB of
+// render targets at the 3D's own scale (RetireIdleTargetsLocked's walk, every 10 frames; sasrt_dynamic_up_memory).
+RenderScale g_prev_resolution_scale;
+std::atomic<uint32_t> g_current_set_mb{0};
 
 // banjo-nx (2026-10-21, internal resolution): UiScale, the composite's UI target and this frame's redirect to it, and how
 // many frames in a row have had no composite (kMenuFrames of them: menus or loading, drawn at the display's resolution
@@ -373,6 +379,105 @@ RenderScale CodeForHeightLocked(int32_t height) {
 } // namespace
 
 uint64_t SurfaceEpochLocked() { return g_surface_epoch; }  // banjo-nx (2026-10-20, from sa2-nx, banjo_renut_chain_reuse)
+
+// sasrt-nx (2026-11-09; port 58; SASRT: "feel free to improve our memory management ... 4 player mode will probably be
+// memory intensive"; its docked race kept 278 MB of render targets after it went back to handheld at 1x, and a test at
+// 1.5x in handheld ran the heap out at 35 MB free): a target is keyed by its scale too (TargetKey), so every scale the
+// game has drawn at keeps its own set (the 1x one, 1080's, and the settable codes' heights) until its code is
+// re-pointed. Now a target of neither the 3D's scale nor the HUD's, not looked up (GetHostSurfaceLocked,
+// FindHostSurfaceLocked) for sasrt_retire_idle_targets_frames frames, is released: made again at its next use as a
+// re-pointed code's targets are (GetHostSurfaceSlow builds a slot whose texture is gone; what it held then is what a
+// scale change gives anyway: the other scale's set never carried the frame's content). Targets the frame uses at another
+// scale (post-processing buffers at 1x) are looked up every frame and stay. A released target is no generation's
+// (SurfaceByGenerationLocked), so an alias or a restore candidate of it lapses as for any retired one.
+REXCVAR_DEFINE_BOOL(sasrt_memory_emergency, true, "SASRT/Graphics",
+                    "When plume could not make a texture or a memory block, the next frame frees what it can at once "
+                    "(other scales' targets unused for 4 frames, the governor's critical actions for its next three "
+                    "looks, dynamic resolution a step down) instead of waiting for the governor's next look")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+std::atomic<bool> g_dynamic_emergency_step{false};
+REXCVAR_DEFINE_INT32(sasrt_spare_stacks_idle_s, 60, "SASRT/Graphics",
+                     "The guest thread stacks kept for the next threads (switch_thread_stack_pool) go back to the heap "
+                     "once no guest thread has been made for this many seconds; 0 keeps them unless memory is low")
+    .range(0, 3600)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_INT32(sasrt_retire_idle_targets_frames, 300, "SASRT/Graphics",
+                     "Render targets of another scale than the 3D's and the HUD's not used for this many frames (300: "
+                     "10 s at 30 fps) are released (made again if that scale comes back); 0 keeps them as before")
+    .range(0, 100000)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+uint64_t g_sasrt_frames = 1;
+
+// sasrt-nx (2026-11-09 night; port 58; SASRT's run mem12: at a race's results screen dynamic resolution stepped 972 ->
+// 1008 -> 1044 -> 1080 in three seconds; each step made a set of targets and the sets of the steps before stayed for
+// sasrt_retire_idle_targets_frames, four sets at once, and the heap went to 35 MB free). Only the 3D's set before its
+// last change is kept that long (a step back finds it); a set of any other scale (neither the 3D's, its previous one,
+// nor the HUD's) goes after sasrt_retire_stale_frames unused. In an emergency every set but the 3D's and the HUD's goes
+// after 4 frames unused.
+REXCVAR_DEFINE_BOOL(sasrt_retire_stale_sets, true, "SASRT/Graphics",
+                    "Render targets of a scale that is neither the 3D's, the 3D's previous one, nor the HUD's go after "
+                    "sasrt_retire_stale_frames unused (sasrt_retire_idle_targets_frames otherwise): at most two 3D sets")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_INT32(sasrt_retire_stale_frames, 8, "SASRT/Graphics",
+                     "sasrt_retire_stale_sets: frames unused before a stale set's target goes (more than the frames in "
+                     "flight)")
+    .range(4, 100000)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_INT32(sasrt_retire_current_idle_frames, 1800, "SASRT/Graphics",
+                     "Render targets of the 3D's or the HUD's own scale unused for this many frames (1800: a minute at "
+                     "30 fps) are released too (a menu's or a cutscene's targets during a race; made again at their "
+                     "next use); 0 keeps them unless memory is low")
+    .range(0, 1000000)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
+void RetireIdleTargetsLocked(bool emergency = false) {
+  static const int32_t set = REXCVAR_GET(sasrt_retire_idle_targets_frames);
+  // every 10 frames, and at once in an emergency
+  if (set <= 0 || (!emergency && g_sasrt_frames % 10 != 0))
+    return;
+  // sooner with memory short (sasrt_memory_governor)
+  const int32_t idle = banjo::renut_gpu::MemoryLow() ? std::min(set, 60) : set;
+  static const bool stale_sets = REXCVAR_GET(sasrt_retire_stale_sets);
+  static const int32_t stale = REXCVAR_GET(sasrt_retire_stale_frames);
+  static const int32_t current_idle = REXCVAR_GET(sasrt_retire_current_idle_frames);
+  uint32_t count = 0;
+  uint64_t bytes = 0, current_bytes = 0;
+  // while memory is low, targets of the 3D's or the HUD's own scale go too after 900 frames (30 s) unused (a menu's or a
+  // cutscene's targets during a race); made again at their next use.
+  const bool low = banjo::renut_gpu::MemoryLow();
+  for (auto &[key, surface] : g_targets) {
+    if (!surface || !surface->texture)
+      continue;
+    const uint64_t target_bytes = uint64_t(surface->scale.Size(surface->width)) * surface->scale.Size(surface->height) *
+                                  plume::RenderFormatSize(surface->format) * surface->samples;
+    if (surface->scale == g_resolution_scale)
+      current_bytes += target_bytes;  // sasrt_dynamic_up_memory's figure
+    const bool current = surface->scale == g_resolution_scale || surface->scale == g_ui_scale;
+    // sasrt_retire_current_idle_frames: the 3D's and the HUD's own scale's targets too after that long unused whatever
+    // memory says (900 frames when low)
+    if (current && !low && current_idle <= 0)
+      continue;
+    // sasrt_retire_stale_sets: the 3D's previous set keeps 'idle' (not in an emergency, nor while memory is low); any
+    // other set 'stale'
+    int32_t limit = current ? (low ? std::max(idle, 900) : current_idle) : idle;
+    if (!current && stale_sets && (emergency || low || !(surface->scale == g_prev_resolution_scale)))
+      limit = emergency ? 4 : stale;
+    if (g_sasrt_frames - surface->sasrt_used_frame < uint64_t(limit))
+      continue;
+    if (surface.get() == g_ui.scene || surface.get() == g_ui_depth.scene)
+      continue;
+    bytes += target_bytes;
+    RetireTarget(*surface);
+    ++count;
+  }
+  g_current_set_mb.store(uint32_t(current_bytes >> 20), std::memory_order_relaxed);
+  static uint32_t logged = 0;
+  if (count && logged++ < 64)
+    RGPU_INFO("[renut] {} idle render targets released (the 3D at {}x, the HUD at {}x; unused for {} frames, {} for a "
+              "stale set{}): {:.1f} MB (sasrt_retire_idle_targets_frames, sasrt_retire_stale_sets)",
+              count, g_resolution_scale.Factor(), g_ui_scale.Factor(), idle, emergency ? 4 : stale,
+              emergency ? ", an emergency" : "", double(bytes) / 1048576.0);
+}
 uint64_t FramebufferEpochLocked() { return g_framebuffer_epoch; }  // banjo-nx (2026-10-20, from sa2-nx, banjo_renut_chain_reuse)
 
 RenderScale ResolutionScale() {
@@ -549,10 +654,110 @@ void LatchResolutionScaleLocked() {
   if (!g_resolution_latched || scale != g_resolution_scale) {
     RGPU_INFO("Render resolution {}x{} ({:.3g}x)", scale.Size(GuestScreenWidth()), scale.Size(720),
               scale.Factor());
+    if (g_resolution_latched)
+      g_prev_resolution_scale = g_resolution_scale;  // sasrt-nx (2026-11-09 night; port 58)
     g_resolution_scale = scale;
     ++g_surface_epoch;
     g_resolution_latched = true;
   }
+  ++g_sasrt_frames;  // sasrt-nx (2026-11-09; port 58): once a frame (the Swap's latch)
+#if defined(PLUME_DEKO3D)
+  // sasrt-nx (2026-11-09 night, sasrt_memory_emergency; port 58): a texture or a block plume could not make since the
+  // last frame
+  static const bool emergencies = REXCVAR_GET(sasrt_memory_emergency);
+  const bool emergency = plume::Deko3DTakeMemoryEmergency() && emergencies;
+  if (emergency) {
+    banjo::renut_gpu::g_memory_emergency_looks.store(3, std::memory_order_relaxed);
+    g_dynamic_emergency_step.store(true, std::memory_order_relaxed);
+    RetireIdleTargetsLocked(true);
+    static uint32_t emergency_logged = 0;
+    if (emergency_logged++ < 32)
+      RGPU_INFO("[renut] memory emergency (a texture or a memory block could not be made): sets of other scales unused "
+                "for 4 frames released, dynamic resolution a step down, the governor's critical actions now "
+                "(sasrt_memory_emergency)");
+  }
+  // sasrt-nx (2026-11-09, sasrt_memory_governor; port 58): every 10 frames (its figures are O(1)), and at once in an
+  // emergency
+  if (emergency || g_sasrt_frames % 10 == 1) {
+    // What a GPU block or a CPU allocation can still have: the heap's free memory and the GPU region's (carved from the
+    // heap's top: SASRT's run docked_gov held 834 MB free in it while the heap alone read 105 MB); the heap alone when
+    // it is nearly gone (the CPU side needs it).
+    plume::Deko3DGpuRegionInfo region{};
+    plume::Deko3DGpuRegionFigures(region);
+    // the heap's room (what sbrk can still give), O(1): Deko3DHeapFreeBytes adds malloc's free pieces through mallinfo,
+    // 7-21 ms under malloc's lock in SASRT's run mem12 (pieces of a few KB that a block or a big allocation cannot use)
+    const uint64_t heap = plume::Deko3DHeapRoomBytes();
+    uint64_t room = heap + (region.on ? uint64_t(region.freeBytes) : 0);
+    if ((heap >> 20) < 48)
+      room = std::min(room, heap);
+    const uint32_t mb = uint32_t(std::min<uint64_t>(room >> 20, 0xFFFFFFF0ull));
+    const bool was_low = banjo::renut_gpu::MemoryLow(), was_critical = banjo::renut_gpu::MemoryCritical();
+    banjo::renut_gpu::g_heap_free_mb.store(mb, std::memory_order_relaxed);
+    const bool low = banjo::renut_gpu::MemoryLow(), critical = banjo::renut_gpu::MemoryCritical();
+    if (!emergency && banjo::renut_gpu::g_memory_emergency_looks.load(std::memory_order_relaxed))
+      banjo::renut_gpu::g_memory_emergency_looks.fetch_sub(1, std::memory_order_relaxed);
+    // the GPU region's free bottom back to the heap while the heap itself (the CPU side's) is short: SASRT's docked race
+    // crashed with the command buffers' arena out of heap and 500-700 MB free in the region
+    if ((heap >> 20) < 192) {
+      const uint64_t given = plume::Deko3DRegionGiveBack();
+      static uint32_t given_logged = 0;
+      if (given && given_logged++ < 32)
+        RGPU_INFO("[renut] heap {} MB free: {} MB of the GPU region's free bottom given back to it "
+                  "(sasrt_memory_governor)", heap >> 20, given >> 20);
+    }
+    if (low) {
+      // the I/O range cache's entries (heap; a range is read again)
+      const uint64_t dropped = rex::filesystem::TrimRangeCache(0);
+      static uint32_t dropped_logged = 0;
+      if (dropped && dropped_logged++ < 32)
+        RGPU_INFO("[renut] {} MB free: the I/O range cache's {} MB dropped (sasrt_memory_governor)", mb,
+                  dropped >> 20);
+      // the image heap's empty chunks back to the GPU region (for buffers too)
+      const uint64_t freed = plume::Deko3DReleaseEmptyImageChunks();
+      static uint32_t freed_logged = 0;
+      if (freed && freed_logged++ < 32)
+        RGPU_INFO("[renut] {} MB free: {} MB of empty image chunks given back (sasrt_memory_governor)", mb,
+                  freed >> 20);
+#if defined(__SWITCH__)
+      // the guest thread stacks kept for the next threads (up to switch_thread_stack_pool of them)
+      const size_t stacks = RexSwitchReleaseSpareStacks();
+      static uint32_t stacks_logged = 0;
+      if (stacks && stacks_logged++ < 32)
+        RGPU_INFO("[renut] {} MB free: {} MB of kept thread stacks given back to the heap (sasrt_memory_governor)", mb,
+                  stacks >> 20);
+#endif
+    }
+#if defined(__SWITCH__)
+    // sasrt-nx (2026-11-09 night, sasrt_spare_stacks_idle_s; port 58): the kept guest thread stacks back to the heap once
+    // no thread has been made for that long (SASRT's race makes none), whatever memory says
+    {
+      static const int32_t idle_s = REXCVAR_GET(sasrt_spare_stacks_idle_s);
+      static uint64_t last_taken = UINT64_MAX;
+      static std::chrono::steady_clock::time_point since = std::chrono::steady_clock::now();
+      const uint64_t taken = RexSwitchStacksTaken();
+      const auto now = std::chrono::steady_clock::now();
+      if (taken != last_taken) {
+        last_taken = taken;
+        since = now;
+      } else if (idle_s > 0 && now - since >= std::chrono::seconds(idle_s)) {
+        since = now;
+        const size_t given = RexSwitchReleaseSpareStacks();
+        static uint32_t idle_logged = 0;
+        if (given && idle_logged++ < 16)
+          RGPU_INFO("[renut] no guest thread made for {} s: {} MB of kept thread stacks given back to the heap "
+                    "(sasrt_spare_stacks_idle_s)", idle_s, given >> 20);
+      }
+    }
+#endif
+    static uint32_t logged = 0;
+    if ((low != was_low || critical != was_critical) && logged++ < 64)
+      RGPU_INFO("[renut] {} MB free (heap and GPU region): {} (sasrt_memory_governor)", mb,
+                critical ? "critical: dynamic resolution steps down, the stream cache at 48 MB"
+                : low    ? "low: no dynamic resolution step up, the stream cache at 96 MB, idle targets after 60 frames"
+                         : "enough again");
+  }
+#endif
+  RetireIdleTargetsLocked();
 }
 
 // banjo-nx (2026-10-28, GPU block): see render/surfaces.h. A moving average of the GPU's time a frame (about 16
@@ -570,6 +775,12 @@ REXCVAR_DEFINE_BOOL(sasrt_dynamic_cpu_aware, true, "Nuts&Bolts/Graphics",
                     "averages): a frame the CPU holds is not made faster by fewer pixels, so the height steps down only "
                     "when the GPU's time is above both, and up while the next step is predicted under 85 % of the larger "
                     "(from sasrt-nx). Off: the budget alone, as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
+// sasrt-nx (2026-11-09 night, SASRT's run mem12; port 58): see the step-up branch below.
+REXCVAR_DEFINE_BOOL(sasrt_dynamic_up_memory, true, "SASRT/Graphics",
+                    "banjo_renut_dynamic_resolution: a step up only when the heap and the GPU region have its set of "
+                    "targets free above sasrt_memory_low_mb (the 3D's set now times the pixel ratio)")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 void NoteGpuFrameForDynamicResolution(double gpu_ms) {
@@ -621,6 +832,9 @@ void NoteGpuFrameForDynamicResolution(double gpu_ms) {
         direction = -direction;
       next = step + direction;
     }
+  } else if (step > 0 && banjo::renut_gpu::MemoryCritical() &&
+             (since >= 2.0 || g_dynamic_emergency_step.exchange(false, std::memory_order_relaxed))) {
+    next = step - 1;  // sasrt-nx (2026-11-09, sasrt_memory_governor; port 58): a smaller set of targets for the heap
   } else if (step > 0 && since >= 5.0 && average > budget) {
     next = 0;
     for (int s = step - 1; s >= 0; --s) {
@@ -630,7 +844,22 @@ void NoteGpuFrameForDynamicResolution(double gpu_ms) {
       }
     }
   } else if (step + 1 < count) {
-    if (predicted(step + 1) >= budget * 0.85)
+    // sasrt-nx (2026-11-09 night, sasrt_dynamic_up_memory; port 58): the next step's set of targets (the 3D's set now,
+    // times the pixel ratio: an overestimate, its codes' targets of other heights go) must leave the low mark free
+    static const bool up_memory = REXCVAR_GET(sasrt_dynamic_up_memory);
+    bool memory_ok = true;
+    if (up_memory) {
+      const uint32_t free_mb = banjo::renut_gpu::g_heap_free_mb.load(std::memory_order_relaxed);
+      const double r = double(heights[step + 1]) / current;
+      const double need_mb = double(g_current_set_mb.load(std::memory_order_relaxed)) * r * r;
+      memory_ok = free_mb == UINT32_MAX || double(free_mb) >= double(banjo::renut_gpu::MemoryLowMarkMb()) + need_mb;
+      static uint32_t held_logged = 0;
+      if (!memory_ok && predicted(step + 1) < budget * 0.85 && held_logged++ < 16)
+        RGPU_INFO("[renut] dynamic resolution: {} lines held back: {} MB free, the next set ~{:.0f} MB and the low mark "
+                  "{} MB (sasrt_dynamic_up_memory)", heights[step + 1], free_mb, need_mb,
+                  banjo::renut_gpu::MemoryLowMarkMb());
+    }
+    if (predicted(step + 1) >= budget * 0.85 || banjo::renut_gpu::MemoryLow() || !memory_ok)  // port 58: the governor
       fits_since = now;
     if (since >= up_seconds && std::chrono::duration<double>(now - fits_since).count() >= up_seconds) {
       next = step + 1;
@@ -677,6 +906,8 @@ HostSurface *FindHostSurfaceLocked(u32 surface_va) {
   if (key == g_surface_keys.end())
     return nullptr;
   auto it = g_targets.find(key->second);
+  if (it != g_targets.end() && it->second)
+    it->second->sasrt_used_frame = g_sasrt_frames;  // sasrt-nx (2026-11-09, sasrt_retire_idle_targets_frames; port 58)
   return it != g_targets.end() ? it->second.get() : nullptr;
 }
 
@@ -763,6 +994,7 @@ HostSurface *GetHostSurfaceLocked(u32 surface_va) {
     m.surface->info_word = desc->SurfaceInfo;
     m.surface->format_word = desc->Format;
     m.surface->color_info_word = desc->ColorInfo;  // halo3-nx
+    m.surface->sasrt_used_frame = g_sasrt_frames;  // sasrt-nx (2026-11-09, sasrt_retire_idle_targets_frames; port 58)
     // banjo-nx (2026-10-21, internal resolution): the composite's target after the composite: its UI target.
     if (g_ui.redirect && m.surface == g_ui.scene)
       return g_ui.surface.get();
@@ -771,6 +1003,8 @@ HostSurface *GetHostSurfaceLocked(u32 surface_va) {
     return m.surface;
   }
   HostSurface *result = GetHostSurfaceSlow(surface_va, desc);
+  if (result)
+    result->sasrt_used_frame = g_sasrt_frames;  // sasrt-nx (2026-11-09, sasrt_retire_idle_targets_frames; port 58)
   if (memo && result) {
     m.va = surface_va;
     m.size = desc->Size;

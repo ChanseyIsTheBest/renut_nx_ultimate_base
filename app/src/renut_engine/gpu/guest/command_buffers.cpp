@@ -24,6 +24,9 @@
 
 #include <fmt/format.h>
 #include <chrono>
+#if defined(PLUME_DEKO3D)
+#include <plume_deko3d.h>  // sasrt-nx (2026-11-09; port 58): Deko3DRegionGiveBack
+#endif
 #if defined(__SWITCH__)
 #include <unistd.h>  // banjo-nx (2026-10-28): sbrk (ReleaseSpareBuffersWhenHeapShort)
 extern "C" char *fake_heap_end;  // libnx: the end of the malloc heap
@@ -574,6 +577,11 @@ void ReserveArena(Arena &arena, size_t size) {
       arena.reserve(want);
     } catch (const std::bad_alloc &) {
       ReleaseSpareBuffers();
+#if defined(PLUME_DEKO3D)
+      // sasrt-nx (2026-11-09; port 58; SASRT's docked crash: this growth found no room with 500-700 MB free in the GPU
+      // region): the region's free bottom back to the heap first (plume_deko3d.h, Deko3DRegionGiveBack).
+      plume::Deko3DRegionGiveBack();
+#endif
       arena.reserve(size);
     }
   }
@@ -589,7 +597,11 @@ void GrowArena(Arena &arena, size_t size) {
 template <typename V>
 void ResetForRecording(V &v, size_t keep) {
   const size_t cap_bytes = v.capacity() * sizeof(typename V::value_type);
-  if (cap_bytes > keep && v.capacity() / 2 > v.size()) {
+  // sasrt-nx (2026-11-09, sasrt_memory_governor; port 58): while memory is low, a quarter of 'keep' and a quarter more
+  // than the last recording used are enough to give the rest back (SASRT's docked crash: this arena could not grow)
+  if (banjo::renut_gpu::MemoryLow() && cap_bytes > keep / 4 && v.capacity() > v.size() + v.size() / 4) {
+    V().swap(v);
+  } else if (cap_bytes > keep && v.capacity() / 2 > v.size()) {
     V().swap(v);
   } else {
     v.clear();

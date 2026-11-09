@@ -130,8 +130,12 @@ struct Slot {
   u64 last_ticks = 0;
   bool busy = true;
   double cpu = 0.0;
+  // sasrt-nx (2026-11-09; port 58, the guest threads' 16 MB host stacks: ~500 MB of heap in SASRT): the deepest the
+  // sampled sp has been below the top of its stack mapping (svcQueryMemory of sp), since the slot's thread registered.
+  std::atomic<u64> stack_deepest{0};
 };
 Slot g_slots[kMaxThreads];
+std::atomic<u64> g_stack_deepest_all{0};  // port 58: the deepest of any thread so far
 // Exclusive core for the hottest guest thread (the game's main thread): -1 = off. See ApplyExclusiveCore.
 std::atomic<int> g_exclusive_core{-1};
 std::atomic<bool> g_light_core{false};
@@ -290,6 +294,7 @@ void Register(Handle h) {
     u32 expected = 0;
     if (s.handle.compare_exchange_strong(expected, h)) {
       s.name[0] = 0;
+      s.stack_deepest.store(0, std::memory_order_relaxed);  // port 58
       return;
     }
   }
@@ -749,9 +754,11 @@ void Report(u64 elapsed_ticks, u64 tick_freq, u64 counters_last[kCounterCount],
     svcGetThreadCoreMask(&preferred, &mask, s.handle.load());
     std::fprintf(f,
                  "\n-- thread %" PRIu64 " \"%s\": CPU %.1f%% | priority 0x%X, preferred core %d, "
-                 "mask 0x%llX\n",
+                 "mask 0x%llX | stack %llu KB deepest sampled (all threads %llu KB)\n",
                  tid, s.name[0] ? s.name : "?", s.cpu, static_cast<unsigned>(priority),
-                 static_cast<int>(preferred), static_cast<unsigned long long>(mask));
+                 static_cast<int>(preferred), static_cast<unsigned long long>(mask),
+                 static_cast<unsigned long long>(s.stack_deepest.load(std::memory_order_relaxed) >> 10),
+                 static_cast<unsigned long long>(g_stack_deepest_all.load(std::memory_order_relaxed) >> 10));
 
     auto lo = std::lower_bound(samples.begin(), samples.end(), i,
                                [](const Sample& a, size_t v) { return a.slot < v; });
@@ -1063,6 +1070,19 @@ void ProfilerMain(void*) {
       }
       ThreadContext ctx;
       const Result rc = svcGetThreadContext3(&ctx, h);
+      if (R_SUCCEEDED(rc)) {  // sasrt-nx (2026-11-09; port 58): the stack's depth at this sample (top: the mapping's end)
+        MemoryInfo dmi;
+        u32 dpi = 0;
+        if (R_SUCCEEDED(svcQueryMemory(&dmi, &dpi, ctx.sp)) && (dmi.perm & Perm_R)) {
+          const u64 top = dmi.addr + dmi.size;
+          const u64 depth = top > ctx.sp ? top - ctx.sp : 0;
+          if (depth > s.stack_deepest.load(std::memory_order_relaxed)) {
+            s.stack_deepest.store(depth, std::memory_order_relaxed);
+            if (depth > g_stack_deepest_all.load(std::memory_order_relaxed))
+              g_stack_deepest_all.store(depth, std::memory_order_relaxed);
+          }
+        }
+      }
       if (R_SUCCEEDED(rc) && g_sample_count < kMaxSamples) {
         Sample& out = g_samples[g_sample_count++];
         out = {};

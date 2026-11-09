@@ -69,6 +69,7 @@ struct HostSurface {
   // halo3-nx (2026-11-03): when it was last bound to draw to, and what of another format's target over the same EDRAM view it
   // holds (SyncColorViewLocked).
   uint64_t bound_serial = 0;
+  uint64_t sasrt_used_frame = 0;  // sasrt-nx (2026-11-09, sasrt_retire_idle_targets_frames; port 58): last looked up
   const HostSurface *synced_view = nullptr;
   uint64_t synced_writes = 0;
 

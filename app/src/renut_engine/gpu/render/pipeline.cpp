@@ -1519,7 +1519,8 @@ void ReleaseIdlePrebuiltPipelines() {
                           .count();
   if (now < next_ms)
     return;
-  next_ms = now + 20000;
+  const bool low = banjo::renut_gpu::MemoryLow();  // sasrt-nx (2026-11-09, sasrt_memory_governor; port 58)
+  next_ms = now + (low ? 5000 : 20000);
   // banjo-nx (2026-10-28, f7b): only when the heap is short: its room (what sbrk has not handed out yet, as
   // QueryGpuMemory's budget) below 256 MB. Given back with room to spare, a scene visited again rebuilt hundreds of them
   // at once. Off the Switch: never (no fixed heap).
@@ -1527,7 +1528,7 @@ void ReleaseIdlePrebuiltPipelines() {
   {
     const char *top = static_cast<const char *>(sbrk(0));
     const uint64_t room = (top && fake_heap_end > top) ? uint64_t(fake_heap_end - top) : 0;
-    if (room >= (uint64_t(256) << 20))
+    if (room >= (uint64_t(256) << 20) && !low)  // port 58: the governor's figure counts the GPU region too
       return;
   }
 #else

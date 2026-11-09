@@ -1114,6 +1114,13 @@ uint64_t g_stream_cache_refused = 0;
 // 150 frames (2026-10-23, batch 5): 60 was 2 s at the overclocked console's 30 fps, so the pass dropped copies of the
 // scene still being drawn and they were converted again (15-50 thousand refusals every 10 s at the cap).
 constexpr uint64_t kPressureIdleFrames = 150;
+// sasrt-nx (2026-11-10; port 58): see the drain in the stream cache's idle pass.
+REXCVAR_DEFINE_BOOL(sasrt_stream_cache_drain, true, "SASRT/Graphics",
+                    "With the stream cache's pool past 1.5 times its copies (and 64 MB), its sparsest chunk is drained: "
+                    "new copies go elsewhere and its copies not drawn in the last frame are dropped (made again when "
+                    "needed), so the chunk empties and goes back (SASRT's run mem14: 104-146 MB of copies in a 288 MB "
+                    "pool)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 // banjo-nx (package 28, banjo_renut_diag_resolve_trace): draws since the last change of targets.
 uint32_t g_trace_draws = 0;
 
@@ -1141,6 +1148,8 @@ public:
   PoolSpan Allocate(u32 size) {
     const uint64_t need = (uint64_t(size) + kAlign - 1) & ~(kAlign - 1);
     for (u32 i = 0; i < chunks_.size(); ++i) {
+      if (i == draining_)
+        continue;  // sasrt-nx (2026-11-10, sasrt_stream_cache_drain; port 58): taken last, below
       if (PoolSpan span = Take(i, need); span)
         return span;
     }
@@ -1152,6 +1161,10 @@ public:
     u32 index = AddChunk(need);
     if (index == UINT32_MAX && need <= kSmallChunkSize)
       index = AddChunk(0, kSmallChunkSize);  // a smaller chunk may still fit in a fragmented heap
+    if (index == UINT32_MAX && draining_ < chunks_.size()) {
+      if (PoolSpan span = Take(draining_, need); span)
+        return span;  // sasrt-nx (2026-11-10; port 58): no other room: the chunk being drained after all
+    }
     if (index == UINT32_MAX) {
       no_chunk_until_ = g_stream_cache_frame + kNoChunkFrames;
       if (chunk_failures_++ < 4)
@@ -1180,6 +1193,10 @@ public:
         chunk.free.clear();
         chunk.size = 0;
         no_chunk_until_ = 0;  // banjo-nx (2026-10-28): its memory goes back: a new chunk may fit again
+        if (span.chunk == draining_) {  // sasrt-nx (2026-11-10, sasrt_stream_cache_drain; port 58): drained
+          ++drained_;
+          draining_ = UINT32_MAX;
+        }
       }
     }
     deferred_[slot].clear();
@@ -1187,6 +1204,30 @@ public:
 
   // banjo-nx (2026-10-27, banjo_renut_fetch_cache): a chunk's size (a draw binding the chunk binds all of it).
   uint64_t ChunkBytes(u32 index) const { return index < chunks_.size() ? chunks_[index].size : 0; }
+
+  // sasrt-nx (2026-11-10, sasrt_stream_cache_drain; port 58): the chunk (not 0, which stays) with the fewest bytes in
+  // use, or UINT32_MAX; the chunk being drained (taken last by Allocate) and the drains finished.
+  u32 SparsestChunk() const {
+    u32 best = UINT32_MAX;
+    uint64_t best_used = UINT64_MAX;
+    for (u32 i = 1; i < chunks_.size(); ++i) {
+      const Chunk &c = chunks_[i];
+      if (!c.buffer)
+        continue;
+      uint64_t free = 0;
+      for (const auto &range : c.free)
+        free += range.second;
+      const uint64_t used = c.size > free ? c.size - free : 0;
+      if (used < best_used) {
+        best_used = used;
+        best = i;
+      }
+    }
+    return best;
+  }
+  u32 draining_ = UINT32_MAX;
+  u32 drain_passes_ = 0;
+  uint64_t drained_ = 0;
 
   // Host memory the chunks hold.
   uint64_t Bytes() const {
@@ -11459,8 +11500,11 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
     const int mb = banjo::renut_gpu::SplitFrameMb();
     return mb > 0 && IsDeko3D() ? std::max<size_t>(size_t(mb) / 16, 1) : ~size_t(0);
   }();
-  if (Video::UploadsLocked().CurrentChunk() >= split_chunks) [[unlikely]]  // kameo-nx (2026-11-04)
-    SplitLongFrameLocked();
+  // sasrt-nx (2026-11-09 night, sasrt_memory_governor; port 58): at 48 MB (3 chunks) while memory is low (SASRT's
+  // load frames grew the rings to 160-240 MB in its docked crashes); a frame split is submitted, the same pixels.
+  if (const size_t chunk = Video::UploadsLocked().CurrentChunk();
+      chunk >= split_chunks || (chunk >= 3 && split_chunks != ~size_t(0) && banjo::renut_gpu::MemoryLow())) [[unlikely]]
+    SplitLongFrameLocked();  // kameo-nx (2026-11-04)
   // banjo-nx (2026-10-26, the record-time draw path): the lean executor first; 0: this draw is DrawStateLocked's.
   if (const int fast = FastDrawLocked(device_state, call, replay))
     return fast > 0;
@@ -12492,6 +12536,14 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
   struct PipelineReuse {
     uint64_t seq = 0, lookups = 0, epoch = 0;
     plume::RenderPipeline *pipeline = nullptr;
+    // port 58 (2026-11-10; RR6's diagnosis, SASRT's octopus): the words the key takes from each draw after the base key
+    // was reused (sasrt_words, fetch_pad, the clip bit in reserved, point_sprite). The pipeline was handed back whenever
+    // the base key was reused, so with sasrt_gpu_fetch_endian_spec a skinning draw whose bone fetch had another byte
+    // order than the draw before ran the draw before's specialised pipeline: SASRT's Ocean View octopus came apart under
+    // a heavy GPU (more draws in a row without a lookup between them). Now the reuse needs them the same too (every
+    // sasrt_words item goes through here). Console check: SASRT's run octo_fix38, the octopus right in all ten shots.
+    uint32_t sasrt_words[20] = {};
+    uint32_t fetch_pad = 0, reserved = 0, point_sprite = 0;
   };
   static PipelineReuse preuse;
   plume::RenderPipeline *pipeline = nullptr;
@@ -12500,8 +12552,11 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
   // reusing the generic pipeline while a lookup would give the specialised one (emulator run 120: one
   // banjo_renut_chain_reuse_verify difference in 7 minutes; the same pixels, the generic pipeline reads the bools).
   const uint64_t prebuild_epoch = PrebuildEpochLocked();
+  const bool same_draw_words = preuse.fetch_pad == key.fetch_pad && preuse.reserved == key.reserved &&
+                               preuse.point_sprite == key.point_sprite &&
+                               std::memcmp(preuse.sasrt_words, key.sasrt_words, sizeof(key.sasrt_words)) == 0;
   if (reused && preuse.pipeline && preuse.seq + 1 == hint.seq && preuse.lookups == PipelineLookupsLocked() &&
-      preuse.epoch == prebuild_epoch) {
+      preuse.epoch == prebuild_epoch && same_draw_words) {
     pipeline = preuse.pipeline;
     CountReuse(4, true);  // banjo-nx (2026-10-23)
     if (reuse_verify) {
@@ -12518,8 +12573,16 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
       CountReuse(4, false);  // banjo-nx (2026-10-23)
     pipeline = GetPipelineLocked(key, {host_vs, host_ps, &declaration->layout});
   }
-  if (reuse_on)
-    preuse = {hint.seq, PipelineLookupsLocked(), prebuild_epoch, pipeline};
+  if (reuse_on) {
+    preuse.seq = hint.seq;
+    preuse.lookups = PipelineLookupsLocked();
+    preuse.epoch = prebuild_epoch;
+    preuse.pipeline = pipeline;
+    std::memcpy(preuse.sasrt_words, key.sasrt_words, sizeof(key.sasrt_words));  // port 58
+    preuse.fetch_pad = key.fetch_pad;
+    preuse.reserved = key.reserved;
+    preuse.point_sprite = key.point_sprite;
+  }
   // banjo-nx (2026-10-23, render-thread round): the pipeline's lines setPipeline and the refresh read, fetched while
   // the targets are bound.
   __builtin_prefetch(pipeline);
@@ -13495,6 +13558,10 @@ void AdvanceStreamCacheFrameLocked() {
   const uint64_t bytes_before = g_stream_cache_bytes;
   if (pressure)
     idle_frames = kPressureIdleFrames;
+  // sasrt-nx (2026-11-09, sasrt_memory_governor; port 58): critical: the copies no draw read for 60 frames go (made
+  // again from guest memory when drawn)
+  if (banjo::renut_gpu::MemoryCritical() && banjo::renut_gpu::StreamCachePressureOn() && idle_frames > 60)
+    idle_frames = 60;
   bool whole_gone = false;  // banjo-nx (2026-10-28): a whole entry among them (see DropReplacedRanges)
   // bangaio-nx (2026-10-29, v5, banjo_renut_stream_second_sighting): a range entry with no copy holds only its count of
   // stable kicks: it goes after kRangeIdleFrames unused, not idle_frames (20 s), and only its memo slot is forgotten.
@@ -13518,6 +13585,46 @@ void AdvanceStreamCacheFrameLocked() {
         return true;
       });
   g_ranges_forgotten += ranges_gone;
+  // sasrt-nx (2026-11-10, sasrt_stream_cache_drain; port 58; SASRT's run mem14: 104-146 MB of copies in a 288 MB pool, a
+  // chunk going back only once every copy in it has gone, and the copies spread over all of them). With the pool past
+  // 1.5 times its copies and 64 MB, its sparsest chunk is drained: new copies go elsewhere (CopyPool::Allocate takes it
+  // last) and its copies no draw used in the last frame are dropped at each pass (their entries stay: a stream is
+  // converted into the upload ring meanwhile and copied again when it holds, as after any drop); empty, the chunk goes
+  // back (ReleaseSlot). Whole-buffer copies (objects hold them) stay; a drain not done in 10 passes is given up. The
+  // same pixels. SASRT: one chunk back in its first run, the pool refilled (copies spread with small holes): weak.
+  {
+    static const bool drain_on = REXCVAR_GET(sasrt_stream_cache_drain);
+    CopyPool &pool = g_copy_pool;
+    if (drain_on && pool.draining_ == UINT32_MAX &&
+        pool.Bytes() > g_stream_cache_bytes + g_stream_cache_bytes / 2 + (uint64_t(64) << 20)) {
+      pool.draining_ = pool.SparsestChunk();
+      pool.drain_passes_ = 0;
+    }
+    if (pool.draining_ != UINT32_MAX) {
+      uint64_t dropped = 0;
+      for (auto &[skey, c] : g_stream_cache) {
+        if (c.copy && c.copy.chunk == pool.draining_ && !c.whole && g_stream_cache_frame - c.last_used >= 1) {
+          dropped += c.bytes;
+          DropCachedCopy(c);
+        }
+      }
+      for (auto &[ikey, c] : g_index_cache) {
+        if (c.copy && c.copy.chunk == pool.draining_ && ikey.primitive != kWholeIndexPrimitive &&
+            g_stream_cache_frame - c.last_used >= 1) {
+          dropped += c.bytes;
+          DropCachedIndices(c);
+        }
+      }
+      static uint32_t drain_logged = 0;
+      if (dropped && drain_logged++ < 16)
+        RGPU_INFO("[renut] stream cache: chunk {} drained ({:.1f} MB of copies dropped; {:.0f} MB of copies in a {:.0f} MB "
+                  "pool; {} chunks given back so far by draining, sasrt_stream_cache_drain)", pool.draining_,
+                  double(dropped) / 1048576.0, double(g_stream_cache_bytes) / 1048576.0,
+                  double(pool.Bytes()) / 1048576.0, pool.drained_);
+      if (++pool.drain_passes_ >= 10)
+        pool.draining_ = UINT32_MAX;  // whole copies or ones used every frame keep it: given up
+    }
+  }
   const size_t indices_gone = std::erase_if(g_index_cache, [idle_frames, &whole_gone](auto &entry) {
     if (g_stream_cache_frame - entry.second.last_used < idle_frames)
       return false;

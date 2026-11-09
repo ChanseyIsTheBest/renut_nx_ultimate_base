@@ -81,6 +81,10 @@ toml, so a port that finds one wrong for its game doesn't have to change the cod
 - Port 57 is ds3-nx's SDK fixes: the time a console spends asleep or at HOME no longer reaches the game as one huge
   frame, package reads are one at a time, XMA audio no longer replays sound it has played, modules are found by file
   name when a game remaps its paths, and multi-disc games can take the disc swap over.
+- Port 58 is SASRT's memory round: a governor that watches the Switch's free memory and gives caches, idle render
+  targets, kept thread stacks and GPU memory back before it runs out (SASRT's docked races went from crashing to
+  1,080-1,220 MB of CPU-side heap in use, from 1,526), and the fix for a pipeline shortcut that could draw with the
+  previous draw's specialised pipeline (SASRT's broken octopus).
 - Port 44 and the translator changes take effect when a game's shader package is made again. Before measuring on the
   console, build its DKSH cache on the PC (`tools/deko3d_variant_cache.py`): a first run that compiles its shaders while
   it draws is slower on the GPU than the build is.

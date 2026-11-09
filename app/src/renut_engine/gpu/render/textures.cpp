@@ -100,6 +100,17 @@ constexpr uint64_t kEvictIdleFrames = 600;
 constexpr uint64_t kEvictIdleGpuFrames = 3600;
 constexpr uint32_t kEvictPressureSlots = kTextureDescriptorCount * 3 / 4;
 constexpr double kEvictMemoryShare = 0.85;
+// sasrt-nx (2026-11-09 night; port 58): EvictIdleTexturesLocked. OFF by default: with it on (1800) every docked race of
+// SASRT's hung the GPU 80-150 s in (runs mem14, mem15, home_test: "a fence has not signalled", screen capture and HOME
+// dead), 4-5 s after a batch of these releases; off, two races clean. Root cause not found (SASRT's follow-up):
+// ReleaseHostTextureLocked retires and bumps the binding epochs, and the fast bind paths check them. Do not turn on
+// before that is found. (On the Switch the driver budget is 0, so before this the backstop below never ran there.)
+REXCVAR_DEFINE_INT32(sasrt_texture_long_idle_frames, 0, "SASRT/Graphics",
+                     "Host textures no draw bound for this many frames are released even with the GPU budget and the "
+                     "bindless table fine (made again from guest memory if bound again); 0: only under pressure, as "
+                     "before. KNOWN TO HANG THE GPU on the Switch (SASRT, 1800): leave 0")
+    .range(0, 1000000)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 // Linear textures (see BindTextureLocked): how often a lock-driven texture
 // is checked for writes that went around an unlock, and a dynamic one for
@@ -942,11 +953,17 @@ void RefreshLinearLocked(HostTexture &t, const TextureFetch &fetch) {
 void EvictIdleTexturesLocked() {
   const bool slots = Video::TextureSlotsInUseLocked() >= kEvictPressureSlots;
   GpuMemoryUsage memory;
+  // sasrt-nx (2026-11-09 night, sasrt_texture_long_idle_frames; port 58, off): with the budget and the table fine, the
+  // textures no draw bound for that long still go
+  static const uint64_t long_idle = uint64_t(std::max(0, int(REXCVAR_GET(sasrt_texture_long_idle_frames))));
+  bool long_only = false;
   if (!slots) {
     memory = QueryGpuMemory(State().device.get());
     if (!memory.valid || !memory.local_budget ||
         double(memory.local_used) < double(memory.local_budget) * kEvictMemoryShare) {
-      return;
+      if (!long_idle)
+        return;
+      long_only = true;
     }
   }
   std::vector<u32> idle;
@@ -954,13 +971,20 @@ void EvictIdleTexturesLocked() {
   for (const auto &[va, t] : g_textures) {
     if (t && t->gpu_written && keep_gpu_written)
       continue;  // banjo-nx: only the GPU has its content (banjo_renut_keep_gpu_written)
-    const uint64_t limit = t && t->gpu_written ? kEvictIdleGpuFrames : kEvictIdleFrames;
+    uint64_t limit = t && t->gpu_written ? kEvictIdleGpuFrames : kEvictIdleFrames;
+    if (long_only)
+      limit = std::max(limit, long_idle);  // port 58
     if (!t || g_frame - t->used_frame >= limit)
       idle.push_back(va);
   }
   for (u32 va : idle)
     ReleaseHostTextureLocked(va);
-  if (slots) {
+  if (long_only) {
+    static uint32_t long_logged = 0;
+    if (!idle.empty() && long_logged++ < 32)
+      RGPU_INFO("[renut] {} host textures no draw bound for {} frames released (sasrt_texture_long_idle_frames)",
+                idle.size(), long_idle);
+  } else if (slots) {
     RGPU_WARN("Textures: bindless table nearly full; {} idle host textures released ({} of {} "
               "slots in use)",
               idle.size(), Video::TextureSlotsInUseLocked(), kTextureDescriptorCount);
@@ -990,6 +1014,7 @@ bool g_memory_pressure = false;  // the last check found less than the reserve l
 void EvictColdTexturesLocked(uint64_t reserve) {
   const bool slots = Video::TextureSlotsInUseLocked() >= kEvictPressureSlots;
   uint64_t left = 0, used = 0, budget = 0;
+  bool low = false;
   if (!slots) {
     const GpuMemoryUsage memory = QueryGpuMemory(State().device.get());
     if (!memory.valid)
@@ -1001,11 +1026,15 @@ void EvictColdTexturesLocked(uint64_t reserve) {
     if (!budget)
       return;
     left = budget > used ? budget - used : 0;
-    g_memory_pressure = left < reserve;
-    if (left >= reserve)
+    // sasrt-nx (2026-11-09, sasrt_memory_governor; port 58): while the heap and the GPU region are low, too (the budget
+    // is the driver's figure, the governor's is what a block or an allocation can still have)
+    low = banjo::renut_gpu::MemoryLow();
+    g_memory_pressure = left < reserve || low;
+    if (left >= reserve && !low)
       return;
   }
-  const uint64_t cold_frames = !slots && left < reserve / 2 ? kColdFramesUrgent : kColdFrames;
+  const uint64_t cold_frames =
+      !slots && (left < reserve / 2 || (low && banjo::renut_gpu::MemoryCritical())) ? kColdFramesUrgent : kColdFrames;
   const bool keep_gpu_written = banjo::renut_gpu::KeepGpuWritten();
   std::vector<u32> cold;
   for (const auto &[va, t] : g_textures) {
@@ -1024,6 +1053,9 @@ void EvictColdTexturesLocked(uint64_t reserve) {
       RGPU_WARN("Textures: bindless table three quarters full (banjo_renut_memory_policy); {} cold host textures "
                 "released ({} of {} slots in use)",
                 cold.size(), Video::TextureSlotsInUseLocked(), kTextureDescriptorCount);
+    } else if (low && left >= reserve) {
+      RGPU_WARN("Textures: {} MB free in the heap and GPU region (sasrt_memory_governor); {} cold host textures "
+                "released", banjo::renut_gpu::g_heap_free_mb.load(std::memory_order_relaxed), cold.size());
     } else {
       RGPU_WARN("Textures: {} MB of the GPU memory budget left ({} of {} MB used), under the {} MB reserve "
                 "(banjo_renut_memory_policy); {} cold host textures released",

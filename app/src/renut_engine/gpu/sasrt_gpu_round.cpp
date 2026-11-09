@@ -412,6 +412,23 @@ REXCVAR_DEFINE_BOOL(sasrt_gpu_export_window_ubo, true, "SASRT/GPU",
                     "With constant 944 (pass expwin) the loop reads the constant buffer itself: the same words, no local "
                     "memory. Needs the shader package and the DKSH cache made with pass expwin")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// sasrt-nx (2026-11-09 night; port 58): plume_deko3d.h, Deko3DSetRegionBestFit.
+REXCVAR_DEFINE_BOOL(sasrt_region_best_fit, true, "SASRT/GPU",
+                    "The GPU region places a block in the smallest free range it fits (its bottom range last) instead of "
+                    "the highest: fewer, larger free ranges (SASRT's run mem12: 200-300 MB free in 40-54 ranges, the "
+                    "largest 28-55 MB, and a 27 MB target found no room)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// sasrt-nx (2026-11-09 night; port 58): plume_deko3d.h, Deko3DSetImageBestFit.
+REXCVAR_DEFINE_BOOL(sasrt_image_best_fit, true, "SASRT/GPU",
+                    "An image goes to the smallest free range it fits among the image heap's shared chunks (the first "
+                    "that fit before): fewer holes, and chunks that empty go back to the GPU region")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// sasrt-nx (2026-11-09; port 58): plume_deko3d.h, Deko3DSetDedicatedTargets.
+REXCVAR_DEFINE_BOOL(sasrt_dedicated_targets, true, "SASRT/GPU",
+                    "Render and depth targets of 1 MB or more in a memory chunk of their own, given back to the GPU region "
+                    "(for buffers too) as soon as the target is freed, instead of a hole in a shared image chunk only "
+                    "images can use (SASRT's docked race's resolution changes left ~500 MB of such holes)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_INT32(sasrt_gpu_exp_sph_no_global_store, 0, "SASRT/GPU",
                      "EXPERIMENT (2026-11-09): vertex programs loaded with their header's DoesGlobalStore bit cleared (1), "
                      "and DoesLoadOrStore too (3): whether the store flag makes the GPU run SASRT's memexport vertex "
@@ -528,6 +545,9 @@ void ApplyPlume() {
   plume::g_deko3dOptions.trackedTargetWait = On(kTargetWaitTracked);
   plume::g_deko3dOptions.trackedReadWait = On(kReadWaitTracked);
   plume::g_deko3dOptions.expSphStoreBits = uint32_t(REXCVAR_GET(sasrt_gpu_exp_sph_no_global_store));  // an experiment
+  plume::Deko3DSetDedicatedTargets(REXCVAR_GET(sasrt_dedicated_targets));  // sasrt-nx (2026-11-09; port 58)
+  plume::Deko3DSetRegionBestFit(REXCVAR_GET(sasrt_region_best_fit));      // sasrt-nx (2026-11-09 night; port 58)
+  plume::Deko3DSetImageBestFit(REXCVAR_GET(sasrt_image_best_fit));        // sasrt-nx (2026-11-09 night; port 58)
 #endif
 }
 

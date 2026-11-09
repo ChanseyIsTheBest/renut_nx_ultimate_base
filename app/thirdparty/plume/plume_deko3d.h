@@ -691,6 +691,9 @@ namespace plume {
             DkMemBlock block = nullptr;
             uint32_t size = 0;
             std::vector<std::pair<uint32_t, uint32_t>> freeList; // offset, size, sorted by offset
+            // sasrt-nx (2026-11-09, Deko3DSetDedicatedTargets; port 58): one render or depth target's own, given back to
+            // the GPU region as soon as that target is freed; never shared.
+            bool dedicated = false;
         };
         std::mutex heapMutex;
         std::vector<Chunk> chunks;
@@ -823,7 +826,7 @@ namespace plume {
         // banjo-nx (2026-10-28, the console's OOM).
         // Frees the image heap's empty chunks (heapMutex held); the bytes given back.
         uint64_t releaseEmptyChunksLocked();
-        bool imageAlloc(uint32_t size, uint32_t alignment, Deko3DImageAlloc &out);
+        bool imageAlloc(uint32_t size, uint32_t alignment, Deko3DImageAlloc &out, bool dedicated = false);
         void retire(const Deko3DImageAlloc &image, DkMemBlock block);
         void collectRetired();
         void noteSubmission(); // after a submission: a fence for its serial
@@ -954,6 +957,34 @@ namespace plume {
         uint32_t freeRanges = 0, blocks = 0, growths = 0, givebacks = 0;
     };
     void Deko3DGpuRegionFigures(Deko3DGpuRegionInfo &out);
+    // sasrt-nx (2026-11-09; port 58, for a title's memory governor): the heap's free bytes as the memory-block log lines
+    // count them (the free chunks inside what malloc has taken and what sbrk can still give; mallinfo walks every free
+    // piece under malloc's lock: 7-21 ms in SASRT's docked race, a cold-path figure).
+    uint64_t Deko3DHeapFreeBytes();
+    // sasrt-nx (2026-11-09 night; port 58): what sbrk can still give (newlib's room below the GPU region), O(1): the
+    // figure for a look every few frames.
+    uint64_t Deko3DHeapRoomBytes();
+    // sasrt-nx (2026-11-09 night; port 58): a texture or a memory block plume could not make sets this; the renderer
+    // takes it (true once) at its next frame and frees what it can then, without waiting for its next look.
+    bool Deko3DTakeMemoryEmergency();
+    // sasrt-nx (2026-11-09 night; port 58): the GPU region places a block in the smallest free range it fits (its bottom
+    // range last), not the highest: SASRT's region held 200-300 MB free in 40-54 ranges, the largest 28-55 MB, and a
+    // 27 MB target found no room. On by default.
+    void Deko3DSetRegionBestFit(bool on);
+    // sasrt-nx (2026-11-09 night; port 58): an image goes to the smallest free range it fits among the image heap's
+    // shared chunks (the first that fit before, chunk by chunk): fewer holes, and chunks that empty go back to the region.
+    void Deko3DSetImageBestFit(bool on);
+    // sasrt-nx (2026-11-09; port 58): render and depth targets of 1 MB and more in a chunk of their own (on by default),
+    // so a target the renderer retires (a resolution change's set, an idle scale's) gives its memory back to the GPU
+    // region at once, for buffers too, instead of a hole in a shared image chunk that only images can use; and the
+    // image heap's empty chunks given back on request (a governor).
+    void Deko3DSetDedicatedTargets(bool on);
+    uint64_t Deko3DReleaseEmptyImageChunks();
+    // sasrt-nx (2026-11-09; port 58, SASRT's docked crash: the command buffers' arena found no room in the heap while the
+    // GPU region held 500-700 MB free): the region's free bottom back to newlib now (it goes back by itself only once
+    // kRegionGiveBackAt there is free); the bytes given. The region is carved from the heap's top and blocks pack at its
+    // top, so its bottom is where freed GPU memory can become the CPU side's again.
+    uint64_t Deko3DRegionGiveBack();
     // banjo-nx (2026-10-28, render-thread round): how many graphics pipelines are provisional now (made at creation,
     // dropped when refreshPipeline finds every variant or the pipeline goes), and whether a draw may take a zero count
     // as its answer (Deko3DSetProvisionalCount; Banjo's A/B 68). Every draw asked its pipeline (a line of the pipeline
