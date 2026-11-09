@@ -12721,7 +12721,9 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
   // it (render/smaa.cpp); then (internal resolution) the image scaled to the display's resolution for the HUD
   // (render/ui_scale.cpp). The passes leave their own targets, pipeline, layout and viewport bound.
   // banjo-nx (2026-10-23, batch 6): the record's answer (DrawSummaryOf), not the list's scan at every draw.
-  if (ps && targets.color_count == 1 && !export_count && DrawSummaryOf(*ps).composite) {
+  // sasrt-nx (2026-11-08, port 52): a composite with more targets too (Sonic Transformed's 2414CA963766CE4E writes two):
+  // SMAA and the HUD scale on its first.
+  if (ps && targets.color_count >= 1 && !export_count && DrawSummaryOf(*ps).composite) {
     // sasrt-nx (2026-11-08, sasrt_gpu_handover_with_smaa): a texture still sharing the target's image gets its resolve
     // drawn before SMAA writes the image (the composite draw settled them already; this keeps SMAA safe on its own).
     if (targets.colors[0]->handed && SmaaAfterPs(ps->hash))
@@ -14100,7 +14102,14 @@ bool RestoreDepthFromColorLocked(HostSurface *depth, HostSurface *color) {
   const uint32_t h = depth->scale.Size(std::min(depth->height, color->height));
   cmd->setViewports(plume::RenderViewport(0.0f, 0.0f, float(w), float(h), 0.0f, 1.0f));
   cmd->setScissors(plume::RenderRect(0, 0, int32_t(w), int32_t(h)));
-  cmd->clearDepthStencil(false, true, 0.0f, 0, nullptr, 0);
+  {  // sasrt-nx (2026-11-09, sasrt_gpu_depth_restore_whole_clear, item 50; port 52): depth with the stencil when every
+     // pixel's depth is drawn (a stencil-only clear keeps the depth, so it cannot be a fast clear)
+    const bool whole = sasrt::gpu_round::On(sasrt::gpu_round::kRestoreClear) && w >= depth->scale.Size(depth->width) &&
+                       h >= depth->scale.Size(depth->height);
+    cmd->clearDepthStencil(whole, true, 0.0f, 0, nullptr, 0);
+    if (whole)
+      sasrt::gpu_round::Count(sasrt::gpu_round::kRestoreClear);
+  }
   cmd->setGraphicsPipelineLayout(s.utility_layout.get());
   cmd->setPipeline(pipeline);
   cmd->setGraphicsDescriptorSet(s.texture_set.get(), 0);

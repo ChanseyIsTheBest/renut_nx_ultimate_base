@@ -24,6 +24,7 @@
 #include "renut_engine/gpu/guest/widescreen.h"
 #include "renut_engine/gpu/log.h"
 #include "renut_engine/gpu/backend/video.h"
+#include "renut_engine/perf/frame_stats.h"  // sasrt-nx (2026-11-09, sasrt_dynamic_cpu_aware; port 52)
 #if defined(PLUME_DEKO3D)
 #include <plume_deko3d.h>  // banjo-nx (2026-10-21, from sa2-nx 1.0.3.1): Deko3DSetSwapChainSize
 #endif
@@ -428,7 +429,15 @@ void LatchResolutionScaleLocked() {
           const bool docked_mode = m == 1;
           const int32_t low = pick(DynamicHeight(docked_mode, false), docked_mode ? "dynamic docked low" : "dynamic handheld low");
           const int32_t high = pick(DynamicHeight(docked_mode, true), docked_mode ? "dynamic docked high" : "dynamic handheld high");
-          if (low >= high || (low != 720 && high != 720)) {
+          // sasrt-nx (2026-11-09, the user's ranges: handheld 480-720, docked 540-1080; port 52): on deko3d a range need
+          // not have 720 at one end (CodeForHeightLocked gives any height a code); a mode then starts at its step nearest
+          // below 720 (the 720 end where it has one, as before).
+#if defined(PLUME_DEKO3D)
+          const bool needs_720 = false;
+#else
+          const bool needs_720 = true;
+#endif
+          if (low >= high || (needs_720 && low != 720 && high != 720)) {
             RGPU_WARN("[renut] dynamic resolution, {} mode: {} to {} lines is not a range with 720 at one end: the "
                       "fixed height", docked_mode ? "docked" : "handheld", low, high);
             continue;
@@ -485,7 +494,12 @@ void LatchResolutionScaleLocked() {
     const bool mode_changed = g_dynamic_docked.exchange(docked) != docked;
     if ((mode_changed || !dynamic_started) && count) {
       dynamic_started = true;
-      g_dynamic_step = g_dynamic_steps[mode][0] == 720 ? 0 : count - 1;  // the 720 end
+      // the 720 end, or (sasrt-nx, 2026-11-09; port 52) the step nearest below 720 for a range without it
+      int start = 0;
+      for (int i = 0; i < count; ++i)
+        if (g_dynamic_steps[mode][i] <= 720)
+          start = i;
+      g_dynamic_step = start;
     }
     ++g_latches;
     const int32_t chosen = count ? g_dynamic_steps[mode][std::clamp(g_dynamic_step.load(), 0, count - 1)]
@@ -540,6 +554,17 @@ void LatchResolutionScaleLocked() {
 // down 5 s at least after a change. night_gpu5 (the user's request, banjo_renut_dynamic_steps): with heights between the
 // ends, down goes to the highest step predicted to fit the budget (the lowest if none) and up to the highest predicted
 // under 85 % of it, in one change each.
+// sasrt-nx (2026-11-09, the user: "we were quite CPU limited"; their handheld race: render thread 33-50 ms a frame,
+// GPU 28-30 ms at 612 lines, 37 at 720; port 52): dynamic resolution gives up lines only where the GPU is what holds the
+// frame.
+REXCVAR_DEFINE_BOOL(sasrt_dynamic_cpu_aware, true, "Nuts&Bolts/Graphics",
+                    "banjo_renut_dynamic_resolution's budget (banjo_renut_dynamic_gpu_ms) raised to the CPU side's time a "
+                    "frame when that is longer (the render thread's busy time or the game thread's, the larger: moving "
+                    "averages): a frame the CPU holds is not made faster by fewer pixels, so the height steps down only "
+                    "when the GPU's time is above both, and up while the next step is predicted under 85 % of the larger "
+                    "(from sasrt-nx). Off: the budget alone, as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
 void NoteGpuFrameForDynamicResolution(double gpu_ms) {
   const int mode = g_dynamic_docked ? 1 : 0;
   const int count = g_dynamic_count[mode];
@@ -563,7 +588,17 @@ void NoteGpuFrameForDynamicResolution(double gpu_ms) {
   const int step = std::clamp(g_dynamic_step.load(), 0, count - 1);
   const int32_t *heights = g_dynamic_steps[mode];
   const double current = double(heights[step]);
-  const double budget = DynamicGpuMs();
+  double budget = DynamicGpuMs();
+  // sasrt-nx (2026-11-09, sasrt_dynamic_cpu_aware; port 52): the CPU side's time a frame, when longer, as the budget.
+  static const bool cpu_aware = REXCVAR_GET(sasrt_dynamic_cpu_aware);
+  if (cpu_aware) {
+    static double cpu_average = 0.0;
+    const frame_stats::Snapshot fs = frame_stats::Get();
+    const double cpu_side = std::max(fs.render_thread_known ? fs.render_thread_ms : 0.0, fs.cpu_ms);
+    if (cpu_side > 0.0)
+      cpu_average = cpu_average > 0.0 ? cpu_average * 0.94 + cpu_side * 0.06 : cpu_side;
+    budget = std::max(budget, cpu_average);
+  }
   // The time a step is predicted to take: the average times the pixel ratio.
   const auto predicted = [&](int s) {
     const double r = double(heights[s]) / current;
@@ -604,8 +639,8 @@ void NoteGpuFrameForDynamicResolution(double gpu_ms) {
   last_change = now;
   fits_since = now;
   RGPU_INFO("[renut] dynamic resolution: 3D at {} lines (the GPU's time a frame {:.1f} ms on average at {}; "
-            "banjo_renut_dynamic_gpu_ms {})",
-            heights[next], was, heights[step], DynamicGpuMs());
+            "banjo_renut_dynamic_gpu_ms {}, the budget {:.1f} ms with the CPU side's time: sasrt_dynamic_cpu_aware)",
+            heights[next], was, heights[step], DynamicGpuMs(), budget);
 }
 
 void SetTilingExtentLocked(uint32_t width, uint32_t height) {

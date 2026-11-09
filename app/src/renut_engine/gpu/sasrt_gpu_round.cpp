@@ -439,13 +439,17 @@ REXCVAR_DEFINE_BOOL(sasrt_gpu_handover_with_smaa, false, "SASRT/GPU",
                     "writes it, so the hand-over stays on with SMAA. Every texel is the one the copy would write: same "
                     "pixels")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
-// sasrt-nx's fifth GPU round (2026-11-09; rr6-nx's port of its pixel-identical items). Items 49, 50 and 53 have no code
-// here (49 and 50 are SASRT's EDRAM depth restore; 53 is flat on its console): placeholders, so the A/B numbers stay
-// SASRT's (139-143).
+// sasrt-nx's fifth GPU round (2026-11-09; rr6-nx's port of its pixel-identical items). Items 49 and 53 have no code
+// here (49 is SASRT's own restore copy, A393B1E0; 53 is flat on its console): placeholders, so the A/B numbers stay
+// SASRT's (139-143). Item 50 since port 52 (the base's EDRAM depth restore, port 29, for any game).
 REXCVAR_DEFINE_BOOL(sasrt_gpu_depth_restore_direct, false, "SASRT/GPU", "SASRT only (fifth GPU round, item 49, A/B 139)")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
-REXCVAR_DEFINE_BOOL(sasrt_gpu_depth_restore_whole_clear, false, "SASRT/GPU",
-                    "SASRT only (fifth GPU round, item 50, A/B 140)")
+REXCVAR_DEFINE_BOOL(sasrt_gpu_depth_restore_whole_clear, true, "SASRT/GPU",
+                    "Renut's renderer (fifth GPU round, item 50, A/B 140; port 52): the EDRAM depth restore "
+                    "(sasrt_renut_depth_restore) cleared the stencil alone (depth kept) before drawing every pixel's depth "
+                    "with the test off: a stencil-only clear keeps the depth, so it cannot be a fast clear. When the "
+                    "restore's rectangle is the whole depth target, depth and stencil are cleared together (the depth to "
+                    "0, then every pixel drawn over it, as before): the same depth and stencil 0 in every pixel")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(sasrt_gpu_fetch_conversion_spec, true, "SASRT/GPU",
                     "deko3d renderer (fifth GPU round, item 51, A/B 141): a pixel shader's texture fetch applies Xenos' "

@@ -63,6 +63,9 @@ toml, so a port that finds one wrong for its game doesn't have to change the cod
   conversions become constants of the draw, so each pixel shader keeps only the conversions its textures use (sasrt-nx:
   -3.9 ms of GPU a frame; Ridge Racer 6, whose fetches are nearly all plain, flat). It also fixes the DKSH cache tool,
   which read the pipeline list 4 bytes off since the first round.
+- Port 52 is what was left of sasrt-nx's changes for any game: dynamic resolution that steps down only when the GPU, not
+  the CPU, holds the frame (and any range on the Switch), SMAA after a composite with more than one target, the depth
+  restore's whole clear, and a 1 s grace before a controller HID reports absent is disconnected for the game.
 - Port 44 and the translator changes take effect when a game's shader package is made again. Before measuring on the
   console, build its DKSH cache on the PC (`tools/deko3d_variant_cache.py`): a first run that compiles its shaders while
   it draws is slower on the GPU than the build is.

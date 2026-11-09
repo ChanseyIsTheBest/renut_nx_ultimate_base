@@ -12,6 +12,7 @@
 #include <array>
 #include <bit>
 #include <cctype>
+#include <chrono>  // sasrt-nx (2026-11-03, input_switch_disconnect_grace_ms; port 52)
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -83,6 +84,14 @@ REXCVAR_DEFINE_BOOL(input_joycon_sideways_stick, true, "Input",
                     "Joy-Con: its top points left; right Joy-Con: its top points right); false = as the Joy-Con "
                     "reports it")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// sasrt-nx (2026-11-03; port 52): a pad HID reports absent for a moment (a Bluetooth hiccup, a style change) reached the
+// game as a disconnect at once, and Sonic Transformed stops a race for it about once a race; shipped games wait before
+// they say so.
+REXCVAR_DEFINE_INT32(input_switch_disconnect_grace_ms, 1000, "Input",
+                     "A controller HID reports as not connected is kept, with its last state, for this long before "
+                     "the game is told it is gone (a Bluetooth hiccup or a layout change clears in well under a "
+                     "second); a controller that connects meanwhile (the handheld's Joy-Cons taken off, a new pad) ends "
+                     "it at once. 0: reported at once, as before");
 
 // Route recording for unattended test runs: the game's own pad input, written and played back here.
 // MINUS on pad 1 marks the start (and, while recording, the end), so the load time before the route does not
@@ -373,6 +382,10 @@ struct SwitchInputDriver::Slot {
   // The guest player this controller is (0 = player 1), as the input system assigned it (OnDevicesAssigned): picks
   // the button table (player 2's map for player 2, player 1's for the others).
   uint32_t ordinal = 0;
+  // sasrt-nx (2026-11-03, input_switch_disconnect_grace_ms; port 52): when HID first reported the pad absent (0: it is
+  // there), and the connection count then (another pad connecting ends the grace).
+  int64_t disconnected_since_ns = 0;
+  uint32_t disconnected_at_count = 0;
 
   X_INPUT_STATE state{};
   bool state_changed = false;
@@ -568,6 +581,34 @@ void SwitchInputDriver::Poll(size_t index) {
   padUpdate(&slot.pad);
 
   const bool connected = padIsConnected(&slot.pad);
+  // sasrt-nx (2026-11-03, input_switch_disconnect_grace_ms; port 52): a pad reported absent stays connected, with its
+  // last state, until it has been absent for the grace time; a pad back within it was never gone to the game. The base
+  // keeps the handheld on a slot of its own (slot 0), so a pad connecting meanwhile ends the grace: the player moved to
+  // it, and the game is not shown two pads for the grace time.
+  if (!connected && slot.connected) {
+    const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch())
+                            .count();
+    const int64_t grace_ms = REXCVAR_GET(input_switch_disconnect_grace_ms);
+    if (slot.disconnected_since_ns == 0) {
+      slot.disconnected_since_ns = now;
+      slot.disconnected_at_count = connection_counter_;
+    }
+    const int64_t absent_ms = (now - slot.disconnected_since_ns) / 1000000;
+    if (grace_ms > 0 && absent_ms < grace_ms && connection_counter_ == slot.disconnected_at_count) {
+      return;
+    }
+    REXLOG_INFO("SwitchInputDriver: pad {} absent for {} ms: reported disconnected{}", index, absent_ms,
+                connection_counter_ != slot.disconnected_at_count ? " (another pad connected)" : "");
+    slot.disconnected_since_ns = 0;
+  } else if (connected && slot.disconnected_since_ns != 0) {
+    const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch())
+                            .count();
+    REXLOG_INFO("SwitchInputDriver: pad {} back after {} ms absent: kept connected", index,
+                (now - slot.disconnected_since_ns) / 1000000);
+    slot.disconnected_since_ns = 0;
+  }
   if (connected != slot.connected) {
     slot.connected = connected;
     if (connected) {
