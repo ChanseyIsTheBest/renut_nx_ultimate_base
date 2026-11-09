@@ -7594,9 +7594,17 @@ bool EnsureBuffer(std::unique_ptr<plume::RenderBuffer> &buffer, uint64_t &capaci
 plume::RenderBuffer *MemExportBufferSlowLocked(VideoState &s, uint64_t size) {
   auto &buffer = s.memexport_buffer[s.frame];
   const bool had = buffer && s.memexport_capacity[s.frame] >= size;
+  // sasrt-nx (2026-11-09, sasrt_rt_cached_export_seeds; port 54): CPU-cached on deko3d (the key as latched: a buffer keeps
+  // its memory type, so the A/B half does not decide it). The windows start on 256-byte boundaries (PrepareMemExportLocked),
+  // so a cache line belongs to one window, and the CPU never reads the buffer.
+  if (!sasrt::gpu_round::g_latched_ready.load(std::memory_order_acquire)) [[unlikely]]
+    sasrt::gpu_round::LatchNow();
+  const bool cached = IsDeko3D() && sasrt::gpu_round::g_latched.on[sasrt::gpu_round::kRtCachedExportSeeds];
   if (!EnsureBuffer(buffer, s.memexport_capacity[s.frame], size,
-                    plume::RenderBufferDesc::DefaultBuffer(
-                        0, StorageBufferFlags() | AddressableBufferFlags()),
+                    cached ? plume::RenderBufferDesc::UploadBuffer(0, StorageBufferFlags() | AddressableBufferFlags() |
+                                                                          plume::RenderBufferFlag::HOST_CACHED)
+                           : plume::RenderBufferDesc::DefaultBuffer(
+                                 0, StorageBufferFlags() | AddressableBufferFlags()),
                     "renut memexport buffer")) {
     return nullptr;
   }
@@ -7814,8 +7822,12 @@ bool SasrtSeedExportsCpuLocked(plume::RenderBuffer *buffer, const MemExportStrea
     const MemExportStream &f = fresh[indices[k]];
     std::memcpy(window + fresh_offsets[indices[k]], guests[k], f.size);
     g_seed_bytes += f.size;  // banjo-nx (2026-10-26): the 10 s line's
+    // sasrt-nx (2026-11-09, sasrt_rt_cached_export_seeds; port 54): the seed's own lines cleaned when the buffer is
+    // CPU-cached (plume's unmap cleans the written range then; on uncached memory it does nothing, as the whole-buffer
+    // unmap here before did).
+    const plume::RenderRange written(fresh_offsets[indices[k]], uint64_t(fresh_offsets[indices[k]]) + f.size);
+    buffer->unmap(0, &written);
   }
-  buffer->unmap();
   sasrt::gpu_round::Count(sasrt::gpu_round::kSeedCpu, count);
   return true;
 #else

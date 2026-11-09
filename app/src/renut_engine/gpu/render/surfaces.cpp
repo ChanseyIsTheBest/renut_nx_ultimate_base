@@ -25,6 +25,7 @@
 #include "renut_engine/gpu/log.h"
 #include "renut_engine/gpu/backend/video.h"
 #include "renut_engine/perf/frame_stats.h"  // sasrt-nx (2026-11-09, sasrt_dynamic_cpu_aware; port 52)
+#include "renut_engine/gpu/sasrt_gpu_round.h"  // sasrt-nx (2026-11-09, sasrt_rt_restore_candidates; port 54)
 #if defined(PLUME_DEKO3D)
 #include <plume_deko3d.h>  // banjo-nx (2026-10-21, from sa2-nx 1.0.3.1): Deko3DSetSwapChainSize
 #endif
@@ -185,7 +186,13 @@ void FreeDepthViews(std::vector<DepthImage::View> &views) {
   views.clear();
 }
 
+// sasrt-nx (2026-11-09, sasrt_rt_restore_candidates; port 54): moves when a target is built, retired or leaves the table
+// (DepthRestoreSourceLocked's candidate lists). An epoch of its own: the surface epoch moves with every re-pointed surface
+// and override change.
+uint64_t g_sasrt_table_epoch = 1;
+
 void RetireTarget(HostSurface &surface) {
+  ++g_sasrt_table_epoch;  // sasrt-nx (2026-11-09, sasrt_rt_restore_candidates; port 54)
   // banjo-nx (2026-10-21, internal resolution): the composite's target goes, and its UI target with it.
   for (UiTarget *u : {&g_ui, &g_ui_depth}) {
     if (&surface == u->scene) {
@@ -658,6 +665,7 @@ void UnuseTarget(uint64_t key) {
     return;
   g_target_users.erase(users);
   ++g_surface_epoch;
+  ++g_sasrt_table_epoch;  // sasrt-nx (2026-11-09, sasrt_rt_restore_candidates; port 54)
   if (auto it = g_targets.find(key); it != g_targets.end()) {
     RetireTarget(*it->second);
     g_targets.erase(it);
@@ -935,6 +943,7 @@ HostSurface *GetHostSurfaceSlow(u32 surface_va, const d3d::SurfaceDesc *desc) {
     slot->guest_va = surface_va;
   }
   ++g_surface_epoch;
+  ++g_sasrt_table_epoch;  // sasrt-nx (2026-11-09, sasrt_rt_restore_candidates; port 54): a target built
   if (!BuildTarget(*slot, *desc, min_width, min_height, scale))
     return nullptr;
   // No defined content yet; D3D12 wants a new target discarded (or cleared)
@@ -961,6 +970,7 @@ HostSurface *GrowDepthToColourLocked(u32 surface_va, HostSurface *depth, uint32_
             depth->width, depth->height, min_width, min_height);
   RetireTarget(*depth);
   ++g_surface_epoch;
+  ++g_sasrt_table_epoch;  // sasrt-nx (2026-11-09, sasrt_rt_restore_candidates; port 54)
   if (!BuildTarget(*depth, *desc, min_width, min_height, depth->scale))
     return nullptr;
   if (plume::RenderCommandList *cmd = Video::CommandListLocked()) {
@@ -975,6 +985,43 @@ uint64_t g_surface_write_seq = 0;  // sasrt-nx (2026-10-20)
 HostSurface *DepthRestoreSourceLocked(const HostSurface *depth) {
   if (!depth || !depth->depth || depth->samples != plume::RenderSampleCount::COUNT_1)
     return nullptr;
+  // sasrt-nx (2026-11-09, sasrt_rt_restore_candidates; the render-thread round; port 54): the depth target's own candidates
+  // (the two scans below, found again when the table's epoch moved), then the same test of their write sequences. The
+  // fast path asks for nearly every draw with depth bound (~430 calls a frame in Sonic Transformed's race).
+  if (sasrt::gpu_round::On(sasrt::gpu_round::kRtRestoreCandidates)) {
+    HostSurface *d = const_cast<HostSurface *>(depth);
+    if (d->sasrt_candidates_epoch != g_sasrt_table_epoch) [[unlikely]] {
+      d->sasrt_restore_candidates.clear();
+      d->sasrt_candidates_epoch = g_sasrt_table_epoch;
+      uint64_t own_key = 0;
+      bool own_found = false;
+      for (const auto &[key, target] : g_targets)
+        if (target.get() == depth) {
+          own_key = key;
+          own_found = true;
+          break;
+        }
+      constexpr uint64_t kBaseAndPitchMask = 0x3FFFFFFull;  // TargetKey: the EDRAM base in bits 0-11, the pitch in 12-25
+      if (own_found)
+        for (const auto &[key, target] : g_targets) {
+          HostSurface *c = target.get();
+          if (c && !c->depth && (key & kBaseAndPitchMask) == (own_key & kBaseAndPitchMask) &&
+              c->samples == plume::RenderSampleCount::COUNT_1 && c->scale == depth->scale &&
+              (c->format == plume::RenderFormat::R8G8B8A8_UNORM || c->format == plume::RenderFormat::B8G8R8A8_UNORM))
+            d->sasrt_restore_candidates.push_back(c);
+        }
+      sasrt::gpu_round::Count(sasrt::gpu_round::kRtRestoreCandidates, 1, 1);
+    }
+    HostSurface *best = nullptr;
+    for (HostSurface *c : d->sasrt_restore_candidates) {
+      if (!c->texture || c->write_seq <= depth->write_seq || c->write_seq <= depth->restored_from_seq)
+        continue;
+      if (!best || c->write_seq > best->write_seq)
+        best = c;
+    }
+    sasrt::gpu_round::Count(sasrt::gpu_round::kRtRestoreCandidates);
+    return best;
+  }
   uint64_t own = 0;
   bool found = false;
   for (const auto &[key, target] : g_targets) {

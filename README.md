@@ -68,6 +68,9 @@ toml, so a port that finds one wrong for its game doesn't have to change the cod
   restore's whole clear, and a 1 s grace before a controller HID reports absent is disconnected for the game.
 - Port 53 makes the CPU time a frame the game thread's own work: the frame cap's sleep and the display pacing's wait
   count as waits, so the FPS overlay's CPU figure and port 52's dynamic resolution see the game's real load.
+- Port 54 is sasrt-nx's render-thread round: the EDRAM depth restore's source found from each depth target's own few
+  candidates instead of two scans of every target a draw, memory-export seeds written into CPU-cached memory, two
+  per-draw counters inlined, and A/B lines that give draws a frame and microseconds a draw.
 - Port 44 and the translator changes take effect when a game's shader package is made again. Before measuring on the
   console, build its DKSH cache on the PC (`tools/deko3d_variant_cache.py`): a first run that compiles its shaders while
   it draws is slower on the GPU than the build is.

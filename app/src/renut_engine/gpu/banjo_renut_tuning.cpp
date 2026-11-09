@@ -747,6 +747,7 @@ namespace banjo::renut_gpu {
 
 // banjo_renut_shared_dedupe's counts (render thread), read by the [renut] report (game thread).
 std::atomic<uint64_t> g_shared_reused{0}, g_shared_uploaded{0};
+uint64_t g_ab_draws = 0;  // sasrt-nx (2026-11-09; port 54): every draw (CountSharedConstants), for the A/B halves
 // banjo_renut_exact_streams' counts and banjo_renut_memory_policy's evictions, for the same report.
 std::atomic<uint64_t> g_exact_checks{0}, g_exact_bytes{0}, g_exact_stale{0}, g_late_stale{0}, g_reserve_evicted{0};
 std::atomic<uint64_t> g_cache_refused{0}, g_cache_pressure_bytes{0};
@@ -866,6 +867,7 @@ struct Stats {
     uint64_t game_frames = 0, render_frames = 0, gpu_frames = 0;
     double render_ms = 0.0, gpu_ms = 0.0, seconds = 0.0;
     double cpu_ms = 0.0;  // banjo-nx (2026-10-28): every registered thread's CPU time in the half (Switch)
+    uint64_t draws = 0;   // sasrt-nx (2026-11-09; port 54): the half's draws (g_ab_draws)
   };
   Half total, halves[2];   // halves[1]: the part on, [0]: off
   int half = 1;            // the half now running (the render thread applies it)
@@ -1088,6 +1090,7 @@ void StatsGameFrame() {
         to.gpu_ms += from.gpu_ms;
         to.seconds += from.seconds;
         to.cpu_ms += from.cpu_ms;
+        to.draws += from.draws;  // sasrt-nx (2026-11-09; port 54)
         g_stats.halves[h] = {};
       }
       ++g_stats.cycle;
@@ -1208,12 +1211,19 @@ void StatsGameFrame() {
   if (target && !AbTargets().empty()) {
     // banjo-nx (2026-10-20, banjo_renut_ab_targets): each listed target's whole periods so far.
     auto line = [](const Stats::Half &h) {
-      return fmt::format("{:.2f} fps, render thread {:.2f} ms a frame, GPU {:.2f} ms a frame ({:.0f} s){}",
+      return fmt::format("{:.2f} fps, render thread {:.2f} ms a frame, GPU {:.2f} ms a frame ({:.0f} s){}{}",
                          h.seconds > 0.0 ? double(h.game_frames) / h.seconds : 0.0,
                          h.render_frames ? h.render_ms / double(h.render_frames) : 0.0,
                          h.gpu_frames ? h.gpu_ms / double(h.gpu_frames) : 0.0, h.seconds,
                          h.cpu_ms > 0.0 && h.game_frames
                              ? fmt::format(", CPU {:.1f} ms a frame (all threads)", h.cpu_ms / double(h.game_frames))
+                             : std::string(),
+                         // sasrt-nx (2026-11-09; port 54): the half's load, so halves that caught different
+                         // scenes can be compared per draw
+                         h.render_frames && h.draws
+                             ? fmt::format(", {:.0f} draws a frame, render thread {:.2f} us a draw",
+                                           double(h.draws) / double(h.render_frames),
+                                           1000.0 * h.render_ms / double(h.draws))
                              : std::string());
     };
     for (const int listed : AbTargets()) {
@@ -1226,12 +1236,19 @@ void StatsGameFrame() {
   } else if (target) {
     const Stats::Half &on = g_stats.halves[1], &off = g_stats.halves[0];
     auto line = [](const Stats::Half &h) {
-      return fmt::format("{:.2f} fps, render thread {:.2f} ms a frame, GPU {:.2f} ms a frame ({:.0f} s){}",
+      return fmt::format("{:.2f} fps, render thread {:.2f} ms a frame, GPU {:.2f} ms a frame ({:.0f} s){}{}",
                          h.seconds > 0.0 ? double(h.game_frames) / h.seconds : 0.0,
                          h.render_frames ? h.render_ms / double(h.render_frames) : 0.0,
                          h.gpu_frames ? h.gpu_ms / double(h.gpu_frames) : 0.0, h.seconds,
                          h.cpu_ms > 0.0 && h.game_frames
                              ? fmt::format(", CPU {:.1f} ms a frame (all threads)", h.cpu_ms / double(h.game_frames))
+                             : std::string(),
+                         // sasrt-nx (2026-11-09; port 54): the half's load, so halves that caught different
+                         // scenes can be compared per draw
+                         h.render_frames && h.draws
+                             ? fmt::format(", {:.0f} draws a frame, render thread {:.2f} us a draw",
+                                           double(h.draws) / double(h.render_frames),
+                                           1000.0 * h.render_ms / double(h.draws))
                              : std::string());
     };
     REXLOG_INFO("[renut A/B] {} (target {}): on {}; off {}", AbName(target), target, line(on), line(off));
@@ -1422,6 +1439,11 @@ void StatsRenderThreadFrame(double busy_ms) {
     g_stats.total.render_ms += busy_ms;
     ++g_stats.halves[g_stats.half].render_frames;
     g_stats.halves[g_stats.half].render_ms += busy_ms;
+    {  // sasrt-nx (2026-11-09; port 54): the frame's draws to its half (this runs on the render thread, which counts them)
+      static uint64_t last_draws = 0;
+      g_stats.halves[g_stats.half].draws += g_ab_draws - last_draws;
+      last_draws = g_ab_draws;
+    }
     target = AbTargetLocked();
     half = g_stats.half;
     // banjo-nx (2026-10-20, banjo_renut_ab_targets): a new target applies too (its half may be the last one's).
@@ -1606,9 +1628,7 @@ void CountRingPublished(uint64_t bytes) {
   g_ring_published.store(g_ring_published.load(std::memory_order_relaxed) + bytes, std::memory_order_relaxed);
 }
 
-void CountPushedConstants(uint64_t bytes, int what) {
-  g_pushed[what].store(g_pushed[what].load(std::memory_order_relaxed) + bytes, std::memory_order_relaxed);
-}
+// CountPushedConstants is inline in banjo_renut_tuning.h since port 54 (sasrt-nx's RT4).
 
 void CountFetchAlignment(bool aligned) {
   Bump(g_fetch_misaligned[0], 1);
@@ -2089,9 +2109,7 @@ std::filesystem::path NextToExecutable(const std::string &path) {
 }
 
 
-void CountSharedConstants(bool reused) {
-  Bump(reused ? g_shared_reused : g_shared_uploaded, 1);
-}
+// CountSharedConstants is inline in banjo_renut_tuning.h since port 54 (sasrt-nx's RT4).
 
 
 

@@ -490,7 +490,9 @@ namespace plume {
         cpu = static_cast<uint8_t *>(dkMemBlockGetCpuAddr(block));
         // No line of the memory (from whatever used it before) may be dirty in the CPU's caches: one written back over the
         // GPU's results later would lose them. The CPU never writes a readback buffer after this.
-        if (cpuCached && desc.heapType == RenderHeapType::READBACK)
+        // sasrt-nx (2026-11-09, sasrt_rt_cached_export_seeds; port 54): a cached upload buffer the GPU writes too (the
+        // memexport windows, which the CPU seeds) needs the same: every cached buffer gets it (once, at creation).
+        if (cpuCached)
             armDCacheFlush(cpu, size_t(size));
         g_deko3dStats.bufferBytes += size;
         {
