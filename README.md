@@ -90,6 +90,10 @@ toml, so a port that finds one wrong for its game doesn't have to change the cod
   per view, and multiple-object waits without heap allocations.
 - Port 60 takes port 56's first-press player swap back out (`input_first_press_is_player1`): the players follow the order
   the controllers connected in again. Ridge Racer 6's Multi Battle found no second controller with it.
+- Port 61 lets a game file sit on the card packed as `NAME.lz4b` (LZ4 in 256 KB blocks), read as `NAME`. The ultimate
+  installer packs the files a port names; Katamari's archives go from 2.1 GB to 0.9 GB.
+- Port 62 stops a release NRO with the web installer's shader package beside it from logging a false "no GLSL package"
+  error.
 - Port 44 and the translator changes take effect when a game's shader package is made again. Before measuring on the
   console, build its DKSH cache on the PC (`tools/deko3d_variant_cache.py`): a first run that compiles its shaders while
   it draws is slower on the GPU than the build is.

@@ -72,7 +72,15 @@ test runs use that: `tools/run_ryujinx.ps1 -Toml <file>`).
 
 ## 5. The installer
 
-[katamari-nx-installer](https://github.com/ChanseyIsTheBest/katamari-nx-installer) makes the same `deko3d_glsl.bin` in the
+[renut_nx_ultimate_installer](https://github.com/ChanseyIsTheBest/renut_nx_ultimate_installer) is the web installer
+for any port of this base (2026-11-10): a port forks it, writes its `game.json` and fills `release/` with
+`tools/make_release.py` from its tree. It makes `deko3d_glsl.bin` (version 2, with the shader table: the NRO is built
+with `-DBANJO_RENUT_RELEASE_SHADERS=ON` and carries no game shader) and the DKSH cache from the player's files, with this
+base's translator and passes, and packs the archives `game.json` names as `.lz4b` (port 61). Its `wasm/renut_hlsl` and
+`wasm/uam` are built from this tree: rebuild them after a change to the translator, its front end or uam, and run its
+`tools/sync_from_base.py` after a change to the Python passes. Its README has the steps; Katamari is its example.
+
+The older page, [katamari-nx-installer](https://github.com/ChanseyIsTheBest/katamari-nx-installer) makes the same `deko3d_glsl.bin` in the
 browser. For a new release:
 
 ```bash

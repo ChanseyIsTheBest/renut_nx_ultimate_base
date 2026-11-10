@@ -86,6 +86,9 @@ struct Package {
 };
 Package g_package;
 
+// renut-ultimate (port 62): whether the installer's package (version 2, OpenInstalled below) has the game shaders.
+bool InstalledPackageOk();
+
 Package &Open() {
   std::call_once(g_package.once, [] {
     Package &p = g_package;
@@ -115,7 +118,13 @@ Package &Open() {
       size = g_deko3dGlslPackageSize;
     }
     if (!base) {
-      REXLOG_ERROR("[deko3d] no GLSL package (deko3d_glsl.bin beside the NRO, or built in): no game shaders");
+      // renut-ultimate (port 62, 2026-11-10): a release NRO (BANJO_RENUT_RELEASE_SHADERS) with the web installer's
+      // package beside it (version 2, read by OpenInstalled) has every game shader there: no version 1 package is
+      // then expected. Only a build with neither has no game shaders.
+      if (InstalledPackageOk())
+        REXLOG_INFO("[deko3d] no version 1 GLSL package: the installed package (version 2) has the game shaders");
+      else
+        REXLOG_ERROR("[deko3d] no GLSL package (deko3d_glsl.bin beside the NRO, or built in): no game shaders");
       return;
     }
     p.header = reinterpret_cast<const PackageHeader *>(base);
@@ -274,6 +283,8 @@ InstalledPackage &OpenInstalled() {
   });
   return g_installed;
 }
+
+bool InstalledPackageOk() { return OpenInstalled().ok; }
 
 const PackageEntry *Find(InstalledPackage &p, uint64_t hash) {
   if (!p.ok)
