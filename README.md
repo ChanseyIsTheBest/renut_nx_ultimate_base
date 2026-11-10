@@ -88,6 +88,8 @@ toml, so a port that finds one wrong for its game doesn't have to change the cod
 - Port 59 turns controller rumble on by default (the game's own vibration, HD rumble on the Switch's controllers;
   `input_rumble = false` turns it off) and brings two small fixes from LostOdysseyRecomp: texture descriptors made once
   per view, and multiple-object waits without heap allocations.
+- Port 60 takes port 56's first-press player swap back out (`input_first_press_is_player1`): the players follow the order
+  the controllers connected in again. Ridge Racer 6's Multi Battle found no second controller with it.
 - Port 44 and the translator changes take effect when a game's shader package is made again. Before measuring on the
   console, build its DKSH cache on the PC (`tools/deko3d_variant_cache.py`): a first run that compiles its shaders while
   it draws is slower on the GPU than the build is.
