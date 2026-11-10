@@ -94,6 +94,10 @@ toml, so a port that finds one wrong for its game doesn't have to change the cod
   installer packs the files a port names; Katamari's archives go from 2.1 GB to 0.9 GB.
 - Port 62 stops a release NRO with the web installer's shader package beside it from logging a false "no GLSL package"
   error.
+- Port 63 keeps port 04 (a slot after SetTexture(NULL)) to fetches of the same data, so a resolve's texture is not remade
+  for other data (Viva Pinata: 64 "[flash] ... dropped" lines in a 200 s run, now none).
+- Port 64 is sasrt-nx's GPU hang fix: with dynamic resolution, a texture over a depth resolve is made again when its size
+  no longer matches, and image copies and resolves never write past an image.
 - Port 44 and the translator changes take effect when a game's shader package is made again. Before measuring on the
   console, build its DKSH cache on the PC (`tools/deko3d_variant_cache.py`): a first run that compiles its shaders while
   it draws is slower on the GPU than the build is.
