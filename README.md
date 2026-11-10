@@ -98,6 +98,15 @@ toml, so a port that finds one wrong for its game doesn't have to change the cod
   for other data (Viva Pinata: 64 "[flash] ... dropped" lines in a 200 s run, now none).
 - Port 64 is sasrt-nx's GPU hang fix: with dynamic resolution, a texture over a depth resolve is made again when its size
   no longer matches, and image copies and resolves never write past an image.
+- Port 65 makes a thread blocked on an event sleep on an address on the Switch, so a woken thread no longer holds the
+  event's mutex before it runs (SASRT's main thread spent 5.6 % of its time waiting there; now 0 %).
+- Port 66 fixes the PC build's intermittent crash at start in the FPS overlay (the app's dialogs drew before Renut's overlay
+  had begun its first frame).
+- Ports 67-69 are blur-nx's fixes: the replay inheritance no longer reads and writes past its bit array (67), XenosRecomp
+  translates vertex shaders with two bindings (68), and a new port's first builds and runs no longer stop at the path
+  wizard, a missing generated/hot, switch_shaders.ps1's stderr or a stale PCH (69).
+- Port 70 lets machine copies take in functions with guest atomics (sasrt-nx): each atomic stays as it is, and the guard's
+  comparing forms stop before it. A game gets more copies when it remakes its bulk list; retrain its PGO profile after.
 - Port 44 and the translator changes take effect when a game's shader package is made again. Before measuring on the
   console, build its DKSH cache on the PC (`tools/deko3d_variant_cache.py`): a first run that compiles its shaders while
   it draws is slower on the GPU than the build is.
@@ -113,7 +122,8 @@ toml, so a port that finds one wrong for its game doesn't have to change the cod
 1. Swap the game layer: `app/renut_manifest.toml` (the codegen config), the game's keys and fixes (`app/src/katamari_*`,
    `app/src/cpu/hot`), its tomls (`app/katamari_switch*.toml`) and its icon.
 2. Bind the D3D hooks to your game's own functions. They are bound to Katamari's addresses (XDK 2.0.5632); a game on another
-   XDK needs its own device layout. Some hook bodies are here for a game to wire up to its own function, such as
+   XDK needs its own device layout ([docs/xdk-notes.md](docs/xdk-notes.md) has what ports at XDK 2.0.11164 met).
+   Some hook bodies are here for a game to wire up to its own function, such as
    `KeepConstantF4Pending` ([docs/ultimate-fixes.md](docs/ultimate-fixes.md), "Needs the game's own function address").
 3. Build as [docs/building.md](docs/building.md) describes: the PC build first (it runs the code generator and the
    post-codegen steps, and builds the shader translator), then the shaders, then the NRO.

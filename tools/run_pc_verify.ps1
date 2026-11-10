@@ -6,6 +6,9 @@
 param([int]$Seconds = 300, [string]$Name = "verify1", [int]$Every = 15, [string]$Script = "", [int]$Sticks = 0)
 $root = Split-Path -Parent $PSScriptRoot
 $extra = "--banjo_cpu_verify=true --banjo_hot_guard_calls=4000 --banjo_hot_guard_period=1 " +
-         "--katamari_hand_transform_chain_verify=true --katamari_hand_sphere_box=true --input_script=$Script"
+         "--katamari_hand_transform_chain_verify=true --katamari_hand_sphere_box=true"
+# renut-ultimate (port 70, 2026-11-10): an empty --input_script= stopped the run at the command line ("1 required TEXT
+# missing"), so the documented command without -Script never started.
+if ($Script) { $extra += " --input_script=$Script" }
 if ($Sticks -gt 0) { $extra += " --input_script_sticks=$Sticks" }
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root "tools\run_pc.ps1") -Seconds $Seconds -Name $Name -Every $Every -Visible -Extra $extra

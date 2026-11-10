@@ -286,7 +286,15 @@ public:
         std::function<void(rex::PathConfig)> resume) override
     {
         StartRenutRenderer();
-        if (!path_wizard_) {
+        // renut-ultimate (port 69, 2026-11-10, blur-nx): with no saved paths, a game folder given on the command line or
+        // in the toml (or the game_root next to the executable) that holds default.xex is used as given, with no wizard.
+        // Before, a new port's first PC run waited for a click on the path dialog, which looked like a hang right after
+        // the swapchain was made. Saved paths still come first, as the wizard takes them (a player's own folders).
+        std::error_code given_ec;
+        const bool given = !defaults.game_data_root.empty() &&
+                           std::filesystem::is_regular_file(defaults.game_data_root / "default.xex", given_ec) &&
+                           !PathConfigStore::TryLoad(app_name_);
+        if (!path_wizard_ || given) {
             // katamari-nx (2026-11-01): banjo_renderer = "emulated" creates no app dialogs (OnCreateDialogs), so no
             // wizard: the paths as given (the command line / the toml).
             renut::dlc::SetUserDataRoot(defaults.user_data_root);

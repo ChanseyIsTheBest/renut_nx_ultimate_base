@@ -245,6 +245,11 @@ void RexSwitchStackFigures(size_t* live, size_t* kept, size_t* kept_bytes);
 /* sasrt-nx (2026-11-09 night; port 58): pooled-size stacks taken so far (new and reused): a count that stops moving
  * when no guest thread is being made (a governor can give the kept stacks back after a minute of that). */
 uint64_t RexSwitchStacksTaken(void);
+/* sasrt-nx (2026-11-10; port 65, thread_event_address_wait): an event's blocked threads sleep on a 32-bit word.
+ * WaitIfEqual: svcWaitForAddress (wait while *word == value, at most ns; false when it timed out);
+ * WakeAddress: svcSignalToAddress (wake up to count threads waiting on word). */
+bool RexSwitchWaitIfEqual(volatile uint32_t* word, uint32_t value, int64_t ns);
+void RexSwitchWakeAddress(volatile uint32_t* word, int32_t count);
 
 #ifdef __cplusplus
 }

@@ -166,10 +166,16 @@ int main(int argc, char** argv)
                     i += originalSize;
                     continue;
                 }
+                // renut-ultimate (port 68, 2026-11-10, blur-nx): a vertex shader with two bindings (flags bit 0x20,
+                // which Renut's XGRegisterVertexShader hook reads as two slots) keeps the second binding's tables at
+                // 0x1C / 0x20. It was skipped here without a word, so it stayed "not in the shader cache" every run
+                // (Blur: about 1,000 run-time vertex shaders, container 0x102A1121). One microcode serves both
+                // bindings and Renut takes the input layout from the declaration: the first binding's tables
+                // translate it.
                 if ((shaderContainer->flags & 0xFFFFFF00) == 0x102A1100 &&
                     dataSize <= (fileSize - i) &&
-                    shaderContainer->field1C == 0 &&
-                    shaderContainer->field20 == 0)
+                    ((shaderContainer->flags & 0x20) != 0 ||
+                     (shaderContainer->field1C == 0 && shaderContainer->field20 == 0)))
                 {
                     XXH64_hash_t hash = XXH3_64bits(shaderContainer, dataSize);
                     auto shader = shaders.try_emplace(hash);

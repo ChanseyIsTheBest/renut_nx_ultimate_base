@@ -40,6 +40,7 @@ static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_MAC, "This file is POSIX-only")
 // Horizon has no sys/syscall.h. The shim provides affinity, priority, cpu_set_t
 // and the thread id. See core/threading_switch.h.
 #include "threading_switch.h"
+#include "address_event_core.h"  // sasrt-nx (2026-11-10; port 65, thread_event_address_wait)
 // The pool of thread stacks (switch_reaper below) allocates the blocks the way
 // libnx would (memalign) and sizes them the way libnx carves them (struct _reent).
 #include <malloc.h>
@@ -95,6 +96,15 @@ REXCVAR_DEFINE_BOOL(thread_wait_blocking, true, "Threading",
                     "Event-driven waits: WaitMultiple parks on a wake point instead of polling every 1 ms, "
                     "and alertable waits are woken by the queued APC hint instead of a 1 ms poll slice. "
                     "false = the original 1 ms polling (A/B; also the fallback if a hang is suspected)");
+// sasrt-nx (2026-11-10; port 65): events wait on an address on the Switch (docs/ultimate-fixes.md, row 65).
+REXCVAR_DEFINE_BOOL(thread_event_address_wait, true, "Threading",
+                    "Switch: a thread blocked on an event sleeps on an address (svcWaitForAddress) instead of the "
+                    "event mutex's condition variable, so waking it no longer hands it the mutex before it runs (a "
+                    "Set of the same event then waited behind a woken thread with no core yet: 5.5 % of the game "
+                    "thread in SASRT's handheld race). An auto-reset Set that finds a thread blocked releases it "
+                    "directly, a manual-reset Set every blocked thread (the 360's semantics). false = the condition "
+                    "variable, as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(thread_signal_skip_idle, true, "Threading",
                     "Setting an event or releasing a semaphore that no thread is blocked on does not call the "
                     "condition variable's notify (on Horizon always a syscall, svcSignalProcessWideKey, even with "
@@ -409,15 +419,15 @@ class PosixConditionBase {
   }
   // Wakes a thread blocked in Wait() on this condition without signalling it (alertable wait interrupted by
   // a queued callback). The waiter's predicate sees its interrupt flag.
-  void InterruptWaiters() {
+  virtual void InterruptWaiters() {  // virtual: port 65 (PosixCondition<Event> on the Switch)
     std::lock_guard<std::mutex> lock(mutex_);
     cond_.notify_all();
   }
 
   // `interrupt` (optional): an alertable wait passes the flag "a user callback is queued for me"; the wait
   // then returns kTimeout early (the caller dispatches the callback and decides what to do next).
-  WaitResult Wait(std::chrono::milliseconds timeout,
-                  const std::atomic<bool>* interrupt = nullptr) {
+  virtual WaitResult Wait(std::chrono::milliseconds timeout,  // virtual: port 65
+                          const std::atomic<bool>* interrupt = nullptr) {
     bool executed;
     auto predicate = [this, interrupt] {
       return this->signaled() || (interrupt && interrupt->load(std::memory_order_acquire));
@@ -713,6 +723,24 @@ class PosixCondition<Event> : public PosixConditionBase {
   virtual ~PosixCondition() = default;
 
   bool Signal() override {
+#if defined(__SWITCH__)
+    // sasrt-nx (2026-11-10; port 65, thread_event_address_wait): the blocked threads sleep on address_'s word; an
+    // auto-reset Set that finds one blocked releases it (a grant), a manual-reset Set every one blocked now.
+    if (AddressWaitOn()) {
+      int32_t wake;
+      {
+        auto lock = std::unique_lock<std::mutex>(mutex_);
+        wake = address_.SetLocked(manual_reset_, signal_);
+      }
+      if (wake) {
+        address_.Wake(wake);
+      } else {
+        REX_SYS_COUNT(rex::syscount::kSignalIdle, 1);
+      }
+      NotifyMulti();
+      return true;
+    }
+#endif
     uint32_t waiters;
     {
       auto lock = std::unique_lock<std::mutex>(mutex_);
@@ -731,7 +759,82 @@ class PosixCondition<Event> : public PosixConditionBase {
     signal_ = false;
   }
 
+#if defined(__SWITCH__)
+  // sasrt-nx (2026-11-10; port 65, thread_event_address_wait): the blocked part on address_ (address_event_core.h).
+  WaitResult Wait(std::chrono::milliseconds timeout, const std::atomic<bool>* interrupt = nullptr) override {
+    if (!AddressWaitOn()) {
+      return PosixConditionBase::Wait(timeout, interrupt);
+    }
+    const bool infinite = timeout == std::chrono::milliseconds::max();
+    const auto deadline = infinite ? std::chrono::steady_clock::time_point::max()
+                                   : std::chrono::steady_clock::now() + timeout;
+    std::unique_lock<std::mutex> lock(mutex_, std::defer_lock);
+    if (infinite) {
+      lock.lock();
+    } else {
+      while (!lock.try_lock()) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline) {
+          return WaitResult::kTimeout;
+        }
+        const auto remaining = std::chrono::ceil<std::chrono::microseconds>(deadline - now);
+        std::this_thread::sleep_for(std::min(remaining, std::chrono::microseconds(100)));
+      }
+    }
+    if (signal_) {
+      post_execution();
+      return WaitResult::kSuccess;
+    }
+    if (interrupt && interrupt->load(std::memory_order_acquire)) {
+      return WaitResult::kTimeout;  // interrupted by a queued user callback
+    }
+    if (!infinite && std::chrono::steady_clock::now() >= deadline) {
+      return WaitResult::kTimeout;
+    }
+    constexpr int64_t kSafetyNs = 100'000'000;  // a blocked thread re-checks every 100 ms unwoken (a net)
+    switch (address_.Block(lock, signal_, interrupt, infinite, deadline, kSafetyNs)) {
+      case detail::AddressWaitResult::kSignaled:
+        post_execution();
+        return WaitResult::kSuccess;
+      case detail::AddressWaitResult::kGranted:
+        return WaitResult::kSuccess;
+      default:
+        return WaitResult::kTimeout;
+    }
+  }
+
+  void InterruptWaiters() override {
+    if (!AddressWaitOn()) {
+      PosixConditionBase::InterruptWaiters();
+      return;
+    }
+    int32_t wake;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      wake = address_.InterruptLocked();
+    }
+    if (wake) {
+      address_.Wake(wake);
+    }
+  }
+#endif
+
  private:
+#if defined(__SWITCH__)
+  static bool AddressWaitOn() {
+    static const bool on = REXCVAR_GET(thread_event_address_wait);
+    return on;
+  }
+  struct HorizonArbiter {  // threading_switch.cpp (this file leaves libnx's names out)
+    static bool WaitIfEqual(std::atomic<uint32_t>* word, uint32_t value, int64_t ns) {
+      return RexSwitchWaitIfEqual(reinterpret_cast<volatile uint32_t*>(word), value, ns);
+    }
+    static void Wake(std::atomic<uint32_t>* word, int32_t count) {
+      RexSwitchWakeAddress(reinterpret_cast<volatile uint32_t*>(word), count);
+    }
+  };
+  detail::AddressEventCore<HorizonArbiter> address_;
+#endif
   inline bool signaled() const override { return signal_; }
   inline void post_execution() override {
     if (!manual_reset_) {

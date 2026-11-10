@@ -677,6 +677,16 @@ bool RexSwitchCoreIdleSample(int core, unsigned long long* idle_ticks, unsigned 
   return true;
 }
 
+// sasrt-nx (2026-11-10; port 65, thread_event_address_wait): threading_posix.cpp's events wait on an address
+// (address_event_core.h); these keep libnx's names out of that file.
+bool RexSwitchWaitIfEqual(volatile uint32_t* word, uint32_t value, int64_t ns) {
+  const Result rc = svcWaitForAddress((void*)word, ArbitrationType_WaitIfEqual, (s64)(s32)value, ns);
+  return R_VALUE(rc) != KERNELRESULT(TimedOut);
+}
+void RexSwitchWakeAddress(volatile uint32_t* word, int32_t count) {
+  svcSignalToAddress((void*)word, SignalType_Signal, 0, count);
+}
+
 }  // extern "C"
 
 #endif  /* REX_PLATFORM_SWITCH */

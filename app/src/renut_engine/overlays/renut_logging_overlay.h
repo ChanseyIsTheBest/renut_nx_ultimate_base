@@ -4,6 +4,7 @@
 #include <rex/ui/keybinds.h>
 #include <rex/logging.h>
 #include "imgui.h"
+#include "renut_engine/overlays/app_imgui.h"  // renut-ultimate (port 66)
 #include "renut_engine/renut_logging.h"
 
 #include <spdlog/sinks/base_sink.h>
@@ -69,6 +70,7 @@ public:
 
     void OnDraw(ImGuiIO& io) override {
         if (!visible_) return;
+        if (!AppImGuiReady()) return;  // renut-ultimate (port 66)
 
         ImGui::SetNextWindowSize(ImVec2(600.0f, 300.0f), ImGuiCond_Once);
         ImGui::SetNextWindowPos(ImVec2(10.0f, 10.0f), ImGuiCond_Once);

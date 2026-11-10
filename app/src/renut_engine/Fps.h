@@ -3,6 +3,7 @@
 #include <rex/ui/imgui_dialog.h>
 #include <rex/ui/keybinds.h>
 #include "imgui.h"
+#include "renut_engine/overlays/app_imgui.h"  // renut-ultimate (port 66)
 #include <chrono>
 #include <memory>
 #include <vector>
@@ -61,6 +62,7 @@ public:
         else{ flock++; }
 
         if (!fpsManager || !fpsManager->showFPS) return;
+        if (!AppImGuiReady()) return;  // renut-ultimate (port 66)
 
         const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDecoration;
 

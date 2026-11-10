@@ -16,6 +16,7 @@
 #include <rex/ui/keybinds.h>
 
 #include "imgui.h"
+#include "renut_engine/overlays/app_imgui.h"  // renut-ultimate (port 66)
 #include "profiler/profiler.h"
 
 REXCVAR_DECLARE(bool, banjo_show_profiler);
@@ -44,6 +45,7 @@ class ProfilerOverlayDialog : public rex::ui::ImGuiDialog {
     index_ = (index_ + 1) % kHistory;
 
     if (!REXCVAR_GET(banjo_show_profiler)) return;
+    if (!AppImGuiReady()) return;  // renut-ultimate (port 66)
 
     ImGui::SetNextWindowSize(ImVec2(560.0f, 0.0f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 580.0f, 20.0f), ImGuiCond_FirstUseEver);

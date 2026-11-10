@@ -69,7 +69,7 @@ SHARDS = 12  # app/src/cpu/banjo_hot_shard_<k>.cpp (app/CMakeLists.txt lists the
 BULK_SLOT = 9999  # past PPCContext::host_counters: the guard's countdown is the hook's own (banjo_hot_guest.h)
 HAND = os.path.join(APP, 'src', 'cpu', 'hot', 'hand.txt')
 IMAGE_BASE = 0x82000000
-INDEX_FORMAT = 8  # raise when summarise() changes: the cached index is rebuilt (5: carded vector stores; 6, 7: inline leaves; 8: r1 mirror, 2026-10-23)
+INDEX_FORMAT = 9  # raise when summarise() changes: the cached index is rebuilt (5: carded vector stores; 6, 7: inline leaves; 8: r1 mirror, 2026-10-23; 9: atomics, sasrt-nx 2026-11-10)
 
 REG = re.compile(r'\bctx\.(r\d+|f\d+|v\d+|cr\d|ctr|xer|reserved)\b')
 DEF = re.compile(r'^DEFINE_REX_FUNC\((\w+)\) \{$')
@@ -97,6 +97,32 @@ SPECIAL = re.compile(r'\b(REX_GUEST_CAS|reserved|REX_MM_(?:STORE|LOAD)_\w+|ppc_s
 RAW_VECTOR_STORE = re.compile(r'^\t(?:REX_CARD\([^()]*\), )?simde_mm_store_si128\(\(simde__m128i\*\)REX_RAW_ADDR\(')
 RAW_MEMSET = re.compile(r'^\tmemset\(\(void\*\)REX_RAW_ADDR\((.*)\), (\w+), (\d+)\);$')
 RAW_LOAD = re.compile(r'^\tsimde_mm_store_si128\(\(simde__m128i\*\)\w+(?:\.\w+)+, .*REX_RAW_ADDR\(')
+# sasrt-nx (2026-11-10, the user: "convert as much as you can the profiler picked up on to machine copies"): guest
+# atomics in copies. The game's lwarx / stwcx. pairs (a reservation load into the function's local `reserved`, then a
+# compare-and-swap on the same guest word), its sync / lwsync fences and log2f kept 3,741 of the race's 7,367 samples
+# of generated code out of the copies (SASRT's handheld races lat10-lat14). A copy runs the very statements of the
+# function, the registers in locals, so the running form (Fast) does the same atomic operations on the same guest
+# words. The guard's forms (Logged and o_, the write log and the roll-back) cannot repeat an atomic operation (other
+# threads may see it): each reservation load, compare-and-swap and fence is preceded by `if (s.Open()) return;`, so a
+# logged run ends before the first one (the call is then not compared, as for a call outside the copy), and in the
+# running form Open() is a constant false. log2f is a pure function. SASRT_LOCALIZE_ATOMICS=0: refused, as before.
+ATOMICS = os.environ.get('SASRT_LOCALIZE_ATOMICS', '1') != '0'
+ATOMIC_SPECIAL = {'reserved', 'REX_GUEST_CAS', 'std::atomic_thread_fence', 'log2f'}
+ATOMIC_HOST = {'std::atomic_thread_fence', 'log2f'}
+ATOMIC_LOAD = re.compile(r'^\t+reserved\.u(?:32|64) = \*\(uint(?:32|64)_t\*\)REX_RAW_ADDR\(ea\);$')
+ATOMIC_CAS = re.compile(r'^\t+[\w.]+\.eq = REX_GUEST_CAS(?:_C)?\((?:ea, )?reinterpret_cast<uint(?:32|64)_t\*>\(REX_RAW_ADDR\(ea\)\), '
+                        r'reserved\.s(?:32|64), __builtin_bswap(?:32|64)\([\w.]+\.s(?:32|64)\)\);$')
+ATOMIC_FENCE = re.compile(r'^\t+std::atomic_thread_fence\(std::memory_order_\w+\);$')
+
+
+def atomic_stop(l):
+    """A reservation load, compare-and-swap or fence, with the guard's stop in front (see ATOMICS)."""
+    if not ATOMICS or not (ATOMIC_LOAD.match(l) or ATOMIC_CAS.match(l) or ATOMIC_FENCE.match(l)):
+        return l
+    stripped = l.lstrip('\t')
+    return l[:len(l) - len(stripped)] + '{ if (s.Open()) return; ' + stripped + ' }'
+
+
 ALL = None  # "reach unknown": every register
 
 
@@ -223,14 +249,17 @@ def summarise(name, lines):
     if traps:
         # The trap helper (the generated pch) reads r3 and r4 of the context for its message and writes nothing.
         regs = sorted(set(regs) | {'r3', 'r4'}, key=order)
-    special = sorted({m.group(1) for m in SPECIAL.finditer(text)})
+    special = sorted({m.group(1) for m in SPECIAL.finditer(text)} - (ATOMIC_SPECIAL if ATOMICS else set()))
     for l in lines:
         for m in NAME.finditer(l):
             n = m.group(1)
             if KNOWN.match(n) or l[m.end():].startswith('ctx, base)'):
                 continue
+            if ATOMICS and n in ATOMIC_HOST:  # sasrt-nx (2026-11-10): see ATOMICS
+                continue
             special.append('host function ' + n)
-        if 'REX_RAW_ADDR(' in l and not (RAW_VECTOR_STORE.match(l) or RAW_MEMSET.match(l) or RAW_LOAD.match(l)):
+        if 'REX_RAW_ADDR(' in l and not (RAW_VECTOR_STORE.match(l) or RAW_MEMSET.match(l) or RAW_LOAD.match(l) or
+                                         (ATOMICS and (ATOMIC_LOAD.match(l) or ATOMIC_CAS.match(l)))):
             special.append('raw guest access')
     return {'regs': regs, 'written': written_registers(regs, text), 'callees': callees, 'unknown': unknown,
             'traps': traps, 'special': sorted(set(special)), 'lines': len(lines)}
@@ -904,6 +933,7 @@ def localize(index, hooks, reach, root, what, opts, out_dir, quiet=False, hand=N
                         pending = True
                     l = REG.sub(lambda m: 'l_' + m.group(1), l)
                 l, stores = store_line(l)
+                l = atomic_stop(l)  # sasrt-nx (2026-11-10): see ATOMICS
                 l = CALL.sub(lambda m: call_text(m, name, regs, here, localized), l)
                 if localized and sync_out:
                     # Braces: the generated code also writes a return as the body of a one-line `if`.
@@ -1035,6 +1065,9 @@ def key_of(root, opts):
 def write_list(entries, out_dir, bulk=()):
     """banjo_hot_all.h (the copies) and banjo_hot_list.inc (one BANJO_HOT_HOOK line each) for banjo_hot_guest.cpp;
     banjo_hot_bulk_<k>.inc (the bulk list's headers and BANJO_HOT_HOOK_BULK lines) for banjo_hot_shard_<k>.cpp."""
+    # renut-ultimate (port 69, 2026-11-10, blur-nx): a fresh tree has no generated/hot yet (a new port's first PC build
+    # stopped here).
+    os.makedirs(out_dir, exist_ok=True)
     inc = ['// GENERATED by tools/localize_native.py from app/src/cpu/hot/localized.txt (do not edit).']
     allh = ['// GENERATED by tools/localize_native.py from app/src/cpu/hot/localized.txt (do not edit).', '#pragma once']
     for slot, (root, opts, what) in enumerate(entries):
