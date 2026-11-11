@@ -4,6 +4,9 @@ rem Usage: tools\build_switch.bat [extra cmake --build args]
 rem   NVK_SDK (env) overrides the Mesa/NVK SDK folder (must contain lib\libvulkan.a).
 rem   BUILD_DIR (env) another build folder; CMAKE_EXTRA (env) more configure options for a new folder
 rem   (docs/pgo-lto.md of banjo-nx: -DBANJO_PGO=generate, or -DBANJO_PGO=use -DBANJO_SWITCH_LTO=ON).
+rem   GUARD_FORMS (env) ON / OFF: the localized copies' guard forms (SASRT_HOT_GUARD_FORMS; port 78, sasrt-nx's idea 27),
+rem   set in the folder's cache when it holds the other value. Unset, a new folder has none (the option's Switch
+rem   default): tools\build_switch_guard.bat builds app\out\switch-guard with them, for guard and verify runs.
 rem Uses the VS-bundled CMake/Ninja (Windows paths) and devkitA64 GCC via the toolchain file.
 set "VSROOT=C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools"
 set "PATH=C:\Python314;%VSROOT%\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin;%VSROOT%\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja;%PATH%"
@@ -17,5 +20,12 @@ if not exist "%BUILD_DIR%\CMakeCache.txt" (
     "-DCMAKE_TOOLCHAIN_FILE=%ROOT%\tools\switch\cmake\switch-devkitA64.cmake" ^
     "-DREXSDK_DIR=%ROOT%\sdk" "-DREXGLUE_SWITCH_NVK_SDK=%NVK_SDK%" ^
     -DPYTHON_EXECUTABLE=C:/Python314/python.exe -DPython3_EXECUTABLE=C:/Python314/python.exe %CMAKE_EXTRA% || exit /b 1
+)
+rem renut-ultimate (2026-11-11, port 78; sasrt-nx's idea 27, its -GuardForms): GUARD_FORMS re-configures the folder only
+rem when its cache holds the other value (the hot sources then compile again in the other form).
+if not "%GUARD_FORMS%"=="" (
+  findstr /x /i /c:"SASRT_HOT_GUARD_FORMS:BOOL=%GUARD_FORMS%" "%BUILD_DIR%\CMakeCache.txt" >nul || (
+    cmake "-DSASRT_HOT_GUARD_FORMS=%GUARD_FORMS%" "%BUILD_DIR%" || exit /b 1
+  )
 )
 cmake --build "%BUILD_DIR%" -j %JOBS% %*

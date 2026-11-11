@@ -88,6 +88,14 @@ python tools/switch_hot_bulk.py PROFILE ELF --min-samples 1 --merge --write app/
 copied is not in its rows. Without `--merge`, `--write` replaces the list, and remaking it from the profiles on disk would have
 dropped 802 of the 1,387 functions.
 
+**Small functions stay out** (port 78, sasrt-nx's idea 30): fewer than 40 guest instructions, unless 50 samples or more
+(`--min-instructions`, `--small-keep-samples`). Behind its hook a small copy's callers no longer inline it, and every call
+hands the registers over: in sasrt-nx's console races its copies under 40 instructions cost +188 % against the generated
+code. `--merge` takes the list's own such lines out as well (their size and samples are on the line), so the next remake of
+Katamari's list drops 624 of its 1,387 lines (628 are under 40 instructions, 4 of them with 50 samples or more). A pruned
+function comes back when a later profile, of a build that ran it as generated code, has 50 samples of it.
+`--min-instructions 0` keeps the old selection.
+
 The list is complete for now: merging every profile on disk (rc1 in Ryujinx; rc3, rc4, rc5 and rc9 on the console) adds 0 functions
 (2026-11-02). New functions need a new session.
 
@@ -345,8 +353,10 @@ The PC and Ryujinx have no vote on what gets written, but they are where correct
 - **It must actually be reached.** A check that never ran proves nothing. Look at the "compared" counts for that function. The
   sphere test ships off for this reason: the scripted runs do not reach the job threads' collision code.
 - **Ryujinx:** the same guard through a test `katamari.toml` (`banjo_hot_guard_calls = 4000`, `banjo_hot_guard_period = 64`) and
-  `tools/run_ryujinx.ps1 -Toml <file>`.
-- **The console:** no `[hot] DIFFERENCE` in a logged run.
+  `tools/run_ryujinx.ps1 -Build switch-guard -Toml <file>`, on the guard build (`tools/build_switch_guard.bat`). Since port 78
+  the everyday and released NROs have no guard forms (`SASRT_HOT_GUARD_FORMS`, OFF on the Switch): there the guard keys check
+  no copy, and the log says so once ("this build has no guard forms").
+- **The console:** no `[hot] DIFFERENCE` in a logged run (a guard run: the guard build's NRO).
 
 rc10's result, as the standard to meet: on the PC, 28,049,408 calls of `sub_82277E70` compared with its reference, 4,314,903 of
 `sub_82265C08` and 4,591,798 of `sub_8223A970` with the originals, and 342.6 million calls of the copies (1,219 of the 1,387 reached):

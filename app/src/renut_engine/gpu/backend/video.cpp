@@ -107,6 +107,15 @@
 
 // sa2-nx (2026-10-20, sa2_renut_double_buffer). pacman-nx: on by default, the user's call (2026-11-03). renut-ultimate: off by
 // default, as in sa2-nx (a latency against stutter choice for each game's toml).
+// sasrt-nx (2026-11-11, port 80; its stutter hunt, run cache1: the race's three 280-350 ms frames were the render thread
+// waiting for the ring cleaner's range in progress, the cleaner at 0x3B on the system core kept off it by other work
+// there). A clean (dc cvac, plume Deko3DBuffer::unmap) can be repeated and run on two cores at once: the render thread
+// cleans that range itself instead of waiting for the thread to finish it (RingCleaner::Wait).
+REXCVAR_DEFINE_BOOL(sasrt_ring_cleaner_take_over, true, "Banjo/Enhancements",
+                    "From sasrt-nx: a submit that needs the range the ring cleaner thread is cleaning cleans it itself (a "
+                    "cache clean by address, repeatable) instead of waiting for the thread, which runs at the lowest "
+                    "priority on the system core and was kept off it for 280-350 ms at SASRT's race start")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(pacman_renut_double_buffer, false, "PacMan/Renderer",
                     "Renut's renderer: a swapchain of 2 images instead of 3 (input latency: a finished frame is shown at "
                     "the next refresh instead of queueing behind one already waiting). A frame that misses a refresh then "
@@ -621,6 +630,16 @@ public:
       }
       if (working_ == 0 || working_ > ticket)
         return;
+      // sasrt-nx (2026-11-11, port 80, sasrt_ring_cleaner_take_over): the range in progress cleaned here too; every range
+      // up to 'ticket' is then clean (the queue's were taken above; a later job of the thread has a later ticket).
+      static const bool take_over = REXCVAR_GET(sasrt_ring_cleaner_take_over);
+      if (take_over) {
+        const UploadRing::Range r = working_range_;
+        lock.unlock();
+        Clean(r);
+        banjo::renut_gpu::CountKickSubmit(2);
+        return;
+      }
       render_thread::WaitScope wait;
       done_cv_.wait(lock, [&] { return working_ == 0 || working_ > ticket; });
     }
@@ -653,6 +672,7 @@ private:
       const Job job = queue_.front();
       queue_.pop_front();
       working_ = job.ticket;
+      working_range_ = job.range;  // port 80: a waiting submit may clean it too (sasrt_ring_cleaner_take_over)
       lock.unlock();
       Clean(job.range);
       banjo::renut_gpu::CountKickSubmit(1);
@@ -673,6 +693,7 @@ private:
   std::condition_variable cv_, done_cv_;
   std::deque<Job> queue_;
   uint64_t last_ticket_ = 0, working_ = 0;  // working_: the ticket of the range being cleaned, 0 for none
+  UploadRing::Range working_range_{};        // port 80: the range being cleaned (valid while working_ != 0)
   bool started_ = false;
 };
 

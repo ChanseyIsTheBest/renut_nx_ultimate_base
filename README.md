@@ -119,6 +119,13 @@ toml, so a port that finds one wrong for its game doesn't have to change the cod
 - Port 77 is the rule for keys that break a game's picture: off in the base by default, on in the toml of the game
   that needs them (Blur's 218 and Halo 3's replay inherits so far). docs/off-by-default.md lists every switch that
   is off by default, why, and what is known of its speed.
+- Port 78 builds the machine copies' guard forms only into guard / verify builds (Katamari's Switch NRO 11 MB
+  smaller; tools/build_switch_guard.bat for a Switch guard build), and makes tools/switch_hot_bulk.py leave small
+  copies out of a remade bulk list.
+- Port 79 keeps emptied render-target memory blocks for the next targets (sasrt-nx: a dynamic-resolution step
+  no longer makes ~33 blocks in one frame; its worst frames per window 108 -> 59 ms).
+- Port 80 lets a submit clean the upload ring's range in progress itself instead of waiting for the cleaner thread
+  (sasrt-nx: no more 280-350 ms render-thread waits at its race start).
 - Port 44 and the translator changes take effect when a game's shader package is made again. Before measuring on the
   console, build its DKSH cache on the PC (`tools/deko3d_variant_cache.py`): a first run that compiles its shaders while
   it draws is slower on the GPU than the build is.

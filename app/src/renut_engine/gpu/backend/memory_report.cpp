@@ -176,6 +176,12 @@ void MaybeReportMemory() {
                 "ranges (largest {:.0f} MB); grown {} times, {} times given back ({:.0f} MB), {} blocks not placed in it",
                 Mb(r.size), r.blocks, Mb(r.used), Mb(r.peak), Mb(r.freeBytes), r.freeRanges, Mb(r.largestFree),
                 r.growths, r.givebacks, Mb(r.givenBack), r.refused);
+    // sasrt-nx (2026-11-11, sasrt_target_block_cache_mb)
+    plume::Deko3DTargetCacheInfo c;
+    plume::Deko3DTargetCacheFigures(c);
+    RGPU_INFO("Memory: kept target blocks {} ({:.0f} MB); so far {} targets took one, {} made a new one, {} kept, {} "
+              "dropped over the cap, {} given back (sasrt_target_block_cache_mb)",
+              c.blocks, Mb(c.bytes), c.hits, c.misses, c.kept, c.evicted, c.released);
   }
 #endif
 #endif

@@ -717,6 +717,11 @@ void LatchResolutionScaleLocked() {
     // 7-21 ms under malloc's lock in SASRT's run mem12 (pieces of a few KB that a block or a big allocation cannot use)
     const uint64_t heap = plume::Deko3DHeapRoomBytes();
     uint64_t room = heap + (region.on ? uint64_t(region.freeBytes) : 0);
+    {  // sasrt-nx (2026-11-11, sasrt_target_block_cache_mb): the kept target blocks are given back at the low mark
+      plume::Deko3DTargetCacheInfo cache;
+      plume::Deko3DTargetCacheFigures(cache);
+      room += cache.bytes;
+    }
     if ((heap >> 20) < 48)
       room = std::min(room, heap);
     const uint32_t mb = uint32_t(std::min<uint64_t>(room >> 20, 0xFFFFFFF0ull));

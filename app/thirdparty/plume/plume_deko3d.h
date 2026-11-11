@@ -708,6 +708,17 @@ namespace plume {
         };
         std::mutex heapMutex;
         std::vector<Chunk> chunks;
+        // sasrt-nx (2026-11-11, Deko3DSetTargetBlockCacheMb): emptied dedicated targets' blocks kept for the next
+        // targets (heapMutex), oldest first.
+        struct CachedBlock {
+            DkMemBlock block = nullptr;
+            uint32_t size = 0;
+        };
+        std::vector<CachedBlock> targetCache;
+        uint64_t targetCacheBytes = 0;
+        void cacheTargetBlockLocked(DkMemBlock block, uint32_t size);
+        DkMemBlock takeCachedTargetBlockLocked(uint32_t size, uint32_t &blockSize);
+        uint64_t releaseTargetCacheLocked();
 
         // Shader code: blocks, bump allocated.
         std::mutex codeMutex;
@@ -991,6 +1002,17 @@ namespace plume {
     // image heap's empty chunks given back on request (a governor).
     void Deko3DSetDedicatedTargets(bool on);
     uint64_t Deko3DReleaseEmptyImageChunks();
+    // sasrt-nx (2026-11-11, the stutter hunt: a dynamic-resolution step made ~33 dedicated blocks in one frame, ~2.5 ms
+    // each, and destroyed the old ones two frames later): an emptied dedicated target's block stays, up to this many
+    // MB in all, for the next target of its size or up to an eighth smaller; given back with the empty image chunks
+    // (Deko3DReleaseEmptyImageChunks: the governor's low mark, a block that could not be made). 0: off (destroyed at
+    // once, as before).
+    void Deko3DSetTargetBlockCacheMb(uint32_t mb);
+    struct Deko3DTargetCacheInfo {
+        uint64_t bytes = 0, hits = 0, misses = 0, kept = 0, evicted = 0, released = 0;
+        uint32_t blocks = 0;
+    };
+    void Deko3DTargetCacheFigures(Deko3DTargetCacheInfo &out);
     // sasrt-nx (2026-11-09; port 58, SASRT's docked crash: the command buffers' arena found no room in the heap while the
     // GPU region held 500-700 MB free): the region's free bottom back to newlib now (it goes back by itself only once
     // kRegionGiveBackAt there is free); the bytes given. The region is carved from the heap's top and blocks pack at its

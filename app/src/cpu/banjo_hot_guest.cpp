@@ -29,6 +29,9 @@
 //   reported as a difference (a false one) and only costs that hook.
 // KEYS: banjo_cpu_native_<function> each (CPU group, under banjo_cpu_enhancements); banjo_hot_guard_calls,
 //   banjo_hot_guard_period; banjo_hot_count (a measurement, see Counted).
+// BUILD: sasrt-nx (2026-11-10, port 78; its idea 27): the guard runs the copies' two logged forms, which only a build
+//   with CMake SASRT_HOT_GUARD_FORMS has (ON by default on the PC; OFF on the Switch, where tools/build_switch_guard.bat
+//   makes an NRO with them). Without them every hook calls its copy directly and InitHook says so once.
 //
 // Name no guest function's address in this file: tools/direct_calls.py and tools/localize_native.py treat every
 // 82xxxxxx address the app's sources mention as hooked. The list is app/src/cpu/hot/localized.txt.
@@ -693,15 +696,27 @@ uint8_t InitHook(Hook& h, uint8_t* base) {
   h.verify = verify;
   h.guard_calls = uint32_t(std::clamp(REXCVAR_GET(banjo_hot_guard_calls), 0, 4000));
   h.period = period;
-  // No guard at all: the hook calls its copy directly (banjo_hot_guest.h, kDirect).
-  const bool direct = !verify && h.guard_calls == 0 && REXCVAR_GET(banjo_hot_guard_period) == 0;
+  // No guard at all: the hook calls its copy directly (banjo_hot_guest.h, kDirect). sasrt-nx (2026-11-10, port 78; its
+  // idea 27): also when the build has no guard forms (BANJO_HOT_GUARD_FORMS 0: the logged forms are not made), whatever
+  // the keys ask. A key that asks for the guard gets one warning; the hooks' lines and the summary say it too.
+  const bool forms = h.native_logged && h.reference_logged;
+  const bool guard_asked = verify || h.guard_calls || REXCVAR_GET(banjo_hot_guard_period);
+  if (!forms && guard_asked) {
+    static std::atomic<bool> said{false};
+    if (!said.exchange(true, std::memory_order_relaxed))
+      REXLOG_WARN("[hot] this build has no guard forms (SASRT_HOT_GUARD_FORMS OFF): banjo_cpu_verify, "
+                  "banjo_hot_guard_calls and banjo_hot_guard_period check no native copy, every native copy is called "
+                  "directly (an NRO with them: tools/build_switch_guard.bat; a PC build: -DSASRT_HOT_GUARD_FORMS=ON)");
+  }
+  const bool direct = !forms || !guard_asked;
   uint8_t state = on ? (direct ? kDirect : kOn) : kOff;
   if (on && REXCVAR_GET(banjo_hot_count) && h.native_counted) state = kCount;
   if (on && h.bulk) {
     // The bulk hooks say so in the summary of the reports (hundreds of first calls would each be a line).
   } else if (on && state == kDirect && h.state.load(std::memory_order_relaxed) == kUninit) {
-    REXLOG_INFO("[hot] {} ({}): native copy ON, direct (no guard: banjo_hot_guard_calls = banjo_hot_guard_period = 0)",
-                h.name, h.key);
+    REXLOG_INFO("[hot] {} ({}): native copy ON, direct ({})", h.name, h.key,
+                forms ? "no guard: banjo_hot_guard_calls = banjo_hot_guard_period = 0"
+                      : "this build has no guard forms: SASRT_HOT_GUARD_FORMS OFF");  // port 78, its idea 27
   } else if (on && h.state.load(std::memory_order_relaxed) == kUninit) {
     if (state == kCount) {
       REXLOG_INFO("[hot] {} ({}): native copy ON in its counting form (banjo_hot_count; no guard)", h.name, h.key);
@@ -1004,9 +1019,12 @@ void Report() {
   }
   REXLOG_INFO("[hot] native copies: {} reached, {} on ({} direct, no guard); bulk copies (banjo_cpu_native_bulk {}): {} "
               "of {} reached, {} on; {} calls compared so far, {} not comparable ({} of them stopped in both forms "
-              "with the same stores before the stop, {} not), {} differed once and not when repeated, differences: {}",
+              "with the same stores before the stop, {} not), {} differed once and not when repeated, differences: "
+              "{}{}",
               reached, on, direct, REXCVAR_GET(banjo_cpu_native_bulk) ? "on" : "off", bulk_reached, bulk_total, bulk_on,
-              compared, not_comparable, prefix_equal, prefix_differ, not_repeated, differences);
+              compared, not_comparable, prefix_equal, prefix_differ, not_repeated, differences,
+              // port 78, its idea 27: a build without the guard's forms compares nothing, whatever the keys say.
+              BANJO_HOT_GUARD_FORMS ? "" : " (this build has no guard forms, SASRT_HOT_GUARD_FORMS OFF: nothing compared)");
 }
 
 }  // namespace banjo::hot

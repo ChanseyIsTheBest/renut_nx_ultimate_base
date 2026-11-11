@@ -51,6 +51,19 @@ The everyday build (`app/out/switch`, every shader built in, no LTO):
 tools\build_switch.bat
 ```
 
+The everyday and released NROs carry only the running form of each machine copy (port 78, sasrt-nx's idea 27: CMake
+`SASRT_HOT_GUARD_FORMS`, OFF by default on the Switch and ON on the PC): every copy is called directly, and
+`banjo_cpu_verify` / `banjo_hot_guard_*` check none of them (the log says so). For a guard or verify run on Ryujinx or
+the console, the guard build (`app/out/switch-guard`, otherwise the everyday build's options):
+
+```bat
+tools\build_switch_guard.bat
+```
+
+then `tools/run_ryujinx.ps1 -Build switch-guard -Toml <file>`. `GUARD_FORMS=ON` (or `OFF`) sets the option in any
+folder `tools/build_switch.bat` builds; `tools/build_switch_release.bat` holds its folder at OFF unless `GUARD_FORMS=ON`
+(sasrt-nx's `-Final` and `-GuardForms`).
+
 The released NRO, in folders of their own (`BUILD_DIR` and `CMAKE_EXTRA` of `tools/build_switch.bat`):
 
 1. **Instrumented:** `-DBANJO_PGO=generate -DBANJO_SWITCH_LTO=ON`. Play it: it writes `pgo/banjo_pgo_<N>.stream` next to

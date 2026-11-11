@@ -283,6 +283,29 @@ if(SASRT_HOT_CARD_RUNS)
         set_property(SOURCE src/cpu/banjo_hot_shard_${_shard}.cpp APPEND PROPERTY COMPILE_DEFINITIONS SASRT_HOT_CARD_RUNS)
     endforeach()
 endif()
+# sasrt-nx (2026-11-10, port 78; its idea 27): the guard's two logged forms of every localized copy (the copy's
+# logged form and the original statements' o_* form: about two thirds of the copies' code; sasrt-nx's NRO +9.3 MB,
+# +12 %) are made only with SASRT_HOT_GUARD_FORMS. Without them (BANJO_HOT_GUARD_FORMS=0, cpu/banjo_hot_guest.h) every hook calls its
+# copy's running form directly, whatever banjo_cpu_verify and banjo_hot_guard_* say, and the log says once that the
+# build has no guard forms. sasrt-nx's default is ON, OFF in its -Final build; here it is per platform:
+#   - Switch OFF: the everyday build (app/out/switch), the release and PGO folders run no guard (the compiled-in
+#     settings set banjo_hot_guard_calls = banjo_hot_guard_period = 0). An instrumented PGO folder gets the same default
+#     as its use folder, so the profile is taken on the same code. A Switch NRO for a guard or verify run (Ryujinx or the
+#     console with a guard toml): tools/build_switch_guard.bat (app/out/switch-guard).
+#   - PC ON: tools/run_pc_verify.ps1 and the guard keys' own defaults (64 / 4096) need the forms.
+# An existing folder keeps its cached value (cmake -DSASRT_HOT_GUARD_FORMS=ON|OFF <folder>; build_switch.bat's
+# GUARD_FORMS). The running forms' code is the same either way. The definition goes on the files that compile copies
+# (BANJO_HOT_SOURCES; sasrt-nx puts it on its whole target), so a change compiles only those again.
+if(REXGLUE_PLATFORM_SWITCH)
+    set(_sasrt_hot_guard_forms_default OFF)
+else()
+    set(_sasrt_hot_guard_forms_default ON)
+endif()
+option(SASRT_HOT_GUARD_FORMS "Localized copies: the guard's logged forms (banjo_cpu_verify, banjo_hot_guard_*); default ON on the PC, OFF on the Switch" ${_sasrt_hot_guard_forms_default})
+if(NOT SASRT_HOT_GUARD_FORMS)
+    set_property(SOURCE ${BANJO_HOT_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS BANJO_HOT_GUARD_FORMS=0)
+endif()
+message(STATUS "renut: localized copies' guard forms ${SASRT_HOT_GUARD_FORMS} (SASRT_HOT_GUARD_FORMS)")
 
 # sa2-nx's CPU rounds of 2026-10-12 (docs/enhancements.md, "sa2-nx's CPU rounds"): one switch back per post-codegen
 # step (tools/post_codegen.py). OFF compiles the statements as they were before the step, on every platform, so a PC

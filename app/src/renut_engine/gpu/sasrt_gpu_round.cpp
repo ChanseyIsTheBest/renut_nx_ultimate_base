@@ -424,6 +424,15 @@ REXCVAR_DEFINE_BOOL(sasrt_image_best_fit, true, "SASRT/GPU",
                     "that fit before): fewer holes, and chunks that empty go back to the GPU region")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 // sasrt-nx (2026-11-09; port 58): plume_deko3d.h, Deko3DSetDedicatedTargets.
+// sasrt-nx (2026-11-11, port 79; the stutter hunt, run slow2: 55 of the race's 60 frames over 60 ms followed a dynamic-resolution
+// step, each step ~33 dedicated blocks made in one frame and the old ones destroyed two frames later). plume_deko3d.h,
+// Deko3DSetTargetBlockCacheMb.
+REXCVAR_DEFINE_INT32(sasrt_target_block_cache_mb, 160, "SASRT/GPU",
+                     "MB of emptied render-target memory blocks kept for the next targets (a resolution step's new set "
+                     "takes the last set's blocks instead of making ~33 new ones in one frame); given back at the memory "
+                     "governor's low mark and when a block cannot be made. 0: off")
+    .range(0, 1024)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(sasrt_dedicated_targets, true, "SASRT/GPU",
                     "Render and depth targets of 1 MB or more in a memory chunk of their own, given back to the GPU region "
                     "(for buffers too) as soon as the target is freed, instead of a hole in a shared image chunk only "
@@ -546,6 +555,7 @@ void ApplyPlume() {
   plume::g_deko3dOptions.trackedReadWait = On(kReadWaitTracked);
   plume::g_deko3dOptions.expSphStoreBits = uint32_t(REXCVAR_GET(sasrt_gpu_exp_sph_no_global_store));  // an experiment
   plume::Deko3DSetDedicatedTargets(REXCVAR_GET(sasrt_dedicated_targets));  // sasrt-nx (2026-11-09; port 58)
+  plume::Deko3DSetTargetBlockCacheMb(uint32_t(REXCVAR_GET(sasrt_target_block_cache_mb)));  // sasrt-nx (2026-11-11)
   plume::Deko3DSetRegionBestFit(REXCVAR_GET(sasrt_region_best_fit));      // sasrt-nx (2026-11-09 night; port 58)
   plume::Deko3DSetImageBestFit(REXCVAR_GET(sasrt_image_best_fit));        // sasrt-nx (2026-11-09 night; port 58)
 #endif

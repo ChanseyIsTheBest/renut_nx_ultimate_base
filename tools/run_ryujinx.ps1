@@ -20,6 +20,15 @@ $built = Join-Path $root "app\out\$Build\renut.nro"
 if (-not (Test-Path $built)) { Write-Output "no NRO at $built"; exit 4 }
 Copy-Item $built $nro -Force
 if ($Toml) { Copy-Item $Toml (Join-Path $sd "katamari.toml") -Force }
+# renut-ultimate (2026-11-11, port 78; sasrt-nx's idea 27): an NRO without the copies' guard forms (the everyday and
+# release builds) calls every native copy directly whatever the toml's guard keys say: say so before the run.
+$cache = Join-Path $root "app\out\$Build\CMakeCache.txt"
+if ($Toml -and (Test-Path $cache) -and
+    (Select-String -Path $cache -Pattern '^SASRT_HOT_GUARD_FORMS:BOOL=(OFF|0|FALSE|NO|N)$' -Quiet) -and
+    (Select-String -Path $Toml -Pattern '^\s*(banjo_hot_guard_calls|banjo_hot_guard_period)\s*=\s*[1-9]|^\s*banjo_cpu_verify\s*=\s*true' -Quiet)) {
+    Write-Output ("note: app\out\$Build has no guard forms (SASRT_HOT_GUARD_FORMS OFF): the toml's guard / verify " +
+                  "keys check no native copy (tools\build_switch_guard.bat, then -Build switch-guard)")
+}
 New-Item -ItemType Directory -Force $out | Out-Null
 $logs = Join-Path $sd "logs"
 if (Test-Path $logs) { Remove-Item -Recurse -Force $logs }

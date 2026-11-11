@@ -10,6 +10,8 @@
 // banjo-nx (2026-10-22, bejeweled3-nx's method): with no guard at all (banjo_hot_guard_calls = 0 and
 // banjo_hot_guard_period = 0), verify and banjo_hot_count off, a hook's state is kDirect and the path is one byte and
 // the copy: no countdown (for the bulk hooks a counter shared by every thread, written at every call).
+// sasrt-nx (2026-11-10, port 78; its idea 27): always kDirect in a build without the guard's forms
+// (BANJO_HOT_GUARD_FORMS below).
 #pragma once
 
 #include <atomic>
@@ -46,8 +48,8 @@ struct Hook {
   const char* key;   // its cvar
   PPCFunc* orig;     // the recompiled function
   void (*native)(PPCContext&, uint8_t*);
-  void (*native_logged)(PPCContext&, uint8_t*, Logged&);
-  void (*reference_logged)(PPCContext&, uint8_t*, Logged&);
+  void (*native_logged)(PPCContext&, uint8_t*, Logged&);     // the guard's two forms (nullptr in a build without
+  void (*reference_logged)(PPCContext&, uint8_t*, Logged&);  // them: BANJO_HOT_GUARD_FORMS 0, port 78)
   void (*native_counted)(PPCContext&, uint8_t*);  // banjo_hot_count (a measurement)
   std::atomic<uint64_t>* hits;                    // ... its block counters
   uint32_t hit_count;
@@ -108,6 +110,23 @@ void Report();
 #define BANJO_HOT_COUNTED(ID) &n_##ID::NativeCounted
 #endif
 
+// sasrt-nx (2026-11-10, port 78; its idea 27): the guard's two forms of every copy (the copy's logged form and the
+// original statements' logged form, about two thirds of the copies' code) are made only with BANJO_HOT_GUARD_FORMS
+// (CMake SASRT_HOT_GUARD_FORMS: ON by default on the PC, OFF on the Switch; app/CMakeLists.txt). Without them every
+// hook calls its copy directly (InitHook), whatever banjo_cpu_verify and banjo_hot_guard_* say, and the log says so.
+// Only this macro names them: an inline form nothing takes the address of is never made, nor the o_* statements and
+// the f_*<Logged> instances it alone calls (tools/localize_native.py writes them as before).
+#ifndef BANJO_HOT_GUARD_FORMS
+#define BANJO_HOT_GUARD_FORMS 1
+#endif
+#if BANJO_HOT_GUARD_FORMS
+#define BANJO_HOT_LOGGED(ID) &n_##ID::NativeLogged
+#define BANJO_HOT_REFERENCE(ID) &n_##ID::ReferenceLogged
+#else
+#define BANJO_HOT_LOGGED(ID) nullptr
+#define BANJO_HOT_REFERENCE(ID) nullptr
+#endif
+
 // SYM: the generated function's name; ID: the namespace suffix of its header (n_<ID>); KEY: its cvar; SLOT: its
 // PPCContext::host_counters slot. Written by tools/localize_native.py (app/generated/hot/banjo_hot_list.inc, and
 // banjo_hot_bulk_<k>.inc for the bulk list: BANJO_HOT_HOOK_BULK, its keys in a category of their own).
@@ -119,7 +138,7 @@ void Report();
   REXCVAR_DEFINE_BOOL(KEY, DEFAULT, CATEGORY, DESC).lifecycle(rex::cvar::Lifecycle::kInitOnly);                  \
   REX_EXTERN(__imp__##SYM);                                                                                      \
   namespace banjo::hot {                                                                                         \
-  Hook g_hook_##ID{#SYM, #KEY, &__imp__##SYM, &n_##ID::Native, &n_##ID::NativeLogged, &n_##ID::ReferenceLogged,  \
+  Hook g_hook_##ID{#SYM, #KEY, &__imp__##SYM, &n_##ID::Native, BANJO_HOT_LOGGED(ID), BANJO_HOT_REFERENCE(ID),    \
                    BANJO_HOT_COUNTED(ID), n_##ID::g_hits, uint32_t(std::size(n_##ID::g_hits)), n_##ID::kCode,    \
                    uint32_t(std::size(n_##ID::kCode)), n_##ID::kCodeHash, [] { return bool(REXCVAR_GET(KEY)); }, \
                    SLOT, &n_##ID::kSkip, BULK};                                                                  \

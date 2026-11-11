@@ -4,5 +4,8 @@ rem shader inside (it reads deko3d_glsl.bin beside itself). tools\renut_release_
 rem Output: app\out\switch-pgo-use\renut.nro
 set "BUILD_DIR=%~dp0..\app\out\switch-pgo-use"
 set "CMAKE_EXTRA=-DBANJO_PGO=use -DBANJO_SWITCH_LTO=ON -DBANJO_RENUT_RELEASE_SHADERS=ON"
+rem renut-ultimate (2026-11-11, port 78; sasrt-nx's idea 27, its -Final): the released NRO has no guard forms
+rem (SASRT_HOT_GUARD_FORMS OFF, held so in the folder's cache), unless GUARD_FORMS=ON is set (sasrt-nx's -GuardForms).
+if "%GUARD_FORMS%"=="" set "GUARD_FORMS=OFF"
 if "%JOBS%"=="" set "JOBS=10"
 call "%~dp0build_switch.bat" %*
