@@ -8,6 +8,7 @@
 #include <chrono>  // banjo-nx (2026-10-28): dynamic resolution
 #include <numeric>
 #include <string>
+#include <mutex>  // blur-nx (2026-11-10, port 76; its key 215): g_stack_headers_mutex
 #include <unordered_map>
 #include <vector>
 
@@ -277,7 +278,20 @@ bool BuildTarget(HostSurface &surface, const d3d::SurfaceDesc &desc, uint32_t mi
       if (it != g_depth_view_formats.end() && (it->second & 2))
         surface.format = DepthTargetFormat();
     }
-    if (surface.format != DepthTargetFormat()) {
+    // sasrt-nx (2026-11-11, port 75; its formats batch, row 26: renut_depth_float_no_stencil, a speed trade, off): any
+    // float depth target (D24FS8) without a stencil plane, half the bytes. Stencil on it then does nothing (its uses
+    // are logged: renut_diag_formats, and draw.cpp's SasrtWarnStencilOnD32f).
+    if (banjo::renut_gpu::DepthFloatNoStencilOn() && surface.format == plume::RenderFormat::D32_FLOAT_S8_UINT &&
+        (surface.format_word & 0x3F) == u32(GpuTextureFormat::Fmt24_8_Float)) {
+      surface.format = plume::RenderFormat::D32_FLOAT;
+      static uint32_t logged = 0;
+      if (logged++ < 8)
+        RGPU_INFO("[formats] depth target {:08X} {}x{} made D32F without stencil (renut_depth_float_no_stencil)",
+                  surface.guest_va, surface.width, surface.height);
+    }
+    // sasrt-nx (2026-11-11, port 75; its formats batch, row 26): only that format's line (D32F is not the depth
+    // format either).
+    if (surface.format == plume::RenderFormat::D24_UNORM_S8_UINT) {
       static uint32_t logged = 0;
       if (logged++ < 16)
         RGPU_INFO("Depth target {:08X}: {}x{} x{} samples, 24-bit unorm depth with stencil (banjo_deko3d_depth24)",
@@ -285,6 +299,21 @@ bool BuildTarget(HostSurface &surface, const d3d::SurfaceDesc &desc, uint32_t mi
     }
   } else {
     surface.format = SurfaceColorFormat(desc);
+  }
+  // sasrt-nx (2026-11-11, port 75; its formats batch, the diagnostic: renut_diag_formats): the first target of each
+  // guest format / EDRAM colour format / host format (its size logged, not in the key: its audit's finding 8).
+  if (banjo::renut_gpu::DiagFormatsOn()) {
+    static std::vector<uint64_t> seen;
+    const uint32_t colour_format = (u32(desc.ColorInfo) >> 16) & 0xF;
+    const uint64_t key = uint64_t(surface.depth) << 63 | uint64_t(surface.format_word & 0x3F) << 50 |
+                         uint64_t(colour_format) << 46 | uint64_t(surface.format) << 32;
+    if (seen.size() < 96 && std::find(seen.begin(), seen.end(), key) == seen.end()) {
+      seen.push_back(key);
+      RGPU_INFO("[formats] {} target {}x{}: guest format {} ({}), EDRAM colour format {}, host format {}",
+                surface.depth ? "depth" : "colour", surface.width, surface.height, surface.format_word & 0x3F,
+                GpuTextureFormatName(surface.format_word), surface.depth ? -1 : int(colour_format),
+                int(surface.format));
+    }
   }
 
   plume::RenderDevice *device = Video::Device();
@@ -935,6 +964,30 @@ void ColorAliasesLocked(const HostSurface *surface, std::vector<HostSurface *> &
   }
 }
 
+// blur-nx (2026-11-10, port 76; its keys 218 and 220): the EDRAM tiles of a colour target, exactly. A tile is 80x16 samples
+// of 32 bits (40x16 of the 64-bit formats: 16_16_16_16, 16_16_16_16_FLOAT, 32_32_FLOAT); a pixel's samples are 2x2 at 4x
+// and 1x2 at 2x (the SDK's EDRAM layout); a surface's tiles run row by row from its base tile, 'columns' a row (its
+// pitch's), modulo the 2048 tiles.
+struct EdramSpan {
+  u32 base = 0, columns = 0, rows = 0, samples_x = 1, samples_y = 1, tile_samples_x = 80;
+  u32 count() const { return columns * rows; }
+};
+EdramSpan EdramSpanOf(const HostSurface *s) {
+  EdramSpan e;
+  const u32 info = s->info_word, msaa = (info >> 16) & 3;
+  e.samples_x = msaa >= 2 ? 2 : 1;
+  e.samples_y = msaa >= 1 ? 2 : 1;
+  const u32 format = (u32(s->color_info_word) >> 16) & 0xF;
+  e.tile_samples_x = (format == 5 || format == 7 || format == 15) ? 40 : 80;
+  e.base = u32(s->color_info_word) & 0xFFF;
+  e.columns = ((info & 0x3FFF) * e.samples_x + e.tile_samples_x - 1) / e.tile_samples_x;
+  e.rows = (s->height * e.samples_y + 15) / 16;
+  return e;
+}
+bool EdramSpansIntersect(const EdramSpan &a, const EdramSpan &b) {
+  return a.count() && b.count() && (((b.base - a.base) & 2047u) < a.count() || ((a.base - b.base) & 2047u) < b.count());
+}
+
 // vivapinata-nx (2026-11-04, e242c74b; see surfaces.h).
 void ColorEdramWipedLocked(const HostSurface *surface, const plume::RenderRect &rect, std::vector<HostSurface *> &out) {
   out.clear();
@@ -952,6 +1005,41 @@ void ColorEdramWipedLocked(const HostSurface *surface, const plume::RenderRect &
   }
   if (!found)
     return;
+  // blur-nx (2026-11-10, port 76; its key 218: blur_renut_wipe_overwritten): exactly: a target is wiped when every one of
+  // its tiles is a tile the clear fills whole (the tile rows and columns of the rect, its partly covered edge tiles left
+  // out), whatever its base (below, off: the same base tile, and a tile count no greater than the clear's).
+  if (banjo::renut_gpu::WipeOverwrittenOn()) {
+    const EdramSpan c = EdramSpanOf(surface);
+    if (!c.columns)
+      return;
+    // The tiles the rect fills whole: columns c0..c1, rows r0..r1 of the clearing surface's span.
+    const u32 left = u32(std::max(rect.left, 0)) * c.samples_x, right = u32(std::max(rect.right, 0)) * c.samples_x;
+    const u32 top = u32(std::max(rect.top, 0)) * c.samples_y, bottom = u32(std::max(rect.bottom, 0)) * c.samples_y;
+    const u32 c0 = (left + c.tile_samples_x - 1) / c.tile_samples_x, c1 = std::min(right / c.tile_samples_x, c.columns);
+    const u32 r0 = (top + 15) / 16, r1 = std::min(bottom / 16, c.rows);
+    if (c1 <= c0 || r1 <= r0)
+      return;
+    const auto filled = [&](u32 tile) {
+      const u32 offset = (tile - c.base) & 2047u;
+      const u32 row = offset / c.columns, column = offset % c.columns;
+      return row >= r0 && row < r1 && column >= c0 && column < c1;
+    };
+    constexpr uint64_t kOwnViewMask = 0xFFFFFFFFull;
+    for (const auto &[key, target] : g_targets) {
+      if (!target || target.get() == surface || !target->texture || target->depth ||
+          (key & kOwnViewMask) == (own & kOwnViewMask))
+        continue;
+      const EdramSpan t = EdramSpanOf(target.get());
+      if (!t.count() || !EdramSpansIntersect(c, t))
+        continue;
+      bool all = true;
+      for (u32 i = 0; i < t.count() && all; ++i)
+        all = filled((t.base + i) & 2047u);
+      if (all)
+        out.push_back(target.get());
+    }
+    return;
+  }
   // A tile is 80x16 samples: at 2 samples a pixel is 80x8 pixels, at 4 samples 40x8. Whole tiles of the clear, at 32 bits a sample:
   // a 64-bit target takes twice the tiles, and is left alone unless these cover it as 32-bit ones would.
   const auto tile_columns = [](int32_t width, uint64_t key) {
@@ -975,6 +1063,168 @@ void ColorEdramWipedLocked(const HostSurface *surface, const plume::RenderRect &
 
 HostSurface *GetHostSurfaceSlow(u32 surface_va, const d3d::SurfaceDesc *desc);
 
+// blur-nx (2026-11-10, port 76; its key 215: blur_renut_stack_surface_headers): headers of surfaces on the stack, as the
+// game bound them (NoteSurfaceHeader, game threads); the render thread reads a surface's header when it replays, by
+// which time a temporary D3DSurface on the stack has been overwritten. Blur builds one for the clear and resolve that
+// put its 640x360 motion-blur source in place: read later it was zeros (an empty 1x1 surface), and the frame lost its
+// motion blur. The operation's own copy (CaptureStackHeaders) comes first; this table is a counted fallback.
+std::mutex g_stack_headers_mutex;
+std::unordered_map<u32, d3d::SurfaceDesc> g_stack_headers;
+inline bool StackVa(u32 va) { return va >= 0x70000000u && va < 0x80000000u; }
+
+// blur-nx (2026-11-10, port 76; its key 218: blur_renut_wipe_overwritten; see surfaces.h).
+bool OverlapWrittenSinceLocked(const HostSurface *surface, uint64_t seq) {
+  if (!surface || surface->depth)
+    return false;
+  bool found = false;
+  for (const auto &[key, target] : g_targets) {
+    (void)key;
+    if (target.get() == surface) {
+      found = true;
+      break;
+    }
+  }
+  if (!found)
+    return false;
+  // Any other colour target whose EDRAM tiles meet this one's (EdramSpanOf), written after 'seq'.
+  const EdramSpan mine = EdramSpanOf(surface);
+  for (const auto &[key, target] : g_targets) {
+    (void)key;
+    if (target && target.get() != surface && target->texture && !target->depth && target->write_seq > seq &&
+        EdramSpansIntersect(mine, EdramSpanOf(target.get())))
+      return true;
+  }
+  return false;
+}
+
+// blur-nx (2026-11-11, port 76; its key 220: blur_renut_edram_inherit; see surfaces.h).
+bool EdramInheritSpanLocked(const HostSurface *surface, u32 &bits, u32 &rows) {
+  if (!surface || surface->depth)
+    return false;
+  const EdramSpan e = EdramSpanOf(surface);
+  // More than the EDRAM's 2048 tiles: a predicated-tiling target backing every tile (its layout wraps; not one view).
+  if (!e.count() || e.count() > 2048 || e.columns > 0xFFF)
+    return false;
+  bits = (e.base & 0xFFFu) | (e.columns << 12) | ((e.samples_x == 2 ? 1u : 0u) << 24) |
+         ((e.samples_y == 2 ? 1u : 0u) << 25) | ((e.tile_samples_x == 40 ? 1u : 0u) << 26);
+  rows = e.rows;
+  return true;
+}
+
+// blur-nx (2026-11-11, port 76; its key 220: blur_renut_edram_inherit; see surfaces.h).
+void EdramInheritSourcesLocked(const HostSurface *target, std::vector<HostSurface *> &out, u32 &skipped) {
+  out.clear();
+  skipped = 0;
+  if (!target || target->depth || !target->texture)
+    return;
+  const EdramSpan mine = EdramSpanOf(target);
+  if (!mine.count() || mine.count() > 2048)
+    return;  // a predicated-tiling target backing every tile (EdramInheritSpanLocked)
+  const u32 format = (u32(target->color_info_word) >> 16) & 0xF;
+  for (const auto &[key, other] : g_targets) {
+    (void)key;
+    if (!other || other.get() == target || !other->texture || other->depth || other->write_seq <= target->write_seq)
+      continue;
+    const EdramSpan theirs = EdramSpanOf(other.get());
+    if (!EdramSpansIntersect(mine, theirs))
+      continue;
+    if (theirs.count() > 2048) {
+      ++skipped;  // a predicated-tiling target backing every tile: its samples have no single place in the EDRAM
+      continue;
+    }
+    // The same EDRAM format (so the same word means the same value, whatever each host target's precision) and both
+    // at the guest's scale (the console's layout is in guest samples).
+    if (((u32(other->color_info_word) >> 16) & 0xF) != format || theirs.tile_samples_x != mine.tile_samples_x ||
+        other->scale.code != 0 || target->scale.code != 0) {
+      ++skipped;
+      continue;
+    }
+    out.push_back(other.get());
+  }
+  // Newest first, each keeps the target's tiles no newer one already covers; one left with none is dropped (on the
+  // console a later write over the same tiles is what they hold). Then oldest first, the order they are drawn in.
+  std::sort(out.begin(), out.end(), [](const HostSurface *a, const HostSurface *b) { return a->write_seq > b->write_seq; });
+  static std::vector<uint8_t> covered;
+  covered.assign(mine.count(), 0);
+  size_t kept = 0;
+  for (HostSurface *source : out) {
+    const EdramSpan theirs = EdramSpanOf(source);
+    bool adds = false;
+    for (u32 j = 0; j < mine.count(); ++j) {
+      if (covered[j] || ((((mine.base + j) & 2047u) - theirs.base) & 2047u) >= theirs.count())
+        continue;
+      covered[j] = 1;
+      adds = true;
+    }
+    if (adds)
+      out[kept++] = source;
+  }
+  out.resize(kept);
+  std::reverse(out.begin(), out.end());
+}
+
+// blur-nx (2026-11-10, port 76; its key 216: blur_renut_sample_grid_resolve; see surfaces.h).
+HostSurface *SampleGridAliasLocked(const HostSurface *s) {
+  if (!s || s->depth)
+    return nullptr;
+  // The single-sampled target of the view's sample grid: 4x is 2x2 samples a pixel (twice the pitch), 2x is 1x2 (the
+  // same pitch; its rows are the samples' rows).
+  u32 across = 0;
+  if (s->samples == plume::RenderSampleCount::COUNT_4)
+    across = 2;
+  else if (s->samples == plume::RenderSampleCount::COUNT_2)
+    across = 1;
+  else
+    return nullptr;
+  const u32 pitch = u32(s->info_word) & 0x3FFF;
+  if (!pitch || pitch * across > 0x3FFF)
+    return nullptr;
+  // TargetKey's layout: the base tile, the pitch, the samples (0: 1), not depth, the scale code, the host format.
+  const uint64_t key = uint64_t(u32(s->color_info_word) & 0xFFF) | uint64_t(pitch * across) << 12 |
+                       uint64_t(s->scale.code & 7) << 29 | uint64_t(u32(s->format)) << 32;
+  const auto it = g_targets.find(key);
+  if (it == g_targets.end() || !it->second || !it->second->texture ||
+      it->second->samples != plume::RenderSampleCount::COUNT_1)
+    return nullptr;
+  return it->second.get();
+}
+
+// blur-nx (2026-11-10, port 76; its key 215; see surfaces.h): the operation being replayed (render thread).
+const StackHeaderSet *g_replay_stack_headers = nullptr;
+
+void CaptureStackHeaders(const u8 *device, StackHeaderSet &out) {
+  out.count = 0;
+  if (!device || !banjo::renut_gpu::StackSurfaceHeadersOn())
+    return;
+  const auto be = [device](u32 off) {
+    return u32(device[off]) << 24 | u32(device[off + 1]) << 16 | u32(device[off + 2]) << 8 | u32(device[off + 3]);
+  };
+  const u32 vas[5] = {be(d3d::kDeviceOffsetRenderTargets), be(d3d::kDeviceOffsetRenderTargets + 4),
+                      be(d3d::kDeviceOffsetRenderTargets + 8), be(d3d::kDeviceOffsetRenderTargets + 12),
+                      be(d3d::kDeviceOffsetDepthStencil)};
+  for (const u32 va : vas) {
+    if (!StackVa(va) || out.count >= 5)
+      continue;
+    if (const auto *desc = GuestPtr<const d3d::SurfaceDesc>(va + sizeof(d3d::Resource))) {
+      out.va[out.count] = va;
+      out.desc[out.count] = *desc;
+      ++out.count;
+    }
+  }
+}
+
+void SetReplayStackHeaders(const StackHeaderSet *set) { g_replay_stack_headers = set; }
+
+void NoteSurfaceHeader(u32 surface_va) {
+  if (!StackVa(surface_va) || !banjo::renut_gpu::StackSurfaceHeadersOn())
+    return;
+  const auto *desc = GuestPtr<const d3d::SurfaceDesc>(surface_va + sizeof(d3d::Resource));
+  if (!desc)
+    return;
+  std::lock_guard lock(g_stack_headers_mutex);
+  g_stack_headers[surface_va] = *desc;
+}
+
 HostSurface *GetHostSurfaceLocked(u32 surface_va) {
   if (!surface_va)
     return nullptr;
@@ -984,6 +1234,31 @@ HostSurface *GetHostSurfaceLocked(u32 surface_va) {
   const auto *desc = GuestPtr<const d3d::SurfaceDesc>(surface_va + sizeof(d3d::Resource));
   if (!desc)
     return nullptr;
+  d3d::SurfaceDesc stack_copy;  // blur-nx (2026-11-10, port 76; its key 215: blur_renut_stack_surface_headers)
+  if (StackVa(surface_va) && banjo::renut_gpu::StackSurfaceHeadersOn()) {
+    bool found = false;
+    if (const StackHeaderSet *set = g_replay_stack_headers) {  // the replayed operation's own
+      for (u32 i = 0; i < set->count; ++i) {
+        if (set->va[i] == surface_va) {
+          stack_copy = set->desc[i];
+          desc = &stack_copy;
+          found = true;
+          break;
+        }
+      }
+    }
+    if (!found) {  // a path that captured none: as last bound (counted: none is expected)
+      std::lock_guard lock(g_stack_headers_mutex);
+      if (const auto it = g_stack_headers.find(surface_va); it != g_stack_headers.end()) {
+        stack_copy = it->second;
+        desc = &stack_copy;
+        static uint64_t fallbacks = 0;
+        if (const uint64_t n = ++fallbacks; n <= 4 || (n & (n - 1)) == 0)
+          RGPU_WARN("[renut] stack surface {:08X} read with its last bound header: the operation captured none ({} so "
+                    "far; blur_renut_stack_surface_headers)", surface_va, n);
+      }
+    }
+  }
 
   const bool memo = banjo::renut_gpu::CpuMemosOn();
   SurfaceMemo &m = g_surface_memo[(surface_va * 0x9E3779B1u) >> 26];
@@ -1120,6 +1395,16 @@ HostSurface *UiDepthSurfaceLocked(HostSurface *scene_depth) {
 }
 
 HostSurface *GetHostSurfaceSlow(u32 surface_va, const d3d::SurfaceDesc *desc) {
+  // blur-nx (2026-11-10, port 76; its key 217: blur_renut_surface_size_guard): no Xbox 360 target is wider or taller than
+  // 8192; a header that reads so is not one (a temporary on the stack, read after the stack was reused).
+  if (banjo::renut_gpu::SurfaceSizeGuardOn() &&
+      (d3d::SurfaceWidth(desc->Size) > 8192 || d3d::SurfaceHeight(desc->Size) > 8192)) {
+    static uint32_t logged = 0;
+    if (logged++ < 8)
+      RGPU_WARN("[renut] surface {:08X}: its header reads {}x{}: no target made (blur_renut_surface_size_guard)",
+                surface_va, d3d::SurfaceWidth(desc->Size), d3d::SurfaceHeight(desc->Size));
+    return nullptr;
+  }
   const bool depth = d3d::IsDepthFormat(desc->Format);
   plume::RenderFormat format = depth ? DepthTargetFormat(desc->Format) : SurfaceColorFormat(*desc);
   // The render resolution, or the finer one graphics_options gives it.
@@ -1215,6 +1500,7 @@ HostSurface *GrowDepthToColourLocked(u32 surface_va, HostSurface *depth, uint32_
 }
 
 uint64_t g_surface_write_seq = 0;  // sasrt-nx (2026-10-20)
+uint64_t g_blur_color_write_last = 0;  // blur-nx (2026-11-11, port 76; its key 220: blur_renut_edram_inherit)
 
 HostSurface *DepthRestoreSourceLocked(const HostSurface *depth) {
   if (!depth || !depth->depth || depth->samples != plume::RenderSampleCount::COUNT_1)

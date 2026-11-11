@@ -209,6 +209,9 @@ uint32_t BlendSkipMode(const PipelineKey &key) {
   case plume::RenderFormat::R8G8B8A8_UNORM:
   case plume::RenderFormat::B8G8R8A8_UNORM:
   case plume::RenderFormat::R16G16B16A16_UNORM:
+  // sasrt-nx (2026-11-11, port 75; its formats batch, rows 6, 8, 10, 74, 93; its audit's finding 2): clamps as the
+  // other UNORM targets do
+  case plume::RenderFormat::R10G10B10A2_UNORM:
   case plume::RenderFormat::R8G8_UNORM:
   case plume::RenderFormat::R8_UNORM:
   case plume::RenderFormat::R16G16_UNORM:
@@ -259,6 +262,9 @@ uint32_t FormatChannels(plume::RenderFormat format) {
   case F::R16G16_FLOAT:
   case F::R32G32_FLOAT:
     return 0x3;
+  // sasrt-nx (2026-11-11, port 75; its formats batch, rows 7, 66, 73, 95, 96; its audit's finding 2): no alpha
+  case F::R11G11B10_FLOAT:
+    return 0x7;
   default:
     return 0xF;
   }

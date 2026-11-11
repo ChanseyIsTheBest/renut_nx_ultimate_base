@@ -107,6 +107,15 @@ toml, so a port that finds one wrong for its game doesn't have to change the cod
   wizard, a missing generated/hot, switch_shaders.ps1's stderr or a stale PCH (69).
 - Port 70 lets machine copies take in functions with guest atomics (sasrt-nx): each atomic stays as it is, and the guard's
   comparing forms stop before it. A game gets more copies when it remakes its bulk list; retrain its PGO profile after.
+- Ports 71-74 are sasrt-nx's machine-copy round, every optimisation on: the SDK's small helpers forced inline and
+  setFromMask in NEON (71); VMX's estimates and multiply-add in their faster AArch64 forms, not bit-identical but no
+  further from the 360 than before (72); NEON idioms of the generated code (73); and ten copy-generator ideas (74).
+  The copies' code changes: retrain a game's PGO profile after them.
+- Port 75 is sasrt-nx's renderer formats batch: 2_10_10_10 in the console's own 10:10:10:2 layout, EDRAM formats 10
+  and 12 no longer RGBA8, 32-bit float textures point-sampled, and a log of the formats a session makes.
+- Port 76 is blur-nx's renderer fixes (keys 211-221): EXPAND / FLOAT resolve aliases, partial resolves that keep
+  their destination, occlusion queries answered (a game hooks its own GetData), stack-held surface headers, the
+  resolve exponent bias, the EDRAM inherit and more; Viva Pinata's fade mask to recheck (key 218).
 - Port 44 and the translator changes take effect when a game's shader package is made again. Before measuring on the
   console, build its DKSH cache on the PC (`tools/deko3d_variant_cache.py`): a first run that compiles its shaders while
   it draws is slower on the GPU than the build is.

@@ -66,6 +66,52 @@ INDEX = os.path.join(ROOT, 'out', 'localize_index.json')
 LIST = os.path.join(APP, 'src', 'cpu', 'hot', 'localized.txt')
 BULK = os.path.join(APP, 'src', 'cpu', 'hot', 'localized_bulk.txt')
 SHARDS = 12  # app/src/cpu/banjo_hot_shard_<k>.cpp (app/CMakeLists.txt lists them)
+# sasrt-nx (2026-11-11, port 74; its idea 37): a copy writes back at a return only the registers a caller can read:
+# tools/leaf_dead_stores.py's LiveOut of the function (whole program, no ABI assumption: the 360 compiler allocates
+# registers across functions), plus r1, r2, r13, r3 and f1 and every non-volatile one, as leaf_dead_stores.py's own
+# rule. The original writes them; the guard does not compare them (kSkip). SASRT_LOCALIZE_LIVE_OUT=0: every changed
+# register written back, as before.
+LIVE_OUT = os.environ.get('SASRT_LOCALIZE_LIVE_OUT', '1') != '0'
+LIVE_OUT_JSON = os.path.join(ROOT, 'out', 'leaf_live_out.json')
+_live_out = None
+LIVE_OUT_DROPPED = [0]
+
+
+def live_out_keep(name):
+    """None (keep every register) or a predicate on register names for the function's return write-backs."""
+    global _live_out
+    if not LIVE_OUT:
+        return None
+    if _live_out is None:
+        try:
+            data = json.load(open(LIVE_OUT_JSON))
+            # (sasrt-nx's round A audit, finding 6: only the analysis of this tree; a scratch run's, or none, trims
+            # nothing.)
+            if os.path.normcase(os.path.abspath(data.get('gen', ''))) != os.path.normcase(os.path.abspath(GEN)):
+                raise ValueError('another tree')
+            _live_out = {int(k, 16): v for k, v in data['live_out'].items()}
+        except (OSError, ValueError, KeyError, AttributeError):
+            _live_out = {}
+    m = re.match(r'^(?:__imp__)?sub_([0-9A-F]{8})$', name)
+    mask = _live_out.get(int(m.group(1), 16)) if m else None
+    if mask is None or mask == (1 << 64) - 1:
+        return None
+
+    def keep(reg):
+        k = re.match(r'^([rf])(\d+)$', reg)
+        if not k:
+            return True
+        n = int(k.group(2))
+        if k.group(1) == 'r':
+            if n in (1, 2, 3, 13) or n > 12:
+                return True
+            return bool(mask >> n & 1)
+        if n == 1 or n > 13:
+            return True
+        return bool(mask >> (32 + n) & 1)
+    return keep
+
+
 BULK_SLOT = 9999  # past PPCContext::host_counters: the guard's countdown is the hook's own (banjo_hot_guest.h)
 HAND = os.path.join(APP, 'src', 'cpu', 'hot', 'hand.txt')
 IMAGE_BASE = 0x82000000
@@ -115,12 +161,99 @@ ATOMIC_CAS = re.compile(r'^\t+[\w.]+\.eq = REX_GUEST_CAS(?:_C)?\((?:ea, )?reinte
 ATOMIC_FENCE = re.compile(r'^\t+std::atomic_thread_fence\(std::memory_order_\w+\);$')
 
 
+# sasrt-nx (2026-11-11, port 74; its idea 39): store-card runs. Every guest store outside the stack marks its page's card
+# (tools/store_cards.py, after this tool). In the bulk copies (app/src/cpu/banjo_hot_prelude.h with SASRT_HOT_CARD_RUNS)
+# a function keeps the page of its current run of stores in a local (REX_CARD_RUN_DECL) and marks a page when the run
+# moves to another one, and the pending page at every point another thread can be told about the stores: before every
+# call (a copy's callee included), fence and return, and at the function's end (REX_CARD_FLUSH); a compare-and-swap
+# flushes and marks its own page (REX_GUEST_CAS_C in the prelude). So every store's page is still marked before the
+# function's next synchronisation, which is what Renut's cached copies need (they are checked at a kick, which the game
+# reaches through a call). Without SASRT_HOT_CARD_RUNS both macros are nothing (banjo_hot_common.h).
+# SASRT_LOCALIZE_CARD_RUNS=0: not written.
+CARD_RUNS = os.environ.get('SASRT_LOCALIZE_CARD_RUNS', '1') != '0'
+# sasrt-nx (2026-11-11, port 74; its idea 52): in a loop, a register loaded from itself (`r7 = *(r7 + K)`: a linked
+# list's next pointer) is followed by a prefetch of the node it now points at (REX_PREFETCH_GUEST, banjo_hot_common.h:
+# a hint that cannot fault; CMake SASRT_HOT_PREFETCH=OFF compiles it out), so the node's line is on its way during the
+# rest of the iteration. SASRT_LOCALIZE_PREFETCH=0: not written.
+PREFETCH = os.environ.get('SASRT_LOCALIZE_PREFETCH', '1') != '0'
+CHASE_SRC = re.compile(r'^\t((?:ctx\.)?r\d+|ll_r\d+)\.u64 = REX_LOAD_D_U32\(\1\.u32, -?\d+\);$')
+CHASE = re.compile(r'^\t(l{1,2}_r\d+|r\d+)\.u64 = REX_LOAD_D_U32\(\1\.u32, -?\d+\);$')
+# sasrt-nx (2026-11-11, port 74; its idea 60): tools/loop_barriers.py puts a compiler barrier at a loop header so a
+# polling loop's guest load is not hoisted out of it (a thread spinning forever); the barrier also keeps every invariant
+# guest load in the loop. A straight counted loop cannot spin on memory: its only way back is the count register's
+# `bdnz`, nothing in it writes the count register, and it has no other branch, return or call. Its exit does not depend
+# on a load, so a hoisted load only means another thread's write is seen after the (bounded) loop instead of during it.
+# The copies' running form leaves those barriers out (the original statements' form keeps them); the compiler's own
+# alias analysis then hoists what it can prove (same base, other offsets). ON unless SASRT_LOCALIZE_COUNTED_BARRIERS=1
+# (=1: every barrier kept, idea 60 off; unset or any other value: the barriers of those loops left out).
+COUNTED_NO_BARRIER = os.environ.get('SASRT_LOCALIZE_COUNTED_BARRIERS', '0') != '1'
+LOOP_LABEL = re.compile(r'^(loc_[0-9A-F]+):\s*$')
+CTR_DEC = re.compile(r'^\t--(?:ctx\.)?ctr\.u64;$')
+CTR_BACK = re.compile(r'^\tif \((?:ctx\.)?ctr\.u32 != 0\) goto (loc_[0-9A-F]+);$')
+CTR_WRITE = re.compile(r'\b(?:ctx\.)?ctr\.(?:u|s)(?:32|64) = ')
+LOOP_STATS = [0, 0]  # idea 52 prefetches, idea 60 barriers left out
+CONST_ARGS = os.environ.get('SASRT_LOCALIZE_CONST_ARGS', '1') != '0'  # port 74, its idea 34 (localize())
+CONST_ARG_FORCED = [0]
+
+
+def loop_info(lines):
+    """(indices of loop-carried pointer loads, indices of the barrier lines of straight counted loops) of one function's lines."""
+    labels = {}
+    for i, l in enumerate(lines):
+        m = LOOP_LABEL.match(l)
+        if m:
+            labels.setdefault(m.group(1), i)
+    inside, drop, chase = set(), set(), set()
+    backs = {}
+    for j, l in enumerate(lines):
+        for lab in re.findall(r'goto (loc_[0-9A-F]+);', l):
+            if lab in labels and labels[lab] < j:
+                backs.setdefault(lab, []).append(j)
+    for lab, js in backs.items():
+        i, end = labels[lab], max(js)
+        inside.update(range(i, end + 1))
+        # Idea 52: a pointer the loop carries (`p = p->next`): its only definitions in the loop are its own loads.
+        for k in range(i, end + 1):
+            mc = CHASE_SRC.match(lines[k])
+            if not mc:
+                continue
+            reg = mc.group(1)
+            defs = [q for q in range(i, end + 1) if re.match(r'^\t' + re.escape(reg) + r'\.[us](?:8|16|32|64) = ', lines[q])]
+            if all(CHASE_SRC.match(lines[q]) and CHASE_SRC.match(lines[q]).group(1) == reg for q in defs):
+                chase.add(k)
+        if not COUNTED_NO_BARRIER:
+            continue
+        if i + 1 >= len(lines) or lines[i + 1].strip() != 'REX_LOOP_BARRIER();':
+            continue
+        bar = i + 1  # (sasrt-nx's batch 2 audit, finding 5: only the label's own barrier)
+        ok = all(CTR_BACK.match(lines[j]) and j > 0 and CTR_DEC.match(lines[j - 1]) for j in js)
+        for k in range(i + 1, end + 1):
+            if not ok:
+                break
+            l = lines[k]
+            if CTR_BACK.match(l) and CTR_BACK.match(l).group(1) == lab:
+                continue
+            if CTR_DEC.match(l):
+                continue
+            if 'goto ' in l or re.search(r'\breturn\b', l) or CALL.search(l) or 'switch (' in l or CTR_WRITE.search(l):
+                ok = False
+        if ok:
+            drop.add(bar)
+    return chase, drop
+
+
+CARD_FLUSH = 'REX_CARD_FLUSH(); ' if CARD_RUNS else ''
+
+
 def atomic_stop(l):
     """A reservation load, compare-and-swap or fence, with the guard's stop in front (see ATOMICS)."""
     if not ATOMICS or not (ATOMIC_LOAD.match(l) or ATOMIC_CAS.match(l) or ATOMIC_FENCE.match(l)):
         return l
     stripped = l.lstrip('\t')
-    return l[:len(l) - len(stripped)] + '{ if (s.Open()) return; ' + stripped + ' }'
+    # Port 74 (its idea 39): a fence flushes the pending card run first; a compare-and-swap's REX_GUEST_CAS_C does it
+    # itself (sasrt-nx's batch 2 audit, finding 1: no second flush).
+    flush = CARD_FLUSH if ATOMIC_FENCE.match(l) else ''
+    return l[:len(l) - len(stripped)] + '{ if (s.Open()) return; ' + flush + stripped + ' }'
 
 
 ALL = None  # "reach unknown": every register
@@ -275,7 +408,10 @@ class Index:
         if not paths:
             sys.exit('localize_native: no *_recomp.N.cpp in ' + gen)
         stamp = [[os.path.basename(p), os.path.getmtime(p), os.path.getsize(p)] for p in paths]
-        me = INDEX_FORMAT
+        # sasrt-nx (2026-11-11, port 74; port 70's follow-up, sasrt-nx's 2026-11-10 audit finding 2): ATOMICS changes
+        # summarise(), so the cache key names it (a warm cache from the other setting would copy atomic functions
+        # without their stops). Every cache written before this key is rebuilt once.
+        me = f'{INDEX_FORMAT}-atomics{int(ATOMICS)}'
         try:
             cached = json.load(open(INDEX, encoding='utf-8'))
             if cached.get('stamp') == stamp and cached.get('gen') == os.path.abspath(gen) and cached.get('tool') == me:
@@ -404,7 +540,13 @@ class Hooks:
         self.addresses = set()
         self.words = set()
         roots = [os.path.join(APP, 'src'), os.path.join(ROOT, 'sdk', 'src'), os.path.join(ROOT, 'sdk', 'include')]
-        tomls = [os.path.join(APP, 'config', 'renut_hooks.toml'), os.path.join(APP, 'config', 'renut_gpu_funcs.toml'),
+        # sasrt-nx (2026-11-11, port 74; its idea 29): not app/config/renut_gpu_funcs.toml any more. It is a game's map of
+        # Direct3D's names (a reference: no code hooks through it; this base's Renut hooks Direct3D by address,
+        # BANJO_RENUT_HOOK(sub_X), which the sources below name), and it kept every function it names out of the copies
+        # (in sasrt-nx 0.4 % of a race's samples, plain). A function a source really hooks is still found in the source.
+        # Only this list changed: tools/direct_calls.py (SOURCES) and tools/post_codegen.py (HOOK_TOMLS, for
+        # flush_mode_flow.py) still read the file, as before port 74. (Neither Katamari nor rr6-nx has one.)
+        tomls = [os.path.join(APP, 'config', 'renut_hooks.toml'),
                  os.path.join(APP, 'renut_config.toml'), os.path.join(APP, 'renut_manifest.toml')]
         paths = [(p, True) for p in tomls if os.path.isfile(p)]
         for root in roots:
@@ -781,6 +923,80 @@ def store_line(l):
     return l, stores
 
 
+# sasrt-nx (2026-11-11, port 74; its idea 57, sasrt-nx's merge of 2026-11-08 with its round A fix): two store idioms of
+# the game's VMX code, merged in the copies' running form (f_*; the original statements' logged form o_* keeps them, so
+# the guard compares against the original stores). Both write exactly the bytes the original writes and mark the same
+# store cards. Switch back: SASRT_HOT_MERGED_STORES=OFF (CMake), which compiles the original statements
+# (SASRT_HOT_MERGED_STORES_OFF).
+#   - stvlx at ea, stvrx at ea + 16: the 16 bytes of one vector at [ea, ea + 16) (the generated helpers store them in
+#     8/4/2/1-byte pieces chosen by the address): one 16-byte store when the second address is the first + 16 at run
+#     time and the range does not cross the PC's physical-view boundary;
+#   - four stvewx of one vector at ea, ea + a, ea + b, ea + c (each the lane its address selects; the generated code
+#     spills the vector and loads each lane back by a computed index): one 16-byte store of the four words when a, b,
+#     c are 4, 8, 12 at run time (::banjo::hand::detail::StoreWordsOfVector).
+# The address expressions are register arithmetic only (no loads), so evaluating the second one before the first store
+# reads what the original reads. The patterns take the plain forms (and the store-card forms, _C): post_codegen.py takes
+# the cards out (store_cards.py --restore) before the copies are made and puts them back after (sasrt-nx's round A
+# audit: matching only the _C forms, the merge never fired). The merged store marks its own cards (REX_CARD, a no-op
+# without store cards), and store_cards.py gives the original statements of the fallback branch theirs.
+MS_ADDR = r'[\w.]+(?: [+-] [\w.]+)?'
+MS_PAIR = re.compile(r'(?P<i>\t+)ea = (?P<e1>' + MS_ADDR + r');\n'
+                     r'(?P=i)if \(s\.Note\(\(u32\)\(ea\), 16u - \(\(u32\)\(ea\) & 0xFu\)\)\) REX_STVLX(?:_C)?\(ea, (?P<v>\w+)\);\n'
+                     r'(?P=i)if \(s\.Stopped\(\)\) return;\n'
+                     r'(?P=i)ea = (?P<e2>' + MS_ADDR + r');\n'
+                     r'(?P=i)if \(s\.Note\(\(u32\)\(ea\) & ~0xFu, \(u32\)\(ea\) & 0xFu\)\) REX_STVRX(?:_C)?\(ea, (?P=v)\);\n'
+                     r'(?P=i)if \(s\.Stopped\(\)\) return;\n')
+MS_STORE = r'(?P=i)BANJO_HOT_STORE_U32(?:_C)?\(ea, (?P=v)\.u32\[3 - \(\(ea & 0xF\) >> 2\)\]\);\n(?P=i)if \(s\.Stopped\(\)\) return;\n'
+MS_QUAD = re.compile(r'(?P<i>\t+)ea = \((?P<x>\w+)\.u32\) & ~0x3;\n'
+                     r'(?P=i)BANJO_HOT_STORE_U32(?:_C)?\(ea, (?P<v>\w+)\.u32\[3 - \(\(ea & 0xF\) >> 2\)\]\);\n(?P=i)if \(s\.Stopped\(\)\) return;\n'
+                     r'(?P=i)ea = \((?P=x)\.u32 \+ (?P<a>\w+)\.u32\) & ~0x3;\n' + MS_STORE +
+                     r'(?P=i)ea = \((?P=x)\.u32 \+ (?P<b>\w+)\.u32\) & ~0x3;\n' + MS_STORE +
+                     r'(?P=i)ea = \((?P=x)\.u32 \+ (?P<c>\w+)\.u32\) & ~0x3;\n' + MS_STORE)
+F_FUNC = re.compile(r'^[^\n]*\bvoid f_\w+\(PPCContext& __restrict ctx, uint8_t\* base, \[\[maybe_unused\]\] S& s\) \{\n.*?^\}\n',
+                    re.M | re.S)
+
+
+MERGED = [0, 0, 0]  # stvlx / stvrx pairs, stvewx quads, headers with either
+
+
+def merge_vector_stores(text):
+    """The header's text with the two idioms merged inside the f_* functions; (text, pairs, quads)."""
+    counts = [0, 0]
+
+    def pair(m):
+        counts[0] += 1
+        i, e1, e2, v = m.group('i', 'e1', 'e2', 'v')
+        orig = m.group(0)
+        return (f'#if !defined(SASRT_HOT_MERGED_STORES_OFF)\n'
+                f'{i}if (uint32_t({e2}) == uint32_t({e1}) + 16u && ::banjo::hand::detail::Straight(uint32_t({e1}), 16u)) [[likely]] {{\n'
+                f'{i}\tea = {e1};\n'
+                f'{i}\tif (s.Note((u32)(ea), 16u)) {{ simde_mm_storeu_si128((simde__m128i*)REX_RAW_ADDR(ea), REX_BSWAP128(simde_mm_load_si128((simde__m128i*){v}.u8))); REX_CARD(ea); REX_CARD(ea + 16u); }}\n'
+                f'{i}\tif (s.Stopped()) return;\n'
+                f'{i}\tea = {e2};\n'
+                f'{i}}} else {{\n#endif\n'
+                + orig +
+                f'#if !defined(SASRT_HOT_MERGED_STORES_OFF)\n{i}}}\n#endif\n')
+
+    def quad(m):
+        counts[1] += 1
+        i, x, v, a, b, c = m.group('i', 'x', 'v', 'a', 'b', 'c')
+        orig = m.group(0)
+        return (f'#if !defined(SASRT_HOT_MERGED_STORES_OFF)\n'
+                f'{i}if ({a}.u32 == 4u && {b}.u32 == 8u && {c}.u32 == 12u && ::banjo::hand::detail::Straight({x}.u32 & ~0x3u, 16u)) [[likely]] {{\n'
+                f'{i}\tif (!::banjo::hand::detail::StoreWordsOfVector(base, s, {x}.u32 & ~0x3u, {v})) return;\n'
+                f'{i}\tea = ({x}.u32 + {c}.u32) & ~0x3;\n'
+                f'{i}}} else {{\n#endif\n'
+                + orig +
+                f'#if !defined(SASRT_HOT_MERGED_STORES_OFF)\n{i}}}\n#endif\n')
+
+    def func(m):
+        t = MS_PAIR.sub(pair, m.group(0))
+        return MS_QUAD.sub(quad, t)
+
+    text = F_FUNC.sub(func, text)
+    return text, counts[0], counts[1]
+
+
 def localize(index, hooks, reach, root, what, opts, out_dir, quiet=False, hand=None):
     funcs = index.funcs
     hand = hand or {}
@@ -834,11 +1050,11 @@ def localize(index, hooks, reach, root, what, opts, out_dir, quiet=False, hand=N
                 # registers their originals write back (hand.txt exact=: the hash and the comparison return r3), and
                 # a caller that read r3 after an inlined native that ran got its own stale r3 (sub_82737F80 and
                 # sub_8271F9C0 took the other branch; the first diet PC run crashed after them).
-                return ('{ ' + before + 'if (!::banjo::hand::n_%s::Native(ctx, base, s)) { f_%s(ctx, base, s); '
+                return ('{ ' + before + CARD_FLUSH + 'if (!::banjo::hand::n_%s::Native(ctx, base, s)) { f_%s(ctx, base, s); '
                         'if (s.Stopped()) return; } else if (s.Stopped()) return;%s }' % (hand[b]['id'], b, after))
-            return '{ ' + before + 'f_%s(ctx, base, s); if (s.Stopped()) return;' % b + after + ' }'
+            return '{ ' + before + CARD_FLUSH + 'f_%s(ctx, base, s); if (s.Stopped()) return;' % b + after + ' }'
         stats['calls_open'] += 1
-        return '{ if (s.Open()) return; ' + before + m.group(0) + after + ' }'
+        return '{ if (s.Open()) return; ' + before + CARD_FLUSH + m.group(0) + after + ' }'
 
     # Callee copies the compiler must inline into their callers: then a guest call inside the copy is no call at all,
     # the registers handed over through the context are forwarded (the context is `restrict`: the store before the
@@ -872,8 +1088,35 @@ def localize(index, hooks, reach, root, what, opts, out_dir, quiet=False, hand=N
     # The generated copy of a function with a hand-written native only runs when the native declines: out of line and
     # cold (inlined, it took registers away from the hand-written path: every call then saved five pairs of them).
     forced -= set(hand)
+    # sasrt-nx (2026-11-11, port 74; its idea 34): a constant argument reaches a callee only when the compiler inlines
+    # it (IPA-CP cannot follow the context: sasrt-nx's batch NRO had 1 .constprop clone among the copies). The members
+    # forced inline above took 5,413 of sasrt-nx's 9,412 calls between copies; of the others, those called with a literal
+    # in an argument register (set in the same block before the call, a register the callee reads, not written again
+    # before the call) are forced inline too when at most 3 calls reach them and they have at most 4x the inline limit's
+    # lines: their inlined body is the constant-argument clone. Only an inlining decision (the statements are the same).
+    # SASRT_LOCALIZE_CONST_ARGS=0: off; inline=0 in the list: off for that copy.
+    if CONST_ARGS and inline_limit > 0:
+        literal = re.compile(r'^\tctx\.(r\d+)\.s64 = -?\d+;$')
+        for name in members:
+            ls = [l for _, l in index.body(name)]
+            for i, l in enumerate(ls):
+                for m in re.finditer(r'\b(?:__imp__)?(sub_[0-9A-F]{8})\(ctx, base\);', l):
+                    b = m.group(1)
+                    if (b not in members[1:] or b in forced or b in hand or reaches_itself(b) or calls_to[b] > 3
+                            or funcs[b]['lines'] > 4 * inline_limit):
+                        continue
+                    for k in range(i - 1, max(-1, i - 9), -1):
+                        if LOOP_LABEL.match(ls[k]):
+                            break
+                        mc = literal.match(ls[k])
+                        if mc and mc.group(1) in funcs[b]['regs'] and not any(
+                                re.search(r'\bctx\.' + mc.group(1) + r'\.\w+ = ', ls[q]) for q in range(k + 1, i)):
+                            forced.add(b)
+                            CONST_ARG_FORCED[0] += 1
+                            break
 
     declarations = []
+    dead_out = set()  # port 74, its idea 37: (member, register) write-backs LiveOut leaves out
     # Blocks: straight runs of statements. A block starts at a function's first statement, at every label and after
     # every statement that can leave (a jump, a return, the end of a switch). The Counting policy counts their
     # entries; the map says which lines of this header and of the generated file each block holds.
@@ -887,9 +1130,13 @@ def localize(index, hooks, reach, root, what, opts, out_dir, quiet=False, hand=N
         text = '\n'.join(lines)
         regs = funcs[name]['regs']
         written = funcs[name]['written']
+        keep_out = live_out_keep(name)  # port 74, its idea 37
+        if keep_out is not None:
+            dead_out.update((name, r) for r in written if not keep_out(r))
         for m in PROMOTED.finditer(text):
             externs.add(m.group(1))
         dirty, writes, dirty_end = dirty_sets(name, lines, lambda l: [call_reach(m)[0] for m in CALL.finditer(l)])
+        in_loop, counted_barriers = loop_info(lines)  # port 74, its ideas 52 and 60
         file_lines = original_lines.setdefault(funcs[name]['file'], {})
         for localized in (True, False):
             body = []  # (text, block)
@@ -909,6 +1156,9 @@ def localize(index, hooks, reach, root, what, opts, out_dir, quiet=False, hand=N
                 # What can be dirty when this statement's call or return runs (an unreached statement: everything).
                 here = sorted(written if dirty[at] is None else (dirty[at] | writes[at]), key=order)
                 sync_out = ''.join(f'ctx.{r} = l_{r}; ' for r in here)
+                # (Port 74, its idea 37: a return writes back only what a caller can read; a call still gets `here`.)
+                sync_ret = (sync_out if keep_out is None else
+                            ''.join(f'ctx.{r} = l_{r}; ' for r in here if keep_out(r)))
                 if localized:
                     if LABEL.match(l):
                         block = blocks
@@ -932,16 +1182,25 @@ def localize(index, hooks, reach, root, what, opts, out_dir, quiet=False, hand=N
                     if not in_switch and (GOTO.search(l) or RETURN.search(l)):
                         pending = True
                     l = REG.sub(lambda m: 'l_' + m.group(1), l)
+                if localized and at in counted_barriers:
+                    LOOP_STATS[1] += 1  # port 74, its idea 60: a straight counted loop's barrier left out of the running form
+                    continue
                 l, stores = store_line(l)
                 l = atomic_stop(l)  # sasrt-nx (2026-11-10): see ATOMICS
                 l = CALL.sub(lambda m: call_text(m, name, regs, here, localized), l)
-                if localized and sync_out:
-                    # Braces: the generated code also writes a return as the body of a one-line `if`.
+                if localized and (sync_ret or CARD_FLUSH):
+                    # Braces: the generated code also writes a return as the body of a one-line `if`. (Port 74: only
+                    # the live write-backs, its idea 37, and the pending card run flushed, its idea 39.)
                     l = RETURN.sub(lambda m: m.group(0) if 'if (s.' in l[max(0, m.start() - 24):m.start()]
-                                   else '{ ' + sync_out + 'return; }', l)
+                                   else '{ ' + sync_ret + CARD_FLUSH + 'return; }', l)
                 body.append((l, block))
                 if stores:
                     body.append(('\tif (s.Stopped()) return;', block))
+                if localized and PREFETCH and at in in_loop:
+                    mc = CHASE.match(l)
+                    if mc:
+                        body.append((f'\tREX_PREFETCH_GUEST({mc.group(1)}.u32);', block))  # port 74, its idea 52
+                        LOOP_STATS[0] += 1
             if localized:
                 how = ('[[gnu::always_inline]] static inline' if name in forced
                        else '[[gnu::noinline, gnu::cold]] static' if name in hand else 'static')
@@ -950,12 +1209,18 @@ def localize(index, hooks, reach, root, what, opts, out_dir, quiet=False, hand=N
                 declarations.append(head + ';')
                 block_of_line.append((head.split('\n')[0], None))
                 block_of_line.append((head.split('\n')[1] + ' {', entry_block[name]))
+                if CARD_RUNS:
+                    block_of_line.append(('\tREX_CARD_RUN_DECL', entry_block[name]))  # port 74, its idea 39
                 for r in regs:
                     block_of_line.append((f'\t{type_of(r)} l_{r} = ctx.{r};', entry_block[name]))
                 block_of_line.extend(body)
                 end = sorted(written if dirty_end is None else dirty_end, key=order)
+                if keep_out is not None:
+                    end = [r for r in end if keep_out(r)]  # port 74, its idea 37
                 if end and not (numbered and ONLY_RETURN.match(numbered[-1][1])):
                     block_of_line.append(('\t' + ' '.join(f'ctx.{r} = l_{r};' for r in end), block))
+                if CARD_RUNS and not (numbered and ONLY_RETURN.match(numbered[-1][1])):
+                    block_of_line.append(('\tREX_CARD_FLUSH();', block))  # port 74, its idea 39: the function's end
                 block_of_line.append(('}', block))
                 block_of_line.append(('', None))
             else:
@@ -963,6 +1228,10 @@ def localize(index, hooks, reach, root, what, opts, out_dir, quiet=False, hand=N
                         f'[[maybe_unused]] ::banjo::hot::Logged& s)')
                 declarations.append(head + ';')
                 block_of_line.append((head + ' {', None))
+                if CARD_RUNS:
+                    # Port 74, its idea 39: the shard's REX_CARD needs the run local here too. This form only runs in
+                    # the guard's rolled-back pass, so its last run's page staying unmarked does not matter.
+                    block_of_line.append(('\tREX_CARD_RUN_DECL', None))
                 block_of_line.extend((l, None) for l, _ in body)
                 block_of_line.append(('}', None))
                 block_of_line.append(('', None))
@@ -984,6 +1253,14 @@ def localize(index, hooks, reach, root, what, opts, out_dir, quiet=False, hand=N
     skip = set()
     for m in hand_members:
         skip |= set(funcs[m]['written']) - hand[m]['exact']
+    # sasrt-nx (2026-11-11, port 74; its idea 37): the registers the hook may leave different from the original: those
+    # dead after the root returns (its LiveOut). A member's dropped write-back of a register live after the root is
+    # rewritten before the root's exit (or LiveOut would have kept it): still compared (sasrt-nx's round A audit,
+    # finding 4).
+    root_keep = live_out_keep(root)
+    if root_keep is not None:
+        skip |= {r for m in members for r in funcs[m]['written'] if not root_keep(r)}
+    LIVE_OUT_DROPPED[0] += sum(1 for m, _ in dead_out if m in members)
     entry = (f'if (!::banjo::hand::n_{hand[root]["id"]}::Native(ctx, base, s)) f_{root}(ctx, base, s);'
              if root in hand else f'f_{root}(ctx, base, s);')
     hand_note = ('' if not hand_members else
@@ -1036,6 +1313,13 @@ inline void NativeCounted(PPCContext& ctx, uint8_t* base) {{
             for j in range(4):
                 header_lines[len(top) + len(block_of_line) + k + j + 1] = entry_block[root]
     header = '\n'.join(top + [l for l, _ in block_of_line] + bottom)
+    # Port 74 (its idea 57): the merged vector stores (merge_vector_stores above). The line numbers of blocks.json
+    # (tools/hot_arm_compare.py) are those before the merge.
+    header, merged_pairs, merged_quads = merge_vector_stores(header)
+    MERGED[0] += merged_pairs
+    MERGED[1] += merged_quads
+    if merged_pairs or merged_quads:
+        MERGED[2] += 1
     path = os.path.join(out_dir, f'n_{rid}.h')
     os.makedirs(out_dir, exist_ok=True)
     try:
@@ -1171,6 +1455,20 @@ def main():
             except SystemExit as e:  # a form the tool refuses: that function stays generated code
                 skipped.append(f'{root} ({str(e).replace("localize_native: ", "")[:90]})')
         write_list(entries, a.out, made)
+        print(f'localize_native: {LIVE_OUT_DROPPED[0]} return write-backs left out by LiveOut (idea 37)')
+        print(f'localize_native: {LOOP_STATS[0]} pointer-chase prefetches (idea 52), {LOOP_STATS[1]} counted loops\' '
+              f'barriers left out (idea 60)')
+        print(f'localize_native: {CONST_ARG_FORCED[0]} members with a constant argument forced inline (idea 34)')
+        # Port 74 (its idea 39; sasrt-nx's batch 2 audit, finding 2): the shards turn the card runs on only for copies
+        # written with them (app/src/cpu/banjo_hot_prelude.h reads this header).
+        opt = os.path.join(a.out, 'banjo_hot_options.h')
+        text = ('// GENERATED by tools/localize_native.py: how the copies were written (app/src/cpu/banjo_hot_prelude.h).\n'
+                '#pragma once\n' + ('#define REX_CARD_RUNS_GENERATED 1\n' if CARD_RUNS else ''))
+        if not os.path.exists(opt) or open(opt, encoding='utf-8').read() != text:
+            with open(opt, 'w', encoding='utf-8', newline='\n') as f:
+                f.write(text)
+        print(f'localize_native: merged vector stores: {MERGED[0]} stvlx/stvrx pairs and {MERGED[1]} stvewx quads in '
+              f'{MERGED[2]} copies')
         print(f'localize_native: {len(entries)} copies in {shown(a.out)}'
               + (f'; bulk: {len(made)} copies in {SHARDS} shards' if a.bulk else ''))
         if skipped:

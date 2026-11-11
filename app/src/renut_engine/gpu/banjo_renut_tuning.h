@@ -393,6 +393,17 @@ void CountFetchAlignment(bool aligned);
 bool DepthHandOverReadOnlyOn();
 // kameo-nx (2026-11-03, the GPU round from the third console run; docs/kameo-notes.md). A/B targets 73-79.
 bool ColorHandOverOn();          // banjo_deko3d_color_handover (73)
+// blur-nx (2026-11-10/11, port 76): its renderer fixes, A/B targets 211-221 (210 and 214 not ported).
+bool ExpandAliasOn();            // blur_renut_expand_alias (211, blur-nx)
+bool ResolveKeepDestOn();        // blur_renut_resolve_keep_dest (212, blur-nx)
+bool OcclusionQueriesOn();       // blur_renut_occlusion_queries (213, blur-nx)
+bool StackSurfaceHeadersOn();    // blur_renut_stack_surface_headers (215, blur-nx)
+bool SampleGridResolveOn();      // blur_renut_sample_grid_resolve (216, blur-nx)
+bool SurfaceSizeGuardOn();       // blur_renut_surface_size_guard (217, blur-nx)
+bool WipeOverwrittenOn();        // blur_renut_wipe_overwritten (218, blur-nx)
+bool ResolveExpBiasOn();         // blur_renut_resolve_exp_bias (219, blur-nx)
+bool EdramInheritOn();           // blur_renut_edram_inherit (220, blur-nx)
+bool MsSliceResolveOn();         // blur_renut_ms_slice_resolve (221, blur-nx)
 bool ScanOutHandOverOn();        // banjo_deko3d_scanout_handover (74)
 bool DepthHandOverSampledOn();   // banjo_deko3d_depth_handover_sampled (75)
 bool DepthReadLayoutOn();        // banjo_deko3d_depth_read_layout (76)

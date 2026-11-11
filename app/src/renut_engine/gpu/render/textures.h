@@ -279,8 +279,12 @@ void PrefetchTextureGuestExtent(const TextureFetch &fetch);
 // GPU-written. 'header_format', when given, is the header's fetch constant as
 // it was when the resolve was recorded (the header may be a temporary the
 // game has since overwritten).
+// blur-nx (2026-11-10, port 76; its key 212: blur_renut_resolve_keep_dest): 'cover_pixels', when not 0, is how many
+// pixels a single-sampled resolve writes: one that covers less than an existing destination of another format keeps it
+// (the caller then writes its part with a converting draw: dest->host_format != format).
 HostTexture *GetResolveTextureLocked(u32 texture_va, plume::RenderFormat format, RenderScale scale,
-                                     const d3d::TextureFetchConstant *header_format = nullptr);
+                                     const d3d::TextureFetchConstant *header_format = nullptr,
+                                     uint32_t cover_pixels = 0);
 
 // The same for a depth resolve: a kDepthResolveFormat target plus the guest
 // words (kDepthResolveWordsFormat), which a texture of a 32-bit 8_8_8_8
@@ -320,6 +324,10 @@ void FlushResolveMipsLocked(HostTexture &t);
 // (plume's Vulkan resolve writes every level of its destination, from levels
 // the source does not have). Its texture and layout only; kept for reuse.
 HostTexture *ResolveStagingLocked(const HostTexture *dest);
+// blur-nx (2026-11-10, port 76; its key 219: blur_renut_resolve_exp_bias): a single-sampled target of this format and
+// host size (a scratch target) to resolve a whole multisampled target into, and its bindless slot, to draw from it.
+HostTexture *ResolveSourceStagingLocked(plume::RenderFormat format, uint32_t width, uint32_t height);
+uint32_t ResolveSourceStagingSlotLocked(plume::RenderFormat format, uint32_t width, uint32_t height);
 
 // Bindless sampler slot matching the device fetch constant's sampler state.
 // 'lod_scale' (TextureBinding::lod_scale): a texture with host levels, which

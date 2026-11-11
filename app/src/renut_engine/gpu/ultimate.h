@@ -47,4 +47,11 @@ bool ReplayInheritSameOn();  // ultimate_renut_replay_inherit_same (renut-ultima
 bool HeldExportsGuardOn();  // ultimate_renut_held_exports_guard (renut-ultimate audit)
 bool PlainFetchesOn();  // sasrt_gpu_plain_fetches (sasrt-nx; port 44)
 bool RecordsLockFreeOn();  // rr6_records_lockfree (rr6-nx; port 47): guest/guest_records.cpp's table
+// sasrt-nx's formats batch (2026-11-11, port 75): render/format.cpp, surfaces.cpp, textures.cpp, draw.cpp.
+bool Format10BitExactOn();  // renut_format_10bit_exact (sasrt-nx; rows 6, 8, 10, 74, 93)
+bool FormatEdramAsVariantsOn();  // renut_format_edram_as_variants (sasrt-nx; found on the way)
+bool Format7e3Rg11b10On();  // renut_format_7e3_rg11b10 (sasrt-nx; rows 7, 66, 73, 95, 96; NOT exact, off)
+bool DepthFloatNoStencilOn();  // renut_depth_float_no_stencil (sasrt-nx; row 26; a speed trade, off)
+bool Float32PointFilterOn();  // renut_float32_point_filter (sasrt-nx; row 38)
+bool DiagFormatsOn();  // renut_diag_formats (sasrt-nx; the diagnostic, logging only)
 }  // namespace banjo::renut_gpu

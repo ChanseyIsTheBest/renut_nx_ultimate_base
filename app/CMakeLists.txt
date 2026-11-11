@@ -42,6 +42,28 @@ endif()
 if(REXGLUE_PLATFORM_SWITCH)
     set(REXGLUE_OUTPUT_IN_BUILD ON CACHE BOOL "The SDK's libraries and tools in this build folder")
 endif()
+# sasrt-nx (2026-11-11, port 71): the SDK's small helpers forced inline (sdk/include/rex/ppc/diet_ops.h,
+# REX_SMALL_HELPER). Before the SDK's targets (generated/rexglue.cmake adds them), so the switch reaches them too.
+option(SASRT_FORCE_INLINE_HELPERS "The SDK's one-instruction helpers forced inline (OFF: REX_NO_FORCED_HELPERS)" ON)
+if(NOT SASRT_FORCE_INLINE_HELPERS)
+    add_compile_definitions(REX_NO_FORCED_HELPERS)
+endif()
+# sasrt-nx (2026-11-11, port 72; its idea 43 F1-F4): VMX's estimates and multiply-add / -subtract in their faster AArch64
+# forms (tools/vmx_float_macros.py): vrsqrtefp / vrefp as frsqrte / frecpe with two Newton steps, vlogefp as a NEON log2
+# estimate, vmaddfp / vnmsubfp as one fused multiply-add. NOT bit-identical to the exact forms the port computed before:
+# sasrt-nx's console fuzz (64 M lanes each) put the estimates within 3 ulp (vrsqrtefp) and 1 ulp (vrefp) of exact and the
+# fused forms different in 2.4 % of lanes (one rounding, as the 360's own vmaddfp); the 360's estimates are good to about
+# 1/4096. ON at the user's word (2026-11-11). AArch64 only: the PC keeps the exact expressions. Global, so the SDK and
+# the copies see the same. An existing build folder keeps a cached OFF: cmake -DSASRT_VMX_FAST_ESTIMATES=ON
+# -DSASRT_VMX_FUSED_MADD=ON on it.
+option(SASRT_VMX_FAST_ESTIMATES "VMX vrsqrtefp / vrefp / vlogefp as AArch64 estimates (not bit-exact)" ON)
+option(SASRT_VMX_FUSED_MADD "VMX vmaddfp / vnmsubfp as one fused multiply-add (not bit-exact)" ON)
+if(SASRT_VMX_FAST_ESTIMATES)
+    add_compile_definitions(REX_VMX_FAST_ESTIMATES)
+endif()
+if(SASRT_VMX_FUSED_MADD)
+    add_compile_definitions(REX_VMX_FUSED_MADD)
+endif()
 include(generated/rexglue.cmake)
 
 # banjo-nx (from sa2-nx): the optimised codegen. The build re-runs the generator by itself whenever an input in
@@ -224,6 +246,42 @@ if(BANJO_GENERATED_MATH_FLAGS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 if(NOT REXGLUE_PLATFORM_SWITCH)
     set_property(SOURCE ${BANJO_HOT_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS REX_DIET_CENSUS_ON)
+endif()
+# sasrt-nx (2026-11-11, port 74; its machine-copy ideas 57, 47, 52 and 39): switches of the localized copies
+# (tools/localize_native.py), each ON as in sasrt-nx; OFF compiles the copies as before port 74. The copies' code
+# changes with them: retrain the PGO profile (docs/building.md; ninja does not track the .gcda files: build the use step
+# clean). The generator's own switches are environment variables at post-codegen (SASRT_LOCALIZE_*, see the tool).
+#   - SASRT_HOT_MERGED_STORES (idea 57): an stvlx / stvrx pair, or four stvewx of one vector, as one 16-byte store of
+#     the same bytes in the copies' running form when the addresses are adjacent at run time. OFF: the original stores.
+#   - SASRT_HOT_LR_ELIDE (idea 47): the 12 bulk shards (not banjo_hot_guest.cpp's hand-picked copies, not the generated
+#     tree) compiled with tools/frame_traffic.py's opt-in REX_LR_MOVES_ELIDE: REX_LR_READ gives 0, the link register's
+#     save and REX_LR_WRITE are nothing (with C++ returns the value is never used; frame_traffic.py marks only
+#     functions where it is not data). The dead word at -8 of a copy's frame keeps its old content (sa2-nx: the link
+#     register's half of the three elisions passed its frame-exact capture). The guard compares two forms that both
+#     elide. The hand-written natives included by the shards that test REX_LR_MOVES_ELIDE (the XAudio filter's frame,
+#     cpu/hot/banjo_hand_natives.h) elide there too. BANJO_GEN_LR_MOVES_ELIDE (below) is the same for all game code.
+#   - SASRT_HOT_PREFETCH (idea 52): REX_PREFETCH_GUEST after a pointer-chasing loop's next-pointer load. OFF: nothing.
+#   - SASRT_HOT_CARD_RUNS (idea 39): the 12 bulk shards mark the store cards per run of stores to a page (cpu/
+#     banjo_hot_prelude.h; only for copies written with the runs). OFF: at every store, as the generated tree does.
+option(SASRT_HOT_MERGED_STORES "Localized copies: merged unaligned vector stores (tools/localize_native.py)" ON)
+option(SASRT_HOT_LR_ELIDE "The bulk copies (shards 0-11): the link register's dead moves left out (REX_LR_MOVES_ELIDE)" ON)
+option(SASRT_HOT_PREFETCH "Localized copies: a prefetch after a loop's next-pointer load (REX_PREFETCH_GUEST)" ON)
+option(SASRT_HOT_CARD_RUNS "The bulk copies (shards 0-11): store cards marked per run of stores to a page" ON)
+if(NOT SASRT_HOT_MERGED_STORES)
+    target_compile_definitions(renut PRIVATE SASRT_HOT_MERGED_STORES_OFF)
+endif()
+if(NOT SASRT_HOT_PREFETCH)
+    target_compile_definitions(renut PRIVATE SASRT_HOT_PREFETCH_OFF)
+endif()
+if(SASRT_HOT_LR_ELIDE)
+    foreach(_shard RANGE 0 11)
+        set_property(SOURCE src/cpu/banjo_hot_shard_${_shard}.cpp APPEND PROPERTY COMPILE_DEFINITIONS REX_LR_MOVES_ELIDE)
+    endforeach()
+endif()
+if(SASRT_HOT_CARD_RUNS)
+    foreach(_shard RANGE 0 11)
+        set_property(SOURCE src/cpu/banjo_hot_shard_${_shard}.cpp APPEND PROPERTY COMPILE_DEFINITIONS SASRT_HOT_CARD_RUNS)
+    endforeach()
 endif()
 
 # sa2-nx's CPU rounds of 2026-10-12 (docs/enhancements.md, "sa2-nx's CPU rounds"): one switch back per post-codegen

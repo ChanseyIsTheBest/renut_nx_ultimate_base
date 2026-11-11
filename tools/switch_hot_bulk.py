@@ -148,7 +148,10 @@ def main():
         for _, l in index.body(sub):
             l = store_cards.restore_text(l)
             if 'REX_RAW_ADDR(' in l and not (ln.RAW_VECTOR_STORE.match(l) or ln.RAW_MEMSET.match(l) or
-                                             ln.RAW_LOAD.match(l)):
+                                             ln.RAW_LOAD.match(l) or
+                                             (ln.ATOMICS and (ln.ATOMIC_LOAD.match(l) or ln.ATOMIC_CAS.match(l)))):
+                # (sasrt-nx 2026-11-11, port 74; port 70's follow-up, sasrt-nx's 2026-11-10 audit finding 9: the
+                # atomic forms localize_native.py copies since port 70 are not a raw guest access.)
                 return False
         return True
 

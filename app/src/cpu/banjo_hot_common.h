@@ -174,3 +174,20 @@ struct Counting {
   (s.Note((u32)(r) + (u32)(d), 4) ? (void)(REX_STORE_D_U32(r, d, y), REX_CARD((u32)(r) + (u32)(d))) : (void)0)
 #define BANJO_HOT_STORE_D_U64_C(r, d, y) \
   (s.Note((u32)(r) + (u32)(d), 8) ? (void)(REX_STORE_D_U64(r, d, y), REX_CARD((u32)(r) + (u32)(d))) : (void)0)
+// sasrt-nx (2026-11-11, port 74; its idea 52): a prefetch of the guest node a pointer-chasing loop just loaded
+// (tools/localize_native.py, PREFETCH). A hint: it cannot fault. CMake SASRT_HOT_PREFETCH=OFF: nothing.
+#ifndef REX_PREFETCH_GUEST
+#if defined(SASRT_HOT_PREFETCH_OFF)
+#define REX_PREFETCH_GUEST(a) ((void)0)
+#else
+#define REX_PREFETCH_GUEST(a) __builtin_prefetch(REX_RAW_ADDR((u32)(a)))
+#endif
+#endif
+// sasrt-nx (2026-11-11, port 74; its idea 39): tools/localize_native.py's store-card runs; nothing unless
+// banjo_hot_prelude.h (the bulk shards, CMake SASRT_HOT_CARD_RUNS, copies written with the runs) defines them.
+#ifndef REX_CARD_RUN_DECL
+#define REX_CARD_RUN_DECL
+#endif
+#ifndef REX_CARD_FLUSH
+#define REX_CARD_FLUSH() ((void)0)
+#endif

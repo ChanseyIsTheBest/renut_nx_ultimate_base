@@ -290,6 +290,13 @@ function(renut_gpu_setup TARGET)
     renut_host_shader(${TARGET} texture_mip_ps ps_6_0)
     renut_host_shader(${TARGET} resolve_copy_ps ps_6_0)  # banjo-nx (2026-10-18)
     renut_host_shader(${TARGET} view_fp10_encode_ps ps_6_0)  # halo3-nx (2026-11-03)
+    # blur-nx (2026-11-10/11, port 76; its keys 216 and 220): a multisampled view resolved from the 1x target of its
+    # sample grid; one EDRAM view written into another (edram_inherit.hlsli, four sample forms).
+    renut_host_shader(${TARGET} sample_grid_resolve_ps ps_6_0)
+    renut_host_shader(${TARGET} edram_inherit_ps ps_6_0)
+    renut_host_shader(${TARGET} edram_inherit_src_ms_ps ps_6_0)
+    renut_host_shader(${TARGET} edram_inherit_dst_ms_ps ps_6_0)
+    renut_host_shader(${TARGET} edram_inherit_ms_ms_ps ps_6_0)
     renut_host_shader(${TARGET} resolve_clamp_ps ps_6_0)  # sasrt-nx (2026-10-20): 16-bit fixed-point resolves
     renut_host_shader(${TARGET} depth_restore_ps ps_6_0)  # sasrt-nx (2026-10-20): the EDRAM depth restore
     # banjo-nx (2026-10-21, banjo_renut_smaa): SMAA 1x (render/smaa.cpp; app/thirdparty/smaa, MIT).

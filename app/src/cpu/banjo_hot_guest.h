@@ -71,6 +71,10 @@ struct Hook {
   std::atomic<uint64_t> not_comparable{0};  // guarded calls that reached a call the guard cannot repeat
   std::atomic<uint64_t> differences{0};
   std::atomic<uint64_t> not_repeated{0};    // guarded calls that differed once and compared equal when repeated
+  // sasrt-nx (2026-11-11, port 74; its idea 35, banjo_hot_guard_prefix): calls both forms stopped in (an atomic, or a
+  // call outside the copy) whose stores before the stop were the same / not.
+  std::atomic<uint64_t> prefix_equal{0};
+  std::atomic<uint64_t> prefix_differ{0};
 
   Hook(const char* name_, const char* key_, PPCFunc* orig_, void (*native_)(PPCContext&, uint8_t*),
        void (*native_logged_)(PPCContext&, uint8_t*, Logged&), void (*reference_logged_)(PPCContext&, uint8_t*, Logged&),

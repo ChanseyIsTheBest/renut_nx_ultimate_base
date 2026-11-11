@@ -310,6 +310,44 @@ REXCVAR_DEFINE_BOOL(ultimate_deko3d_depth_resolve_lazy, true, "Banjo/Enhancement
                     "decompressed at every unbind, as in sasrt-nx")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
+// sasrt-nx (2026-11-11, port 75; its formats batch, docs/360-precision-differences.md there): where the renderer kept
+// more than the Xenos did at a speed cost, or less than it keeps. Universal (any game's targets and textures of these
+// formats). Rows 6, 8, 10, 74, 93.
+REXCVAR_DEFINE_BOOL(renut_format_10bit_exact, true, "Banjo/Enhancements",
+                    "From sasrt-nx: Xenos 2_10_10_10 render targets and textures in the host's 10:10:10:2 format (the "
+                    "console's own 32 bits a pixel, the same values) instead of 16 bits a channel; their resolves "
+                    "follow. Off: 16 bits a channel, as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// sasrt-nx (2026-11-11, port 75; its formats batch, found on the way).
+REXCVAR_DEFINE_BOOL(renut_format_edram_as_variants, true, "Banjo/Enhancements",
+                    "From sasrt-nx: the Xenos target formats 2_10_10_10_AS_10_10_10_10 and 2_10_10_10_FLOAT_AS_16_16_16_16 "
+                    "as 10:10:10:2 (16 bits a channel without renut_format_10bit_exact) and FP16; off: 8-bit RGBA, as "
+                    "before (less than the console keeps)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// sasrt-nx (2026-11-11, port 75; its formats batch, rows 7, 66, 73, 95, 96).
+REXCVAR_DEFINE_BOOL(renut_format_7e3_rg11b10, false, "Banjo/Enhancements",
+                    "From sasrt-nx, NOT exact: Xenos 7e3 targets (2_10_10_10_FLOAT) as 11:11:10 float, half FP16's "
+                    "bytes. No alpha (the 7e3's 2 bits read as 1) and one mantissa bit less on red and green, two on "
+                    "blue; more range. Off: FP16")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// sasrt-nx (2026-11-11, port 75; its formats batch, row 26).
+REXCVAR_DEFINE_BOOL(renut_depth_float_no_stencil, false, "Banjo/Enhancements",
+                    "From sasrt-nx, a speed trade: Xenos float depth targets (D24FS8) as 32-bit float depth without a "
+                    "stencil plane (half the bytes of D32F_S8). Stencil on them then does nothing: the first uses are "
+                    "logged (renut_diag_formats). Off: D32F with stencil")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// sasrt-nx (2026-11-11, port 75; its formats batch, row 38).
+REXCVAR_DEFINE_BOOL(renut_float32_point_filter, true, "Banjo/Enhancements",
+                    "From sasrt-nx: 32-bit float textures point-sampled whatever the sampler asks, as the Xenos (which "
+                    "cannot filter them) samples them; off: filtered linearly when asked")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// sasrt-nx (2026-11-11, port 75; its formats batch, the diagnostic).
+REXCVAR_DEFINE_BOOL(renut_diag_formats, true, "Banjo/Enhancements",
+                    "From sasrt-nx, diagnostic, logging only: the first targets and textures of each format a session "
+                    "makes (guest and host formats), the first stencil use on each depth target, the first float "
+                    "textures asked for linear filtering")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
 namespace banjo::renut_gpu {
 int Deko3DUserClipEnable() { return REXCVAR_GET(banjo_deko3d_user_clip_enable); }
 bool ConstNanFlushOn() {
@@ -477,6 +515,30 @@ bool PlainFetchesOn() {
 }
 bool RecordsLockFreeOn() {
   static const bool on = REXCVAR_GET(rr6_records_lockfree);
+  return on;
+}
+bool Format10BitExactOn() {
+  static const bool on = REXCVAR_GET(renut_format_10bit_exact);
+  return on;
+}
+bool FormatEdramAsVariantsOn() {
+  static const bool on = REXCVAR_GET(renut_format_edram_as_variants);
+  return on;
+}
+bool Format7e3Rg11b10On() {
+  static const bool on = REXCVAR_GET(renut_format_7e3_rg11b10);
+  return on;
+}
+bool DepthFloatNoStencilOn() {
+  static const bool on = REXCVAR_GET(renut_depth_float_no_stencil);
+  return on;
+}
+bool Float32PointFilterOn() {
+  static const bool on = REXCVAR_GET(renut_float32_point_filter);
+  return on;
+}
+bool DiagFormatsOn() {
+  static const bool on = REXCVAR_GET(renut_diag_formats);
   return on;
 }
 }  // namespace banjo::renut_gpu

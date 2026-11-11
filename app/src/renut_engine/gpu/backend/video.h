@@ -195,6 +195,16 @@ struct VideoState {
   // halo3-nx (2026-11-03): SyncColorViewLocked's, by the target's format.
   std::unique_ptr<plume::RenderShader> view_fp10_encode_ps;
   std::unordered_map<uint32_t, std::unique_ptr<plume::RenderPipeline>> view_fp10_encode_pipelines;
+  // blur-nx (2026-11-10, port 76; its key 216: blur_renut_sample_grid_resolve) and its pipelines by destination format.
+  std::unique_ptr<plume::RenderShader> sample_grid_resolve_ps;
+  std::unordered_map<uint32_t, std::unique_ptr<plume::RenderPipeline>> sample_grid_pipelines;
+  // blur-nx (2026-11-11, port 76; its key 220: blur_renut_edram_inherit): the source / destination sample forms, and the
+  // pipelines by destination format and both sample counts.
+  std::unique_ptr<plume::RenderShader> edram_inherit_ps;
+  std::unique_ptr<plume::RenderShader> edram_inherit_src_ms_ps;
+  std::unique_ptr<plume::RenderShader> edram_inherit_dst_ms_ps;
+  std::unique_ptr<plume::RenderShader> edram_inherit_ms_ms_ps;
+  std::unordered_map<uint32_t, std::unique_ptr<plume::RenderPipeline>> edram_inherit_pipelines;
   std::unique_ptr<plume::RenderPipeline> depth_resolve_pipeline[2];
   // banjo-nx (2026-10-19, banjo_renut_depth_words_lazy): the same with the words target's writes masked off.
   std::unique_ptr<plume::RenderPipeline> depth_resolve_float_pipeline[2];

@@ -78,9 +78,9 @@ struct CRRegister {
     uint8_t un;
   };
 
-  inline uint32_t raw() const noexcept { return (lt << 3) | (gt << 2) | (eq << 1) | so; }
+  REX_SMALL_HELPER uint32_t raw() const noexcept { return (lt << 3) | (gt << 2) | (eq << 1) | so; }
 
-  inline void set_raw(uint32_t value) noexcept {
+  REX_SMALL_HELPER void set_raw(uint32_t value) noexcept {
     lt = (value >> 3) & 1;
     gt = (value >> 2) & 1;
     eq = (value >> 1) & 1;
@@ -88,14 +88,14 @@ struct CRRegister {
   }
 
   template <typename T>
-  inline void compare(T left, T right, const XERRegister& xer) noexcept {
+  REX_SMALL_HELPER void compare(T left, T right, const XERRegister& xer) noexcept {  // (diet_ops.h: forced inline)
     lt = left < right;
     gt = left > right;
     eq = left == right;
     so = xer.so;
   }
 
-  inline void compare(double left, double right) noexcept {
+  REX_SMALL_HELPER void compare(double left, double right) noexcept {
 #ifndef REX_NO_FAST_FCMP
     // Mass Effect diet: same truth table, but the quiet comparison builtins let one fcmp serve all four
     // flags (the relational operators and == compiled to fcmpe and fcmp pairs plus NaN tests).
@@ -112,6 +112,23 @@ struct CRRegister {
   }
 
   inline void setFromMask(simde__m128 mask, int imm) noexcept {
+#if (defined(__aarch64__) || defined(_M_ARM64)) && !defined(REX_SETFROMMASK_MOVEMASK)
+    // sasrt-nx (2026-11-11, port 71; its idea 43 B4): cr6 of a vcmp*fp. with the all-lanes immediate (the only one the
+    // generator emits): lt when every lane's sign bit is set, eq when none is, for any mask. Each lane to all-ones /
+    // zero by its sign (an arithmetic shift), narrowed to 16 bits, read as one 64-bit word: all-ones exactly when all
+    // four are set, zero exactly when none is. movemask's shifts, `addv` and constant go. REX_SETFROMMASK_MOVEMASK:
+    // the movemask form.
+    if (imm == 0xF) {  // (exact for any imm; folds when inlined)
+      const uint64_t s = vget_lane_u64(vreinterpret_u64_u16(vmovn_u32(vreinterpretq_u32_s32(
+                                           vshrq_n_s32(vreinterpretq_s32_f32(simde__m128_to_neon_f32(mask)), 31)))),
+                                       0);
+      lt = s == ~uint64_t(0);
+      gt = 0;
+      eq = s == 0;
+      so = 0;
+      return;
+    }
+#endif
     int m = simde_mm_movemask_ps(mask);
     lt = m == imm;
     gt = 0;
@@ -120,6 +137,20 @@ struct CRRegister {
   }
 
   inline void setFromMask(simde__m128i mask, int imm) noexcept {
+#if (defined(__aarch64__) || defined(_M_ARM64)) && !defined(REX_SETFROMMASK_MOVEMASK)
+    // (Port 71, the byte form: vcmp*. on integers, immediate 0xFFFF.) Each byte to all-ones / zero by its sign, two
+    // bytes' halves into one byte (shift right by 4 and narrow), read as one 64-bit word.
+    if (imm == 0xFFFF) {
+      const uint64_t s = vget_lane_u64(vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_s8(
+                                           vshrq_n_s8(simde__m128i_to_neon_i8(mask), 7)), 4)),
+                                       0);
+      lt = s == ~uint64_t(0);
+      gt = 0;
+      eq = s == 0;
+      so = 0;
+      return;
+    }
+#endif
     int m = simde_mm_movemask_epi8(mask);
     lt = m == imm;
     gt = 0;
@@ -192,21 +223,21 @@ struct FPSCRRegister {
     setcsr(csr);
   }
 
-  inline void enableFlushModeUnconditional() noexcept {
+  REX_SMALL_HELPER void enableFlushModeUnconditional() noexcept {
     REX_SYS_CENSUS_SITE(rex::syscount::kCensusFlushWrite);
     if ((csr & FlushMask) == FlushMask) REX_SYS_CENSUS(rex::syscount::kCensusFlushSame, 1);
     csr |= FlushMask;
     setcsr(csr);
   }
 
-  inline void disableFlushModeUnconditional() noexcept {
+  REX_SMALL_HELPER void disableFlushModeUnconditional() noexcept {
     REX_SYS_CENSUS_SITE(rex::syscount::kCensusFlushWrite);
     if ((csr & FlushMask) == 0) REX_SYS_CENSUS(rex::syscount::kCensusFlushSame, 1);
     csr &= ~FlushMask;
     setcsr(csr);
   }
 
-  inline void enableFlushMode() noexcept {
+  REX_SMALL_HELPER void enableFlushMode() noexcept {
     if ((csr & FlushMask) != FlushMask) [[unlikely]] {
       REX_SYS_CENSUS_SITE(rex::syscount::kCensusFlushWrite);
       csr |= FlushMask;
@@ -214,7 +245,7 @@ struct FPSCRRegister {
     }
   }
 
-  inline void disableFlushMode() noexcept {
+  REX_SMALL_HELPER void disableFlushMode() noexcept {
     if ((csr & FlushMask) != 0) [[unlikely]] {
       REX_SYS_CENSUS_SITE(rex::syscount::kCensusFlushWrite);
       csr &= ~FlushMask;
@@ -223,8 +254,8 @@ struct FPSCRRegister {
   }
 
   // tools/flush_mode_flow.py: the test of a check the control flow proved redundant (PC builds keep it).
-  inline bool flushModeIsOn() const noexcept { return (csr & FlushMask) == FlushMask; }
-  inline bool flushModeIsOff() const noexcept { return (csr & FlushMask) == 0; }
+  REX_SMALL_HELPER bool flushModeIsOn() const noexcept { return (csr & FlushMask) == FlushMask; }
+  REX_SMALL_HELPER bool flushModeIsOff() const noexcept { return (csr & FlushMask) == 0; }
 
   inline void InitHost() noexcept {
     csr = getcsr();

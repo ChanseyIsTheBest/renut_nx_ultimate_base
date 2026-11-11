@@ -94,15 +94,48 @@ def first_arg(text, start):
 
 def stack_ea(lines, k):
     """Whether the ea a store on lines[k] uses was computed from r1 by its own instruction (the lines since the
-    instruction's comment). Not found: not known to be the stack."""
+    instruction's comment), or from one register an earlier line of the same straight line set to r1 plus a constant
+    (sasrt-nx 2026-11-11, port 74; its idea 31: `r29 = r1 - 64` ... `ea = (r29.u32) & ~0xF`). Not found: not known to
+    be the stack."""
     j = k
     while j >= 0:
         m = EA_SET.match(lines[j])
         if m:
-            return bool(R1.search(m.group(1)))
+            return bool(R1.search(m.group(1))) or (STACK_DERIVED and derived_from_r1(lines, j, m.group(1)))
         if j < k and INSN.match(lines[j]):
             return False
         j -= 1
+    return False
+
+
+# sasrt-nx (2026-11-11, port 74; its idea 31): 10 % of sasrt-nx's stack stores in copies went through a register set to
+# r1 plus a constant and kept their cards. The scan back stops at a label, a call, a brace and at the macros that write
+# registers (REX_LOOP_IN / OUT, REX_LR_READ: sasrt-nx's batch 3 audit, finding 3), and at any other write of the
+# register. Only stores through `ea` (the D-form stores keep the plain r1 test). SASRT_CARDS_STACK_DERIVED=0: as before.
+STACK_DERIVED = os.environ.get('SASRT_CARDS_STACK_DERIVED', '1') != '0'
+REG_USE = re.compile(r'(?<![\w.])((?:ctx\.)?(?:l{1,2}_)?r\d+)\.(?:u32|s32|u64|s64)\b')
+STRAIGHT_END = re.compile(r'^loc_|\(ctx, base|REX_CALL|REX_LOOP_|REX_LR_|[{}]')
+R1_PLUS = re.compile(r'\s*(?:ctx\.)?(?:l{1,2}_)?r1\.(?:s64|u64|u32|s32) \+ -?\d+\s*')
+
+
+def derived_from_r1(lines, j, expr):
+    """Whether expr's one register (not r1 itself) was last set, on the same straight line before lines[j], to r1 plus
+    a constant."""
+    regs = set(REG_USE.findall(expr))
+    if len(regs) != 1:
+        return False
+    reg = regs.pop()
+    define = re.compile(r'^\t+' + re.escape(reg) + r'\.(?:u32|s32|u64|s64) = (.*);$')
+    other_write = re.compile(r'(?<![\w.])' + re.escape(reg) + r'(?:\.\w+)?\s*=[^=]')
+    for q in range(j - 1, max(-1, j - 400), -1):
+        line = lines[q]
+        if STRAIGHT_END.search(line):
+            return False
+        d = define.match(line)
+        if d:
+            return R1_PLUS.fullmatch(d.group(1)) is not None
+        if other_write.search(line):
+            return False  # written some other way: not known
     return False
 
 

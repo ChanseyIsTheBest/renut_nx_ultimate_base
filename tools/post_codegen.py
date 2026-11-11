@@ -149,6 +149,13 @@ def main():
     # cpu_aggressive A: a loop header's flush-mode check in front of the loop (178 loops; the copies below get it too).
     # Switch back: BANJO_GEN_FLUSH_HOIST=OFF (REX_FLUSH_HOIST_OFF: the original check in the loop again).
     run(tool('flush_hoist.py'), '--gen', gen)
+    # sasrt-nx (2026-11-11, port 73; its machine-copy idea 43 B3): vupkd3d128 type 0 as one NEON table lookup (before
+    # the copies, so they get it too; REX_VUPKD3D_LANES: the four lane lines).
+    run(tool('vupkd3d_neon.py'), '--gen', gen)
+    # sasrt-nx (2026-11-11, port 72; its machine-copy idea 43 F1-F4): vrsqrtefp, vrefp, vlogefp, vmaddfp and vnmsubfp as
+    # macros (their default is the expression the generator writes; CMake SASRT_VMX_FAST_ESTIMATES / SASRT_VMX_FUSED_MADD,
+    # ON, give the faster AArch64 forms). Before the copies, so they get the macros too.
+    run(tool('vmx_float_macros.py'), '--gen', gen)
     if not scratch:
         # The localized native copies (app/generated/hot, from sa2-nx): made from the text as it stands after every
         # step above, so each copy matches the function the build compiles. The list is app/src/cpu/hot/localized.txt;

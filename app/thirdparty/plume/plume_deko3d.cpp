@@ -219,6 +219,9 @@ namespace plume {
         case RenderFormat::D32_FLOAT: return DkImageFormat_ZF32;
         case RenderFormat::D32_FLOAT_S8_UINT: return DkImageFormat_ZF32_X24S8;
         case RenderFormat::D24_UNORM_S8_UINT: return DkImageFormat_Z24S8;  // banjo-nx (2026-10-19)
+        // sasrt-nx (2026-11-11, port 75; its formats batch, rows 6, 8, 10, 74, 93 and 7, 66, 73, 95, 96)
+        case RenderFormat::R10G10B10A2_UNORM: return DkImageFormat_RGB10A2_Unorm;
+        case RenderFormat::R11G11B10_FLOAT: return DkImageFormat_RG11B10_Float;
         case RenderFormat::R32_UINT: return DkImageFormat_R32_Uint;
         case RenderFormat::R32_SINT: return DkImageFormat_R32_Sint;
         case RenderFormat::R8G8_TYPELESS:

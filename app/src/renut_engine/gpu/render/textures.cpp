@@ -549,6 +549,19 @@ bool Create(HostTexture &t, const TextureFetch &fetch, bool render_target,
   t.dimension = HostDimension(fetch);
   t.guest_format = fetch.Format();
   t.info = GetTextureFormatInfo(fetch.Format(), AllSigned(fetch));
+  // sasrt-nx (2026-11-11, port 75; its formats batch, the diagnostic: renut_diag_formats): the first texture of each
+  // guest format / host format.
+  if (banjo::renut_gpu::DiagFormatsOn()) {
+    static std::vector<uint32_t> seen;
+    const plume::RenderFormat host = render_target ? rt_format : t.info.host;  // a resolve destination's: the target's
+    const uint32_t key = u32(fetch.Format()) << 16 | u32(host) << 1 | (render_target ? 1u : 0u);
+    if (seen.size() < 96 && std::find(seen.begin(), seen.end(), key) == seen.end()) {
+      seen.push_back(key);
+      RGPU_INFO("[formats] first {} of guest format {} ({}): host format {}, {}x{}",
+                render_target ? "resolve destination" : "texture", u32(fetch.Format()),
+                GpuTextureFormatName(u32(fetch.Format())), int(host), width, height);
+    }
+  }
   t.width = width;
   t.height = height;
   t.depth = depth;
@@ -721,7 +734,33 @@ HostTexture *ResolvedAlias(u32 texture_va, const TextureFetch &fetch, const u32 
   HostTexture *resolved = it->second;
   if (resolved->guest_va == texture_va || !resolved->texture)
     return nullptr;
-  return SameData(resolved->desc, desc) ? resolved : nullptr;
+  if (SameData(resolved->desc, desc))
+    return resolved;
+  // blur-nx (2026-11-10, port 76; its key 211: blur_renut_expand_alias): an EXPAND resolve sampled as its FLOAT twin, or
+  // the other way (16_EXPAND / 16_FLOAT, 16_16_ / 16_16_FLOAT, 16_16_16_16_ / 16_16_16_16_FLOAT): the same memory, size,
+  // endianness and dimension, only the format field differs, and the reference reads both as half floats (the SDK's
+  // d3d12 texture_cache.cpp). Blur resolves its 640x360 HDR downsample as 16_16_16_16_EXPAND and reads it as
+  // 16_16_16_16_FLOAT: without this the texture was made from guest memory, which the resolve never wrote (no bloom).
+  // Only a destination the resolve made in half floats (its EDRAM format's host format).
+  if (banjo::renut_gpu::ExpandAliasOn()) {
+    constexpr u32 kFormatBits = 0x3Fu;
+    constexpr u32 kDimensionMask = 0x600u;
+    const u32 a = resolved->desc[1] & kFormatBits, b = desc[1] & kFormatBits;
+    const auto twins = [](u32 x, u32 y) { return x >= 27 && x <= 29 && y == x + 3; };
+    const bool half = resolved->host_format == plume::RenderFormat::R16_FLOAT ||
+                      resolved->host_format == plume::RenderFormat::R16G16_FLOAT ||
+                      resolved->host_format == plume::RenderFormat::R16G16B16A16_FLOAT;
+    if (half && (twins(a, b) || twins(b, a)) && ((resolved->desc[1] ^ desc[1]) & ~kFormatBits) == 0 &&
+        resolved->desc[2] == desc[2] && ((resolved->desc[5] ^ desc[5]) & kDimensionMask) == 0) {
+      static uint32_t logged = 0;
+      if (logged++ < 8)
+        RGPU_INFO("[renut] texture {:08X} (format {}) reads resolve destination {:08X} ({}x{} format {}) through its "
+                  "texture (blur_renut_expand_alias)", texture_va, b, resolved->guest_va, resolved->width,
+                  resolved->height, a);
+      return resolved;
+    }
+  }
+  return nullptr;
 }
 
 // The depth resolve whose words a texture described by 'fetch' reads: a
@@ -803,10 +842,31 @@ void CopyDepthWords(HostTexture &t, HostTexture &source) {
   t.uploaded = true;
 }
 
+// blur-nx (2026-11-10, port 76; its key 212: blur_renut_resolve_keep_dest): colour formats a converting draw writes and
+// reads exactly (render/draw.cpp has the same list). renut-ultimate (port 76): with R10G10B10A2_UNORM, 2_10_10_10's host
+// format since port 75 (renut_format_10bit_exact; R16G16B16A16_UNORM, in blur-nx's list, before it).
+bool ConvertibleResolveFormat(plume::RenderFormat f) {
+  switch (f) {
+  case plume::RenderFormat::R8G8B8A8_UNORM:
+  case plume::RenderFormat::B8G8R8A8_UNORM:
+  case plume::RenderFormat::R16G16B16A16_UNORM:
+  case plume::RenderFormat::R10G10B10A2_UNORM:
+  case plume::RenderFormat::R16G16B16A16_FLOAT:
+  case plume::RenderFormat::R16G16_UNORM:
+  case plume::RenderFormat::R16G16_FLOAT:
+  case plume::RenderFormat::R16_FLOAT:
+  case plume::RenderFormat::R32_FLOAT:
+  case plume::RenderFormat::R32G32_FLOAT:
+    return true;
+  default:
+    return false;
+  }
+}
+
 // GetResolveTextureLocked; 'fetch' receives the header's fetch constant.
 HostTexture *ResolveTarget(u32 texture_va, plume::RenderFormat format, RenderScale scale,
                            const d3d::TextureFetchConstant *header_format, bool depth,
-                           TextureFetch &fetch) {
+                           TextureFetch &fetch, uint32_t cover_pixels = 0) {
   // banjo-nx (2026-10-19, render-thread proposal 3): no unconditional g_texture_epoch bump: Create and Retire bump it,
   // and so does a resolve target entry that changes (below).
   if (!texture_va)
@@ -824,9 +884,37 @@ HostTexture *ResolveTarget(u32 texture_va, plume::RenderFormat format, RenderSca
   MaskedDesc(fetch, desc);
 
   auto &slot = TextureSlot(texture_va);
+  // blur-nx (2026-11-10, port 76; its key 212: blur_renut_resolve_keep_dest): a single-sampled resolve of part of an
+  // existing destination (the same header, size and scale) made from another format keeps it: the console converts into
+  // the destination's format and leaves the rest. Blur's 1x1 2_10_10_10 resolve into the corner of its 640x360 half-float
+  // image, every frame before the image's own resolve, made the image again (empty) for the pass that reads last
+  // frame's. A resolve of the whole destination still makes it again in its source's format.
+  const bool keep_other_format =
+      slot && !depth && cover_pixels != 0 && slot->render_target && slot->texture && slot->host_format != format &&
+      std::memcmp(slot->desc, desc, sizeof(desc)) == 0 && slot->scale == scale &&
+      slot->alloc_width == scale.Size(slot->width) && slot->alloc_height == scale.Size(slot->height) &&
+      cover_pixels < slot->width * slot->height && slot->dimension == TextureDimension::Tex2D && !slot->stacked &&
+      ConvertibleResolveFormat(format) && ConvertibleResolveFormat(slot->host_format) &&
+      banjo::renut_gpu::ResolveKeepDestOn();
+  if (keep_other_format) {
+    static uint32_t logged = 0;
+    if (logged++ < 8)
+      RGPU_INFO("[renut] resolve of {} pixels (format {}) into {:08X} ({}x{} format {}) keeps it and converts "
+                "(blur_renut_resolve_keep_dest)", cover_pixels, u32(format), texture_va, slot->width, slot->height,
+                u32(slot->host_format));
+  } else if (slot && !depth && cover_pixels != 0 && slot->render_target && slot->host_format != format &&
+             cover_pixels < slot->width * slot->height) {
+    static uint32_t logged = 0;  // why a partial resolve of another format still made it again
+    if (logged++ < 8)
+      RGPU_INFO("[renut] resolve of {} pixels (format {}) into {:08X} ({}x{} format {}) makes it again: desc {} scale "
+                "{} formats {}/{}", cover_pixels, u32(format), texture_va, slot->width, slot->height,
+                u32(slot->host_format), std::memcmp(slot->desc, desc, sizeof(desc)) == 0 ? "same" : "differs",
+                slot->scale == scale ? "same" : "differs", ConvertibleResolveFormat(format),
+                ConvertibleResolveFormat(slot->host_format));
+  }
   // banjo-nx (2026-10-28, night_gpu5, dynamic resolution steps): a destination of a settable code made at another
   // height of it (render/surfaces.cpp CodeForHeightLocked) is made again: its size is the old height's.
-  if (slot && (!slot->render_target || std::memcmp(slot->desc, desc, sizeof(desc)) != 0 ||
+  if (slot && !keep_other_format && (!slot->render_target || std::memcmp(slot->desc, desc, sizeof(desc)) != 0 ||
                !slot->texture || slot->host_format != format || slot->scale != scale ||
                slot->alloc_width != scale.Size(slot->width) || slot->alloc_height != scale.Size(slot->height))) {
     Retire(*slot);
@@ -1569,9 +1657,9 @@ void TextureGuestExtent(const TextureFetch &fetch, uint32_t pages[2], uint32_t s
 }
 
 HostTexture *GetResolveTextureLocked(u32 texture_va, plume::RenderFormat format, RenderScale scale,
-                                     const d3d::TextureFetchConstant *header_format) {
+                                     const d3d::TextureFetchConstant *header_format, uint32_t cover_pixels) {
   TextureFetch fetch;
-  return ResolveTarget(texture_va, format, scale, header_format, false, fetch);
+  return ResolveTarget(texture_va, format, scale, header_format, false, fetch, cover_pixels);  // port 76 (212)
 }
 
 HostTexture *GetDepthResolveTextureLocked(u32 texture_va, RenderScale scale,
@@ -1736,6 +1824,17 @@ HostTexture *ResolveStagingLocked(const HostTexture *dest) {
   return scratch ? &scratch->target : nullptr;
 }
 
+// blur-nx (2026-11-10, port 76; its key 219: blur_renut_resolve_exp_bias): see textures.h.
+HostTexture *ResolveSourceStagingLocked(plume::RenderFormat format, uint32_t width, uint32_t height) {
+  ScratchTarget *scratch = GetScratchTarget(format, width, height);
+  return scratch ? &scratch->target : nullptr;
+}
+
+uint32_t ResolveSourceStagingSlotLocked(plume::RenderFormat format, uint32_t width, uint32_t height) {
+  ScratchTarget *scratch = GetScratchTarget(format, width, height);
+  return scratch ? ScratchSlot(*scratch) : kInvalidDescriptor;
+}
+
 void UpdateResolveMipsLocked(HostTexture *texture, const plume::RenderRect &rect) {
   auto &s = State();
   plume::RenderCommandList *cmd = Video::CommandListLocked();
@@ -1875,21 +1974,27 @@ uint32_t SamplerSlotLocked(const TextureFetch &fetch, RenderScale lod_scale) {
     u32 words[4] = {};
     RenderScale lod_scale;
     uint32_t min_anisotropy = 1;
+    // sasrt-nx (2026-11-11, port 75; its formats batch, row 38: renut_float32_point_filter): the format is not in the
+    // words
+    bool f32_point = false;
     uint32_t slot = 0;
   };
   static Memo memo[256];
   const uint32_t min_anisotropy = MinAnisotropy();
   const u32 words[4] = {fetch.dword[0], fetch.dword[3], fetch.dword[4], fetch.dword[5]};
+  // sasrt-nx (2026-11-11, port 75; its formats batch, row 38)
+  const bool f32_point = banjo::renut_gpu::Float32PointFilterOn() && IsFloat32TextureFormat(fetch.Format());
   Memo &entry = memo[(words[0] * 0x9E3779B1u ^ words[1] * 0x85EBCA6Bu ^ words[2] * 0xC2B2AE35u ^
-                      words[3] ^ lod_scale.code * 0x27D4EB2Fu) >> 24];
+                      words[3] ^ lod_scale.code * 0x27D4EB2Fu ^ (f32_point ? 0x5BD1E995u : 0u)) >> 24];
   if (entry.valid && entry.lod_scale == lod_scale && entry.min_anisotropy == min_anisotropy &&
-      std::memcmp(entry.words, words, sizeof(words)) == 0)
+      entry.f32_point == f32_point && std::memcmp(entry.words, words, sizeof(words)) == 0)
     return entry.slot;
   const uint32_t slot = SamplerSlotUncached(fetch, lod_scale);
   entry.valid = true;
   std::memcpy(entry.words, words, sizeof(words));
   entry.lod_scale = lod_scale;
   entry.min_anisotropy = min_anisotropy;
+  entry.f32_point = f32_point;  // sasrt-nx (2026-11-11, port 75; its formats batch, row 38)
   entry.slot = slot;
   return slot;
 }
@@ -1956,6 +2061,23 @@ uint32_t SamplerSlotUncached(const TextureFetch &fetch, RenderScale lod_scale) {
       desc.maxAnisotropy = cap;
       desc.anisotropyEnabled = cap > 1;
     }
+  }
+  // sasrt-nx (2026-11-11, port 75; its formats batch, row 38: renut_float32_point_filter): the Xenos cannot filter
+  // 32-bit float textures and point-samples them whatever the sampler asks; the host filtered them when asked.
+  if (banjo::renut_gpu::Float32PointFilterOn() && IsFloat32TextureFormat(fetch.Format())) {
+    const bool asked = desc.minFilter == plume::RenderFilter::LINEAR || desc.magFilter == plume::RenderFilter::LINEAR ||
+                       desc.mipmapMode == plume::RenderMipmapMode::LINEAR || desc.anisotropyEnabled;
+    if (asked && banjo::renut_gpu::DiagFormatsOn()) {
+      static uint32_t logged = 0;
+      if (logged++ < 8)
+        RGPU_INFO("[formats] a 32-bit float texture (guest format {}) asked for filtering: point-sampled "
+                  "(renut_float32_point_filter)", u32(fetch.Format()));
+    }
+    desc.minFilter = plume::RenderFilter::NEAREST;
+    desc.magFilter = plume::RenderFilter::NEAREST;
+    desc.mipmapMode = plume::RenderMipmapMode::NEAREST;
+    desc.anisotropyEnabled = false;
+    desc.maxAnisotropy = 1;
   }
   desc.minLOD = float(fetch.MinMipLevel());
   desc.maxLOD = fetch.MipFilter() == TextureFilter::BaseMap ? float(fetch.MinMipLevel())

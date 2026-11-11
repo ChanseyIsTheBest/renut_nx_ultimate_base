@@ -27,6 +27,18 @@ extern "C" volatile unsigned long long g_rex_diet_census[6];
 #define REX_DIET_CENSUS(k) ((void)0)
 #endif
 
+// sasrt-nx (2026-11-11, port 71): the small helpers (one or a few host instructions) forced inline. Built with -Os, or
+// inside a big function past GCC's growth limits, the compiler kept them out of line: in SASRT's 2026-11-10 NRO the
+// localized copies called them about 33,000 times (CRRegister::compare 21,000, the flush-mode switches 3,800,
+// SingleToDoublePure, QuietSingleBits, fctid, divw), and an out-of-line compare writes the copy's condition-register
+// local through memory. The any-mode and slow helpers stay as they are. REX_NO_FORCED_HELPERS (CMake
+// SASRT_FORCE_INLINE_HELPERS=OFF) gives plain `inline` again.
+#ifndef REX_NO_FORCED_HELPERS
+#define REX_SMALL_HELPER [[gnu::always_inline]] inline
+#else
+#define REX_SMALL_HELPER inline
+#endif
+
 namespace rex::ppc {
 
 /// fctiwz: truncate toward zero to int32 with PPC saturation, NaN -> 0x80000000. Returned as the s64 register image
@@ -34,7 +46,7 @@ namespace rex::ppc {
 /// The old expression was `isnan ? 0x80000000U : v >= INT_MAX ? INT_MAX : simde_mm_cvttsd_si32(v)`, where simde's
 /// portable version returns INT32_MIN for v <= INT32_MIN: that is exactly the saturating AArch64 fcvtzs (positive
 /// overflow -> INT32_MAX, negative overflow -> INT32_MIN); only NaN (fcvtzs gives 0) needs the select.
-inline int64_t fctiwz(double v) noexcept {
+REX_SMALL_HELPER int64_t fctiwz(double v) noexcept {
 #if defined(__aarch64__)
   int32_t r;
   asm("fcvtzs %w0, %d1" : "=r"(r) : "w"(v));
@@ -77,7 +89,7 @@ inline int64_t fctidz(double v) noexcept {
 /// 360). On AArch64 simde's portable version is `(int64_t)round(v)`: halves AWAY from zero (0.5 -> 1, 2.5 -> 3) in
 /// every mode, where the 360 and x86 give 0 and 2. `frinti` (to an integral double in the current mode, no inexact
 /// flag) and the saturating `fcvtzs` round as the 360 does: the helper CORRECTS that build.
-inline int64_t fctid(double v) noexcept {
+REX_SMALL_HELPER int64_t fctid(double v) noexcept {
   if (__builtin_isnan(v)) [[unlikely]]
     return INT64_MIN;
 #if defined(__aarch64__)
@@ -118,7 +130,7 @@ inline int64_t fctiw(double v) noexcept {
 /// are the instruction alone and the signed ones add a select for the overflow, which `sdiv` answers with INT_MIN.
 /// The C expression needs its guards (division by zero is undefined there) and the compiler keeps them as a branch.
 /// A divisor known at compile time keeps the C expression: the compiler makes a multiplication of it.
-inline uint32_t divwu(uint32_t n, uint32_t d) noexcept {
+REX_SMALL_HELPER uint32_t divwu(uint32_t n, uint32_t d) noexcept {
 #if defined(__aarch64__)
   if (!__builtin_constant_p(d)) {
     uint32_t q;
@@ -128,7 +140,7 @@ inline uint32_t divwu(uint32_t n, uint32_t d) noexcept {
 #endif
   return d ? n / d : 0;
 }
-inline uint64_t divdu(uint64_t n, uint64_t d) noexcept {
+REX_SMALL_HELPER uint64_t divdu(uint64_t n, uint64_t d) noexcept {
 #if defined(__aarch64__)
   if (!__builtin_constant_p(d)) {
     uint64_t q;
@@ -139,7 +151,7 @@ inline uint64_t divdu(uint64_t n, uint64_t d) noexcept {
   return d ? n / d : 0;
 }
 /// The result as the zero-extended word the old expression assigned to the 64-bit register.
-inline uint32_t divw(int32_t n, int32_t d) noexcept {
+REX_SMALL_HELPER uint32_t divw(int32_t n, int32_t d) noexcept {
 #if defined(__aarch64__)
   if (!__builtin_constant_p(d)) {
     int32_t q;
@@ -149,7 +161,7 @@ inline uint32_t divw(int32_t n, int32_t d) noexcept {
 #endif
   return uint32_t((d && !(n == INT32_MIN && d == -1)) ? n / d : 0);
 }
-inline int64_t divd(int64_t n, int64_t d) noexcept {
+REX_SMALL_HELPER int64_t divd(int64_t n, int64_t d) noexcept {
 #if defined(__aarch64__)
   if (!__builtin_constant_p(d)) {
     int64_t q;
@@ -166,7 +178,7 @@ inline int64_t divd(int64_t n, int64_t d) noexcept {
 /// the mode. Only a denormal single reads differently with the mode on; it is converted with integer arithmetic
 /// (normalise the fraction, rebuild the double), so the function is pure and the compiler removes it when the
 /// register is not read again.
-inline double SingleToDoublePure(uint32_t bits) noexcept {
+REX_SMALL_HELPER double SingleToDoublePure(uint32_t bits) noexcept {
   REX_DIET_CENSUS(4);
   const uint32_t fraction = bits & 0x007FFFFFu;
   if ((bits & 0x7F800000u) == 0 && fraction != 0) [[unlikely]] {
@@ -180,7 +192,7 @@ inline double SingleToDoublePure(uint32_t bits) noexcept {
 
 /// stfs of the value such an lfs loaded: `float(double(single))` with the mode off is the single again, except
 /// that the two conversions quiet a signalling NaN (they set the top fraction bit and keep the rest).
-inline uint32_t QuietSingleBits(uint32_t bits) noexcept {
+REX_SMALL_HELPER uint32_t QuietSingleBits(uint32_t bits) noexcept {
   REX_DIET_CENSUS(5);
   return (bits & 0x7FFFFFFFu) > 0x7F800000u ? (bits | 0x00400000u) : bits;
 }

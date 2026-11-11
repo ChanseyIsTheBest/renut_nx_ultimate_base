@@ -375,6 +375,13 @@ def sections(img):
     return out
 
 
+COPY_LISTS = {os.path.normcase(os.path.join(ROOT, 'app', 'src', 'cpu', 'hot', n))
+              for n in ('localized.txt', 'localized_bulk.txt')}
+# sasrt-nx (2026-11-11, port 74; its idea 37): every function's LiveOut, for tools/localize_native.py (a copy writes back
+# at a return only the volatile registers a caller can read).
+LIVE_OUT_JSON = os.path.join(ROOT, 'out', 'leaf_live_out.json')
+
+
 def address_taken(gen, image, starts, bodies):
     pch = open(glob.glob(os.path.join(gen, '*_pch.h'))[0], encoding='utf-8').read()
     value = lambda name: int(re.search(r'#define %s (0x[0-9A-Fa-f]+)' % name, pch).group(1), 16)
@@ -424,6 +431,14 @@ def address_taken(gen, image, starts, bodies):
         paths = [root] if os.path.isfile(root) else [os.path.join(d, f) for d, _, fs in os.walk(root) for f in fs
                                                       if f.endswith(('.cpp', '.h', '.hpp', '.inc', '.c', '.toml', '.txt'))]
         for path in paths:
+            # sasrt-nx (2026-11-11, port 74; its idea 37): the localized copies' own lists (tools/localize_native.py)
+            # name functions without calling them: a copy's hook runs for the same direct callers, the copy or the
+            # original. (Their calls are still hooked sub_X calls, tools/direct_calls.py: main() below counts those
+            # as calls of the original.) SASRT_LIVE_OUT_LISTS_NAMED=1: counted again. (tools/dead_ctx_defs.py reads
+            # this function too: its analysis sees the same.)
+            if (os.environ.get('SASRT_LIVE_OUT_LISTS_NAMED', '0') != '1' and
+                    os.path.normcase(os.path.abspath(path)) in COPY_LISTS):
+                continue
             try:
                 text = open(path, encoding='utf-8', errors='ignore').read()
             except OSError:
@@ -523,6 +538,31 @@ def main():
         for node in nodes:
             if node.call and not node.call[1] and node.call[0] in natives:
                 node.call = (node.call[0], True)
+    # sasrt-nx (2026-11-11, port 74; its idea 37; sasrt-nx's round A audit, finding 5): a call through the hook of a
+    # localized copy (app/src/cpu/hot/localized.txt, localized_bulk.txt) runs the copy, made from this tree's own
+    # statements of the function, or the original: it reads what the original reads and writes what it writes, less the
+    # write-backs this analysis finds dead. Such a call counts as a call of the original, for the functions nothing else
+    # names or hooks (not in `taken`: an app hook or hand native is named in its source). SASRT_LIVE_OUT_LISTS_NAMED=1:
+    # unknown, as before.
+    copies_known = 0
+    if os.environ.get('SASRT_LIVE_OUT_LISTS_NAMED', '0') != '1':
+        listed = set()
+        for path in COPY_LISTS:
+            try:
+                for line in open(path, encoding='utf-8', errors='ignore'):
+                    m = re.match(r'\s*(?:sub_)?([0-9A-Fa-f]{8})\b', line)
+                    if m:
+                        listed.add(int(m.group(1), 16))
+            except OSError:
+                pass
+        copies = {addr for addr in listed if addr in starts and addr not in taken}
+        for nodes in parsed.values():
+            for node in nodes:
+                if node.call and not node.call[1] and node.call[0] in copies:
+                    node.call = (node.call[0], True)
+                    copies_known += 1
+        print('leaf_dead_stores: %d calls through %d localized copies\' hooks counted as calls of the original' % (
+            copies_known, len(copies)))
     print('leaf_dead_stores: %d functions, %d guest instructions; %d functions have an address outside direct calls' % (
         len(parsed), sum(len(v) for v in parsed.values()), len(taken)))
     reasons = collections.Counter(r for why in taken.values() for r in why)
@@ -646,6 +686,15 @@ def main():
         else:
             why['everything live after a call site'] += 1
     print('  leaf functions: ' + ', '.join('%s %d' % kv for kv in why.most_common()))
+
+    # sasrt-nx (2026-11-11, port 74; its idea 37): the LiveOut of every function, for the copies, with the tree it
+    # belongs to (localize_native.py uses it only for that tree; not written by --check runs).
+    if not a.check:
+        import json
+        with open(LIVE_OUT_JSON + '.tmp', 'w') as f:
+            json.dump({'gen': os.path.abspath(a.gen),
+                       'live_out': {'%08X' % addr: live_out[addr] for addr in sorted(live_out)}}, f)
+        os.replace(LIVE_OUT_JSON + '.tmp', LIVE_OUT_JSON)
 
     # 4. The leaf write-backs.
     stores = dead = funcs_with = 0

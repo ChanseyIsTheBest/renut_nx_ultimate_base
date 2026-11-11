@@ -169,6 +169,13 @@ namespace plume {
         S8_UINT,
         // banjo-nx (2026-10-19): 24-bit unorm depth with 8-bit stencil, 4 bytes a pixel (deko3d Z24S8; the Xenos D24S8).
         D24_UNORM_S8_UINT,
+        // sasrt-nx (2026-11-11, port 75; its formats batch, rows 6, 8, 10, 74, 93: renut_format_10bit_exact): 10:10:10:2
+        // unorm, R in bits 0-9 ... A in 30-31 (the Xenos 2_10_10_10's own 32-bit layout; deko3d RGB10A2, Vulkan
+        // A2B10G10R10_PACK32, D3D12 R10G10B10A2).
+        R10G10B10A2_UNORM,
+        // sasrt-nx (2026-11-11, port 75; its formats batch, rows 7, 66, 73, 95, 96: renut_format_7e3_rg11b10): 11:11:10
+        // unsigned float, no alpha (deko3d RG11B10, Vulkan B10G11R11_UFLOAT_PACK32, D3D12 R11G11B10_FLOAT).
+        R11G11B10_FLOAT,
         MAX
     };
 
@@ -573,6 +580,9 @@ namespace plume {
         case RenderFormat::R32_UINT:
         case RenderFormat::R32_SINT:
         case RenderFormat::D24_UNORM_S8_UINT:
+        // sasrt-nx (2026-11-11, port 75; its formats batch, rows 6, 8, 10, 74, 93 and 7, 66, 73, 95, 96)
+        case RenderFormat::R10G10B10A2_UNORM:
+        case RenderFormat::R11G11B10_FLOAT:
             return 4;
         case RenderFormat::R8G8_TYPELESS:
         case RenderFormat::R8G8_UNORM:
@@ -656,6 +666,9 @@ namespace plume {
         case RenderFormat::D32_FLOAT:
         case RenderFormat::D32_FLOAT_S8_UINT:
         case RenderFormat::D24_UNORM_S8_UINT:
+        // sasrt-nx (2026-11-11, port 75; its formats batch, rows 6, 8, 10, 74, 93 and 7, 66, 73, 95, 96)
+        case RenderFormat::R10G10B10A2_UNORM:
+        case RenderFormat::R11G11B10_FLOAT:
         case RenderFormat::R32_FLOAT:
         case RenderFormat::R32_UINT:
         case RenderFormat::R32_SINT:

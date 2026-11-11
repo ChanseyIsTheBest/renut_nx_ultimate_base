@@ -647,6 +647,86 @@ REXCVAR_DEFINE_STRING(banjo_renut_ab_targets, "", "Banjo",
                       "numbers (\"15,16\"); each in turn is switched off and on for one banjo_renut_ab_s period each, "
                       "the next one after, and the 10 s report has a \"[renut A/B]\" line for each with its halves "
                       "so far. One console run measures them all. Empty: banjo_renut_ab_target alone");
+// blur-nx (2026-11-10/11, port 76; its keys 211-221, 210 and 214 left out): the renderer fixes blur-nx sent to the base,
+// each with blur-nx's name, A/B number and default.
+REXCVAR_DEFINE_BOOL(blur_renut_expand_alias, true, "Banjo/Renut",
+                    "From blur-nx (2026-11-10, port 76; A/B 211): a resolve destination written as 16_EXPAND / "
+                    "16_16_EXPAND / 16_16_16_16_EXPAND and sampled through another header as 16_FLOAT / 16_16_FLOAT / "
+                    "16_16_16_16_FLOAT (or the other way) is the same data: the reference's texture cache reads both as "
+                    "half floats. Blur's 640x360 HDR downsample is resolved as one and read as the other (its bloom). Off: "
+                    "such a texture is made from guest memory, which the resolve never wrote")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(blur_renut_resolve_keep_dest, true, "Banjo/Renut",
+                    "From blur-nx (2026-11-10, port 76; A/B 212): a single-sampled resolve that covers part of an existing "
+                    "destination made from another format keeps that destination and writes its part with a draw that "
+                    "converts, as the console writes the resolve into the destination's own format. Blur resolves a 1x1 "
+                    "2_10_10_10 target into the corner of its 640x360 half-float image each frame: without this the image "
+                    "was made again (empty) and the post pass that reads last frame's image read nothing. Off: the "
+                    "destination is made again in the source's format (Renut's rule)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(blur_renut_occlusion_queries, true, "Banjo/Renut",
+                    "From blur-nx (2026-11-10/11, port 76; A/B 213): occlusion queries answered as the reference's GPU "
+                    "answers them. D3DQuery_Issue(END) writes 0xFFFFFEED into the query's sample counts and a ZPASS event "
+                    "the GPU replaces it with the counts at; Renut runs no GPU packets, so the counts never came and "
+                    "D3DQuery_GetData said \"not ready\" for ever (Blur's light glows were never drawn). On: GetData of an "
+                    "issued occlusion query finds its blocks where GetData reads them and writes what the emulated GPU "
+                    "writes (the SDK's command_processor.cpp, EVENT_WRITE_ZPD: zeroed, 1000 samples passed). Only for a "
+                    "game that registers its GetData (d3d/hooks/state.cpp, RENUT_D3DQUERY_GETDATA_HOOK); Beautiful "
+                    "Katamari links none. Off: Renut as it was")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(blur_renut_stack_surface_headers, true, "Banjo/Renut",
+                    "From blur-nx (2026-11-10, port 76; A/B 215): a render target or depth surface whose header is on the "
+                    "stack (a temporary D3DSurface the game builds for one clear and resolve) keeps the header words as "
+                    "they were when the game bound it, per queued or recorded operation: the render thread reads surface "
+                    "headers later, when the stack has been reused (Blur's 640x360 motion-blur source read as an empty "
+                    "1x1 surface: no motion blur, the frame darkened by the composite). Off: the header read at replay")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(blur_renut_sample_grid_resolve, true, "Banjo/Renut",
+                    "From blur-nx (2026-11-10, port 76; A/B 216): a 4x multisampled surface over the EDRAM of a "
+                    "single-sampled one of the same format and twice its pitch (the same sample grid: each 2x2 block of "
+                    "the big surface's pixels is one pixel's four samples; 2x: 1x2) resolves as the console does, the box "
+                    "of the big surface when that was drawn last. Blur makes its 640x360 half-size scene (the motion "
+                    "blur's and the light trails' source) this way from its 1280x720 post target. Off: the view's own "
+                    "target (black)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(blur_renut_surface_size_guard, true, "Banjo/Renut",
+                    "From blur-nx (2026-11-10, port 76; A/B 217): a surface header that reads wider or taller than 8192 "
+                    "(no Xbox 360 target is) makes no host target: the header is not one (Blur's temporary surfaces on "
+                    "the stack, read after the stack was reused, came out as 12120x26733 and the like; in Ryujinx each "
+                    "failed allocation set off a memory emergency). Off: Renut tries")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(blur_renut_wipe_overwritten, true, "Banjo/Renut",
+                    "From blur-nx (2026-11-10, port 76; A/B 218): vivapinata-nx's EDRAM wipe (a clear through another "
+                    "layout, applied at the wiped target's next resolve when nothing wrote it since) is left out when "
+                    "another target over the same EDRAM tiles was drawn or cleared after the wipe: on the console that "
+                    "write is in the EDRAM the resolve reads; and a clear wipes a target only when it fills every one of "
+                    "its tiles (exact tile spans). Blur clears its 640x360 view, draws the scene through the 1280x720 one "
+                    "and resolves the 640x360 view: the wipe blackened the frame. Off: as vivapinata-nx wrote it")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(blur_renut_resolve_exp_bias, true, "Banjo/Renut",
+                    "From blur-nx (2026-11-10, port 76; A/B 219): a colour resolve's exponent bias, as the console "
+                    "applies it: the Resolve flags' top six bits (D3DRESOLVE_EXPONENTBIAS, signed; D3D puts them in "
+                    "RB_COPY_DEST_INFO's copy_dest_exp_bias, which the SDK's resolve applies) scale the colour by 2^bias. "
+                    "Renut copied without it while sasrt_renut_texture_exp_adjust applies the fetch's exponent adjust "
+                    "that undoes it: Blur resolves its light-glow chain with +11 and reads it with -11, so the glows were "
+                    "2048 times too dim. Off: no bias")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(blur_renut_ms_slice_resolve, true, "Banjo/Renut",
+                    "From blur-nx (2026-11-11, port 76; A/B 221): a multisampled resolve into a slice (a cube face, an "
+                    "array layer) or a volume's depth other than 0 goes through a single-sampled staging image and a "
+                    "copy into that slice. plume's region resolve has no slice: every face landed in face 0. Blur renders "
+                    "its 256x256 environment cube 4x and resolves the six faces: five were black. Off: as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(blur_renut_edram_inherit, true, "Banjo/Renut",
+                    "From blur-nx (2026-11-11, port 76; A/B 220): before a draw that keeps part of its target (a write "
+                    "mask without every channel, or blending), the target takes what other views wrote over its EDRAM "
+                    "tiles since its own last write, through the console's tile and sample layout "
+                    "(edram_inherit_ps.hlsl). On the console every view of the same EDRAM sees one memory; here each view "
+                    "is its own host target. Blur draws its environment panorama's RGB through a view of a target cleared "
+                    "to alpha 1: without it the view's alpha was whatever its own host target last held (the ground and "
+                    "car about half as bright, the rear window black). A copy of the target each time (Blur: about 1.4 "
+                    "a frame). Off: each view keeps only what it drew")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(banjo_renut_push_point_only, true, "Banjo/Enhancements",
                     "Renut's renderer (Vulkan): with the constants in uniform buffers, the push constant (the three "
                     "constant addresses) is read only by the point sprites' geometry shader, so only point-list draws "
@@ -984,6 +1064,17 @@ const char *AbName(int target) {
   case 78: return "no pow in the scan-out at an output gamma of 1 (banjo_renut_present_no_pow)";
   case 79: return "the scan-out loads the texel at one to one (banjo_renut_present_texel_load)";
   case 84: return "a queued draw prefetches the delta's device and shadow lines (banjo_renut_delta_prefetch; 74 in bangaio-nx)";
+  // blur-nx (2026-11-10/11, port 76; its keys, the same numbers; 210 and 214 not ported).
+  case 211: return "an EXPAND resolve sampled as its FLOAT twin through the resolve's texture (blur_renut_expand_alias)";
+  case 212: return "a partial resolve keeps a destination of another format and converts (blur_renut_resolve_keep_dest)";
+  case 213: return "occlusion queries answered as the reference's GPU does (blur_renut_occlusion_queries)";
+  case 215: return "stack surface headers kept as bound (blur_renut_stack_surface_headers)";
+  case 216: return "a 4x view of a 1x surface resolves as its 2x2 box (blur_renut_sample_grid_resolve)";
+  case 217: return "no host target for a surface header over 8192 wide or tall (blur_renut_surface_size_guard)";
+  case 218: return "an EDRAM wipe written over through another view is left out (blur_renut_wipe_overwritten)";
+  case 219: return "a colour resolve's exponent bias applied (blur_renut_resolve_exp_bias)";
+  case 220: return "a target kept in part takes what other views wrote over its EDRAM (blur_renut_edram_inherit)";
+  case 221: return "a multisampled resolve into a slice other than 0 goes through staging (blur_renut_ms_slice_resolve)";
   default: {
     // sasrt-nx (2026-11-08): the GPU round's items (sasrt_gpu_round.h: 90 and up).
     const char *name = sasrt::gpu_round::AbName(target);
@@ -1664,6 +1755,58 @@ template <int kTarget>
 bool ColorHandOverOn() {
   static const bool on = REXCVAR_GET(banjo_deko3d_color_handover);
   return KeyOn<73>(on);
+}
+// blur-nx (2026-11-10, port 76; its key 211): ResolvedAlias's EXPAND / FLOAT pairs (render/textures.cpp).
+bool ExpandAliasOn() {
+  static const bool on = REXCVAR_GET(blur_renut_expand_alias);
+  return KeyOn<211>(on);
+}
+// blur-nx (2026-11-10, port 76; its key 212): ResolveTarget's kept destination and the converting draw (textures.cpp,
+// draw.cpp).
+bool ResolveKeepDestOn() {
+  static const bool on = REXCVAR_GET(blur_renut_resolve_keep_dest);
+  return KeyOn<212>(on);
+}
+// blur-nx (2026-11-10, port 76; its key 213): D3DQuery_GetData's answer (d3d/hooks/state.cpp AnswerOcclusionQuery).
+bool OcclusionQueriesOn() {
+  static const bool on = REXCVAR_GET(blur_renut_occlusion_queries);
+  return KeyOn<213>(on);
+}
+// blur-nx (2026-11-10, port 76; its key 215): render/surfaces.cpp CaptureStackHeaders, NoteSurfaceHeader.
+bool StackSurfaceHeadersOn() {
+  static const bool on = REXCVAR_GET(blur_renut_stack_surface_headers);
+  return KeyOn<215>(on);
+}
+// blur-nx (2026-11-10, port 76; its key 216): render/draw.cpp's sample-grid resolve.
+bool SampleGridResolveOn() {
+  static const bool on = REXCVAR_GET(blur_renut_sample_grid_resolve);
+  return KeyOn<216>(on);
+}
+// blur-nx (2026-11-10, port 76; its key 217): render/surfaces.cpp GetHostSurfaceSlow.
+bool SurfaceSizeGuardOn() {
+  static const bool on = REXCVAR_GET(blur_renut_surface_size_guard);
+  return KeyOn<217>(on);
+}
+// blur-nx (2026-11-10, port 76; its key 218): render/draw.cpp ResolveStateLocked's EDRAM wipe, surfaces.cpp
+// ColorEdramWipedLocked.
+bool WipeOverwrittenOn() {
+  static const bool on = REXCVAR_GET(blur_renut_wipe_overwritten);
+  return KeyOn<218>(on);
+}
+// blur-nx (2026-11-10, port 76; its key 219): render/draw.cpp ResolveStateLocked's exponent bias.
+bool ResolveExpBiasOn() {
+  static const bool on = REXCVAR_GET(blur_renut_resolve_exp_bias);
+  return KeyOn<219>(on);
+}
+// blur-nx (2026-11-11, port 76; its key 221): render/draw.cpp ResolveStateLocked's multisampled slice resolves.
+bool MsSliceResolveOn() {
+  static const bool on = REXCVAR_GET(blur_renut_ms_slice_resolve);
+  return KeyOn<221>(on);
+}
+// blur-nx (2026-11-11, port 76; its key 220): render/draw.cpp InheritEdramBeforeDrawLocked.
+bool EdramInheritOn() {
+  static const bool on = REXCVAR_GET(blur_renut_edram_inherit);
+  return KeyOn<220>(on);
 }
 bool ScanOutHandOverOn() {
   static const bool on = REXCVAR_GET(banjo_deko3d_scanout_handover);

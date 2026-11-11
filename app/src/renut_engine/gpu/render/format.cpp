@@ -11,16 +11,71 @@
 
 namespace renut::gpu {
 
+// sasrt-nx (2026-11-11, port 75; its formats batch, row 38 and the diagnostic): the 32-bit float formats the Xenos
+// cannot filter (renut_float32_point_filter), and the formats' names for renut_diag_formats' lines.
+bool IsFloat32TextureFormat(GpuTextureFormat format) {
+  return format == GpuTextureFormat::Fmt32_Float || format == GpuTextureFormat::Fmt32_32_Float ||
+         format == GpuTextureFormat::Fmt32_32_32_32_Float || format == GpuTextureFormat::Fmt32_32_32_Float;
+}
+const char *GpuTextureFormatName(u32 format) {
+  switch (format & 0x3F) {
+  case 2: return "8";
+  case 6: return "8_8_8_8";
+  case 7: return "2_10_10_10";
+  case 10: return "8_8";
+  case 18: return "DXT1";
+  case 19: return "DXT2_3";
+  case 20: return "DXT4_5";
+  case 22: return "24_8 (D24S8)";
+  case 23: return "24_8_FLOAT (D24FS8)";
+  case 25: return "16_16";
+  case 26: return "16_16_16_16";
+  case 31: return "16_16_FLOAT";
+  case 32: return "16_16_16_16_FLOAT";
+  case 36: return "32_FLOAT";
+  case 37: return "32_32_FLOAT";
+  case 38: return "32_32_32_32_FLOAT";
+  case 49: return "DXN";
+  case 54: return "2_10_10_10_AS_16_16_16_16";
+  case 58: return "DXT3A";
+  case 59: return "DXT5A";
+  case 60: return "CTX1";
+  case 57: return "32_32_32_FLOAT";
+  case 62: return "8_8_8_8_GAMMA_EDRAM";
+  case 63: return "2_10_10_10_FLOAT (7e3)";
+  default: return "?";
+  }
+}
+
 plume::RenderFormat ColorTargetFormat(GpuColorFormat format) {
   switch (format) {
   case GpuColorFormat::Fmt8_8_8_8:
   case GpuColorFormat::Fmt8_8_8_8_Gamma:
     return plume::RenderFormat::R8G8B8A8_UNORM;
+  // sasrt-nx (2026-11-11, port 75; its formats batch, rows 6, 8, 10, 74, 93: renut_format_10bit_exact): the console's
+  // own 32 bits; 16 bits a channel before.
   case GpuColorFormat::Fmt2_10_10_10:
-    return plume::RenderFormat::R16G16B16A16_UNORM;
+    return banjo::renut_gpu::Format10BitExactOn() ? plume::RenderFormat::R10G10B10A2_UNORM
+                                                  : plume::RenderFormat::R16G16B16A16_UNORM;
+  // sasrt-nx (2026-11-11, port 75; its formats batch, rows 7, 66, 73, 95, 96: renut_format_7e3_rg11b10, NOT exact,
+  // off): 7e3 in 32 bits without alpha.
   case GpuColorFormat::Fmt2_10_10_10_Float:
+    return banjo::renut_gpu::Format7e3Rg11b10On() ? plume::RenderFormat::R11G11B10_FLOAT
+                                                  : plume::RenderFormat::R16G16B16A16_FLOAT;
   case GpuColorFormat::Fmt16_16_16_16_Float:
     return plume::RenderFormat::R16G16B16A16_FLOAT;
+  // sasrt-nx (2026-11-11, port 75; its formats batch, found on the way: renut_format_edram_as_variants): these two fell
+  // to the default (8-bit RGBA) before. Format 12 follows format 3, one storage format (its audit's finding 7).
+  case GpuColorFormat::Fmt2_10_10_10_As10_10_10_10:
+    if (!banjo::renut_gpu::FormatEdramAsVariantsOn())
+      return plume::RenderFormat::R8G8B8A8_UNORM;
+    return banjo::renut_gpu::Format10BitExactOn() ? plume::RenderFormat::R10G10B10A2_UNORM
+                                                  : plume::RenderFormat::R16G16B16A16_UNORM;
+  case GpuColorFormat::Fmt2_10_10_10_Float_As16_16_16_16:
+    if (!banjo::renut_gpu::FormatEdramAsVariantsOn())
+      return plume::RenderFormat::R8G8B8A8_UNORM;
+    return banjo::renut_gpu::Format7e3Rg11b10On() ? plume::RenderFormat::R11G11B10_FLOAT
+                                                  : plume::RenderFormat::R16G16B16A16_FLOAT;
   // sasrt-nx (2026-10-20, sasrt_renut_fixed16_float): Xenos' 16-bit fixed-point targets span -32..32; FP16 holds that
   // range, SNORM clipped it at 1.
   case GpuColorFormat::Fmt16_16:
@@ -177,7 +232,13 @@ TextureFormatInfo GetTextureFormatInfo(GpuTextureFormat format, bool is_signed) 
     return expand(F::R8G8B8A8_UNORM, C::R5G6B5, 2, 4);
   case T::Fmt4_4_4_4:
     return expand(F::R8G8B8A8_UNORM, C::R4G4B4A4, 2, 4);
+  // sasrt-nx (2026-11-11, port 75; its formats batch, rows 6, 8, 10, 74, 93: renut_format_10bit_exact): 2_10_10_10
+  // copied as it is into 10:10:10:2 (X in bits 0-9 is the host's R, as the expansion below read it); the
+  // _AS_16_16_16_16 form (filtered at 16 bits on the console) keeps 16.
   case T::Fmt2_10_10_10:
+    if (banjo::renut_gpu::Format10BitExactOn())
+      return plain(F::R10G10B10A2_UNORM, 4);
+    return expand(F::R16G16B16A16_UNORM, C::R10G10B10A2, 4, 8);
   case T::Fmt2_10_10_10_As16_16_16_16:
     return expand(F::R16G16B16A16_UNORM, C::R10G10B10A2, 4, 8);
   case T::Fmt11_11_10:

@@ -47,11 +47,21 @@ extern "C" const bool g_banjo_store_cards = false;
 #include "banjo_hot_guest.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <cmath>    // port 72: the VMX fuzz's absolute error
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
+
+#include <rex/platform.h>
+#if REX_PLATFORM_SWITCH
+#include <switch.h>
+#endif
 
 #include <fmt/format.h>
 
@@ -65,6 +75,26 @@ extern "C" const bool g_banjo_store_cards = false;
 #include "hot/banjo_hot_all.h"  // app/generated/hot: the copies (tools/localize_native.py)
 
 REXCVAR_DECLARE(bool, banjo_cpu_verify);
+// sasrt-nx (2026-11-11, port 74; its idea 35): the copies with atomics (port 70) and every copy that reaches a call
+// outside itself stop the guard's logged forms there: such a call was "not comparable". When both forms stopped, the
+// bytes each wrote before its stop are compared too (the same inputs, the same path: the same stores up to the first
+// atomic or outside call). Counted and logged only: a hand-written native in front of a callee can make the two forms
+// stop at different points, and another thread can change a counter between the two runs (sasrt-nx's console: 6 of
+// 5.07 million differed, one byte each), so a difference here does not switch the copy off.
+REXCVAR_DEFINE_BOOL(banjo_hot_guard_prefix, true, "Banjo/Enhancements",
+                    "The guard: when the copy and the original both stop (an atomic or a call outside the copy), compare "
+                    "the stores each made before it (counted in the [hot] summary; a difference is logged, not acted on)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// sasrt-nx (2026-11-11, port 72; its idea 43 F1-F4): tools/vmx_float_macros.py's fast forms against the exact ones, on
+// the console itself (x86 cannot reproduce NEON's estimates). With the key, a thread started at the first hook runs N
+// million lanes of random bit patterns (plus the special values) through each pair with the flush mode on (as the
+// game's VMX code runs) and logs the largest difference in units in the last place and the special cases that differ
+// (NaN, infinity, sign, zero). Only reports; nothing in the game changes. Switch builds with the fast forms only.
+REXCVAR_DEFINE_INT32(sasrt_test_vmx_fuzz, 0, "Banjo/Enhancements",
+                     "Test: compare the fast VMX estimate and multiply-add forms with the exact ones over N million "
+                     "lanes on the console (\"[vmxfuzz]\" lines; 0 off)")
+    .range(0, 1000)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_INT32(banjo_hot_guard_calls, 64, "Banjo/Enhancements",
                      "Native copies of hot game functions: the first N guarded calls of each thread come one after "
                      "the other (each runs the copy and the recompiled original and compares them)")
@@ -414,6 +444,65 @@ void Merge(std::vector<Region>& ranges) {
   ranges.resize(n);
 }
 
+// Port 74 (its idea 35): what one logged form wrote (its ranges merged and sorted, their bytes after it; `at` the
+// ranges' offsets).
+struct Written {
+  std::vector<Region> ranges;
+  std::vector<size_t> at;
+  std::vector<uint8_t> bytes;
+};
+
+void CaptureWritten(const WriteLog& log, uint8_t* base, Written& w) {
+  w.ranges.clear();
+  w.at.clear();
+  w.bytes.clear();
+  AddRanges(log, w.ranges);
+  Merge(w.ranges);
+  for (const Region& r : w.ranges) {
+    w.at.push_back(w.bytes.size());
+    const uint8_t* p = Raw(base, r.addr);
+    w.bytes.insert(w.bytes.end(), p, p + r.len);
+  }
+}
+
+// The kept buffers back to small after a big call (sasrt-nx's batch 2 audit, finding 8, as ScratchFrame's rule).
+void TrimWritten(Written& w) {
+  if (w.bytes.capacity() > (256u << 10)) {
+    w.bytes = {};
+    w.ranges = {};
+    w.at = {};
+  }
+}
+
+// The byte at guest address x after the form that wrote `w` (memory as it is now where the form did not write: both
+// forms are rolled back when this runs, so that is the state before either). A binary search (finding 7).
+uint8_t AfterForm(const Written& w, uint8_t* base, uint32_t x) {
+  auto it = std::upper_bound(w.ranges.begin(), w.ranges.end(), x,
+                             [](uint32_t v, const Region& r) { return v < r.addr; });
+  if (it != w.ranges.begin()) {
+    --it;
+    if (uint64_t(x) < uint64_t(it->addr) + it->len) return w.bytes[w.at[size_t(it - w.ranges.begin())] + (x - it->addr)];
+  }
+  return *Raw(base, x);
+}
+
+bool PrefixEqual(uint8_t* base, const Written& a, const Written& b, std::string& where) {
+  std::vector<Region> all = a.ranges;
+  all.insert(all.end(), b.ranges.begin(), b.ranges.end());
+  Merge(all);
+  for (const Region& r : all) {
+    for (uint32_t k = 0; k < r.len; ++k) {
+      const uint32_t x = r.addr + k;
+      const uint8_t va = AfterForm(a, base, x), vb = AfterForm(b, base, x);
+      if (va != vb) {
+        where = fmt::format("memory {:#010x} copy={:#04x} original={:#04x}", x, va, vb);
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 std::atomic<int64_t> g_last_report_ms{0};
 int64_t NowMs() {
   return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
@@ -472,7 +561,127 @@ bool WriteLog::Grow() {
   return true;
 }
 
+namespace {
+// sasrt-nx (2026-11-11, port 72): a background thread started from a guest thread (InitHook runs on one). On the Switch a libnx
+// thread: a std::thread created from the SDK's Horizon threads threw std::system_error at detach() and terminated the
+// game at its start (run gv3, 2026-11-11 02:22; Ryujinx's stack: InitHook -> call_once -> std::thread::detach ->
+// __cxa_throw -> terminate), as masseffect_deferred_recording.cpp found for a pthread. Priority 0x3B (an application's
+// lowest: 0x3F was refused on the console, gv3's second run), any core.
+void StartBackground(void (*fn)(void*), void* arg) {
+#if REX_PLATFORM_SWITCH
+  static ::Thread threads[4];  // (qualified: the namespace has a Thread of its own)
+  static std::atomic<int> used{0};
+  const int k = used.fetch_add(1, std::memory_order_relaxed);
+  if (k >= 4 || !R_SUCCEEDED(::threadCreate(&threads[k], fn, arg, nullptr, 256 * 1024, 0x3B, -2)) ||
+      !R_SUCCEEDED(::threadStart(&threads[k])))
+    REXLOG_WARN("[hot] a background thread could not be started ({} of 4)", k + 1);
+#else
+  std::thread([fn, arg] { fn(arg); }).detach();
+#endif
+}
+
+}  // namespace
+
+#if defined(REX_VMX_FLOAT_HELPERS)
+namespace {
+// Port 72: sasrt-nx's fuzz test of its idea 43 (sasrt_test_vmx_fuzz above).
+struct FuzzStat {
+  uint64_t lanes = 0, differ = 0, special = 0;
+  uint32_t max_ulp = 0;
+  uint32_t worst_in[3] = {0, 0, 0};
+  double max_abs = 0.0;  // sasrt-nx (2026-11-11): vlogefp's measure (its 360 bound is absolute: 1/32)
+  uint32_t worst_abs_in = 0;
+};
+uint32_t UlpApart(uint32_t a, uint32_t b) {
+  auto key = [](uint32_t v) { return (v & 0x80000000u) ? 0x80000000u - (v & 0x7FFFFFFFu) : 0x80000000u + v; };
+  const uint32_t x = key(a), y = key(b);
+  return x > y ? x - y : y - x;
+}
+void FuzzNote(FuzzStat& st, uint32_t exact, uint32_t fast, uint32_t a, uint32_t b, uint32_t c) {
+  ++st.lanes;
+  if (exact == fast) return;
+  ++st.differ;
+  const bool nan_e = (exact & 0x7FFFFFFFu) > 0x7F800000u, nan_f = (fast & 0x7FFFFFFFu) > 0x7F800000u;
+  const bool inf_e = (exact & 0x7FFFFFFFu) == 0x7F800000u, inf_f = (fast & 0x7FFFFFFFu) == 0x7F800000u;
+  if (nan_e != nan_f || inf_e != inf_f || ((exact ^ fast) & 0x80000000u)) {
+    ++st.special;
+    return;
+  }
+  if (nan_e) return;  // both NaN (payloads aside)
+  const uint32_t u = UlpApart(exact, fast);
+  if (u > st.max_ulp) {
+    st.max_ulp = u;
+    st.worst_in[0] = a, st.worst_in[1] = b, st.worst_in[2] = c;
+  }
+  float fe, ff;
+  std::memcpy(&fe, &exact, 4);
+  std::memcpy(&ff, &fast, 4);
+  if (const double d = std::fabs(double(fe) - double(ff)); d > st.max_abs) {
+    st.max_abs = d;
+    st.worst_abs_in = a;
+  }
+}
+void VmxFuzz(int millions) {
+  uint64_t fpcr;
+  __asm__ __volatile__("mrs %0, fpcr" : "=r"(fpcr));
+  __asm__ __volatile__("msr fpcr, %0" ::"r"(fpcr | (1ull << 24)) : "memory");  // FZ, as the game's VMX code runs
+  uint64_t s = 0x9E3779B97F4A7C15ull;
+  auto next = [&s] {
+    s ^= s << 13, s ^= s >> 7, s ^= s << 17;
+    return uint32_t(s);
+  };
+  static const uint32_t kSpecial[] = {0x00000000u, 0x80000000u, 0x7F800000u, 0xFF800000u, 0x7FC00000u, 0x7F800001u,
+                                      0x00000001u, 0x807FFFFFu, 0x00800000u, 0x3F800000u, 0xBF800000u, 0x7F7FFFFFu};
+  FuzzStat rs, re, ma, nm, lg;
+  const uint64_t n = uint64_t(millions) * 1000000ull / 4 + 3;
+  for (uint64_t i = 0; i < n; ++i) {
+    alignas(16) uint32_t a[4], b[4], c[4], e[4], f[4];
+    for (int k = 0; k < 4; ++k) {
+      a[k] = i < 3 ? kSpecial[(i * 4 + k) % 12] : next();
+      b[k] = next();
+      c[k] = next();
+    }
+    const simde__m128 va = simde_mm_load_ps(reinterpret_cast<const float*>(a));
+    const simde__m128 vb = simde_mm_load_ps(reinterpret_cast<const float*>(b));
+    const simde__m128 vc = simde_mm_load_ps(reinterpret_cast<const float*>(c));
+    simde_mm_store_ps(reinterpret_cast<float*>(e), simde_mm_div_ps(simde_mm_set1_ps(1), simde_mm_sqrt_ps(va)));
+    simde_mm_store_ps(reinterpret_cast<float*>(f), rex_vrsqrtefp_fast_(va));
+    for (int k = 0; k < 4; ++k) FuzzNote(rs, e[k], f[k], a[k], 0, 0);
+    simde_mm_store_ps(reinterpret_cast<float*>(e), simde_mm_div_ps(simde_mm_set1_ps(1), va));
+    simde_mm_store_ps(reinterpret_cast<float*>(f), rex_vrefp_fast_(va));
+    for (int k = 0; k < 4; ++k) FuzzNote(re, e[k], f[k], a[k], 0, 0);
+    simde_mm_store_ps(reinterpret_cast<float*>(e), simde_mm_add_ps(simde_mm_mul_ps(va, vb), vc));
+    simde_mm_store_ps(reinterpret_cast<float*>(f), rex_vmaddfp_fused_(va, vb, vc));
+    for (int k = 0; k < 4; ++k) FuzzNote(ma, e[k], f[k], a[k], b[k], c[k]);
+    // sasrt-nx (2026-11-11 ~10:00, the user: "add these please"): vnmsubfp fused and the vlogefp estimate.
+    simde_mm_store_ps(reinterpret_cast<float*>(e),
+                      simde_mm_xor_ps(simde_mm_sub_ps(simde_mm_mul_ps(va, vb), vc),
+                                      simde_mm_castsi128_ps(simde_mm_set1_epi32(int(0x80000000)))));
+    simde_mm_store_ps(reinterpret_cast<float*>(f), rex_vnmsubfp_fused_(va, vb, vc));
+    for (int k = 0; k < 4; ++k) FuzzNote(nm, e[k], f[k], a[k], b[k], c[k]);
+    simde_mm_store_ps(reinterpret_cast<float*>(e), rex_vlogefp_exact_(va));
+    simde_mm_store_ps(reinterpret_cast<float*>(f), rex_vlogefp_fast_(va));
+    for (int k = 0; k < 4; ++k) FuzzNote(lg, e[k], f[k], a[k], 0, 0);
+  }
+  __asm__ __volatile__("msr fpcr, %0" ::"r"(fpcr) : "memory");
+  for (const auto& [name, st] : {std::pair<const char*, const FuzzStat&>{"vrsqrtefp", rs}, {"vrefp", re},
+                                 {"vmaddfp (fused)", ma}, {"vnmsubfp (fused)", nm}, {"vlogefp", lg}})
+    REXLOG_INFO("[vmxfuzz] {}: {} lanes, {} differ ({:.3f} %), {} in a special case (NaN / infinity / sign); the "
+                "largest difference {} ulp (inputs {:#010x} {:#010x} {:#010x}), {:.3g} absolute (input {:#010x})",
+                name, st.lanes, st.differ, st.lanes ? 100.0 * double(st.differ) / double(st.lanes) : 0.0, st.special,
+                st.max_ulp, st.worst_in[0], st.worst_in[1], st.worst_in[2], st.max_abs, st.worst_abs_in);
+}
+}  // namespace
+#endif
 uint8_t InitHook(Hook& h, uint8_t* base) {
+#if defined(REX_VMX_FLOAT_HELPERS)
+  // Port 72: the fuzz test's thread, once (sasrt_test_vmx_fuzz).
+  static std::once_flag fuzz_once;
+  if (const int m = REXCVAR_GET(sasrt_test_vmx_fuzz); m > 0)
+    std::call_once(fuzz_once, [m] {
+      StartBackground([](void* p) { VmxFuzz(int(reinterpret_cast<intptr_t>(p))); }, reinterpret_cast<void*>(intptr_t(m)));
+    });
+#endif
   // May run on several threads at once for the first call: every one of them stores the same values.
   bool on = banjo::EnhancementActive(banjo::EnhancementGroup::kCpu, h.own());
   if (on && h.bulk && !REXCVAR_GET(banjo_cpu_native_bulk)) on = false;
@@ -534,6 +743,9 @@ Outcome Attempt(Hook& h, PPCContext& ctx, uint8_t* base, Scratch& t, std::string
   const bool native_stopped = t.log.stopped;
   bool overflow = t.log.overflow;
   AddRanges(t.log, t.ranges);
+  static const bool prefix = REXCVAR_GET(banjo_hot_guard_prefix);  // port 74, its idea 35
+  static thread_local Written native_written, reference_written;
+  if (prefix && native_stopped && !t.log.overflow) CaptureWritten(t.log, base, native_written);
   t.log.RollBack();
   ctx.fpscr.setcsr(hw_before);
 
@@ -546,6 +758,7 @@ Outcome Attempt(Hook& h, PPCContext& ctx, uint8_t* base, Scratch& t, std::string
   const bool reference_stopped = t.log.stopped;
   overflow |= t.log.overflow;
   AddRanges(t.log, t.ranges);
+  if (prefix && reference_stopped && !overflow) CaptureWritten(t.log, base, reference_written);
   t.log.RollBack();
   ctx.fpscr.setcsr(hw_before);
   ctx.fpscr.csr = csr_before;
@@ -557,6 +770,19 @@ Outcome Attempt(Hook& h, PPCContext& ctx, uint8_t* base, Scratch& t, std::string
       diff = fmt::format("the copy {} a call outside itself and the original statements {}",
                          native_stopped ? "reached" : "did not reach", reference_stopped ? "did" : "did not");
       return Outcome::kPathsDiffer;
+    }
+    if (prefix && native_stopped && reference_stopped && !overflow) {  // port 74, its idea 35
+      std::string where;
+      if (PrefixEqual(base, native_written, reference_written, where)) {
+        h.prefix_equal.fetch_add(1, std::memory_order_relaxed);
+      } else {
+        const uint64_t n = h.prefix_differ.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (n <= 2)
+          REXLOG_WARN("[hot] {}: the stores before the stop differ (banjo_hot_guard_prefix; not acted on): {}",
+                      h.name, where);
+      }
+      TrimWritten(native_written);
+      TrimWritten(reference_written);
     }
     return Outcome::kNotComparable;
   }
@@ -738,11 +964,13 @@ void Report() {
     return;
   }
   // One line per hook that was reached, so each fits the log's line and a tool reads one function per line.
-  uint64_t compared = 0, not_comparable = 0, differences = 0, not_repeated = 0;
+  uint64_t compared = 0, not_comparable = 0, differences = 0, not_repeated = 0, prefix_equal = 0, prefix_differ = 0;
   uint32_t reached = 0, on = 0, direct = 0, bulk_total = 0, bulk_reached = 0, bulk_on = 0;
   for (Hook* h = g_hooks; h; h = h->next) {
     const uint8_t state = h->state.load(std::memory_order_relaxed);
     bulk_total += h->bulk;
+    prefix_equal += h->prefix_equal.load(std::memory_order_relaxed);  // port 74, its idea 35 (every hook)
+    prefix_differ += h->prefix_differ.load(std::memory_order_relaxed);
     if (state == kUninit) continue;
     ++reached;
     on += state == kOn || state == kDirect;
@@ -775,10 +1003,10 @@ void Report() {
                 h->name, state == kOn ? "ON" : "off", h->uses.load(std::memory_order_relaxed), c, n, d, r);
   }
   REXLOG_INFO("[hot] native copies: {} reached, {} on ({} direct, no guard); bulk copies (banjo_cpu_native_bulk {}): {} "
-              "of {} reached, {} on; {} calls compared so far, {} not comparable, {} differed once and not when "
-              "repeated, differences: {}",
+              "of {} reached, {} on; {} calls compared so far, {} not comparable ({} of them stopped in both forms "
+              "with the same stores before the stop, {} not), {} differed once and not when repeated, differences: {}",
               reached, on, direct, REXCVAR_GET(banjo_cpu_native_bulk) ? "on" : "off", bulk_reached, bulk_total, bulk_on,
-              compared, not_comparable, not_repeated, differences);
+              compared, not_comparable, prefix_equal, prefix_differ, not_repeated, differences);
 }
 
 }  // namespace banjo::hot
