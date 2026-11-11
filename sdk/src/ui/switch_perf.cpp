@@ -1117,12 +1117,14 @@ void ProfilerMain(void*) {
     // Once per second, FPS and resolution for the overlay (the profile report runs every 10 s).
     overlay.Step(now, tick_freq, true);
     if (now - report_start >= kReportSeconds * tick_freq) {
-      // sasrt-nx (2026-11-11, port 71; a tidy-up): the report sorts and groups up to 32k stack samples and writes ~800
-      // lines to the SD, and it ran here at 0x2A, above every game thread, on a core the game's threads use. Only the
-      // 1 ms samples need 0x2A (to be on time): the report is written at the game's lowest priority (0x3B), from the
-      // system core when the process has one (RexSwitchSystemCore, four-core mode), then the sampler goes back to its
-      // priority and core. (sasrt-nx's once-every-10-s long frames turned out to be its test bot's screenshots:
-      // sys-botbase's pixelPeek stalls the game ~250 ms a capture.)
+      // sasrt-nx (2026-11-11, port 71): the report sorts and groups up to 32k stack samples and writes ~800 lines to
+      // the SD, and it ran here at 0x2A, above every game thread, on a core the game's threads use. Only the 1 ms
+      // samples need 0x2A (to be on time): the report is written at the game's lowest priority (0x3B), from the system
+      // core when the process has one (RexSwitchSystemCore, four-core mode), then the sampler goes back to its priority
+      // and core. Very likely this removed a ~100 ms render stall in every 10 s window: sasrt-nx's fixed-resolution
+      // races at the handheld clocks, stack sampling off, had a ~105 ms worst frame in 5 of 7 windows before the move and
+      // 17-28 ms in every window after (different builds and drivers, not a same-build A/B). Its earlier long frames
+      // every 10 s with screenshots were the test bot's own (sys-botbase's pixelPeek stalls the game ~250 ms a capture).
       s32 report_core = -2;
       u64 report_mask = 0;
       const int system_core = RexSwitchSystemCore();

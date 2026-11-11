@@ -695,7 +695,10 @@ REXCVAR_DEFINE_BOOL(blur_renut_surface_size_guard, true, "Banjo/Renut",
                     "the stack, read after the stack was reused, came out as 12120x26733 and the like; in Ryujinx each "
                     "failed allocation set off a memory emergency). Off: Renut tries")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
-REXCVAR_DEFINE_BOOL(blur_renut_wipe_overwritten, true, "Banjo/Renut",
+// renut-ultimate (2026-11-11, port 77; the user's rule: a key that breaks graphics in a specific game is off by
+// default): vivapinata-nx's fade frames (a clear through another layout at the same EDRAM base, which covers every tile
+// of the mask's target) came out 5-8 % white with this on, 0 % off as on the SDK's emulated GPU. blur-nx sets it true.
+REXCVAR_DEFINE_BOOL(blur_renut_wipe_overwritten, false, "Banjo/Renut",
                     "From blur-nx (2026-11-10, port 76; A/B 218): vivapinata-nx's EDRAM wipe (a clear through another "
                     "layout, applied at the wiped target's next resolve when nothing wrote it since) is left out when "
                     "another target over the same EDRAM tiles was drawn or cleared after the wipe: on the console that "

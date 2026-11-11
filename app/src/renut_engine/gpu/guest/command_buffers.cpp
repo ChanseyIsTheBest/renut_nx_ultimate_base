@@ -70,7 +70,11 @@ REXCVAR_DEFINE_INT32(banjo_renut_tags_check, 32, "Banjo/Enhancements",
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 // banjo-nx (2026-10-20): sa2-nx's chain reuse (render/draw.cpp, banjo_renut_chain_reuse) for the replayed draws too.
 REXCVAR_DECLARE(bool, banjo_renut_diag_fast_census);  // banjo-nx (2026-10-26): render/draw.cpp
-REXCVAR_DEFINE_BOOL(banjo_renut_replay_inherits, true, "Banjo/Renut",
+// renut-ultimate (2026-11-11, port 77; the user's rule: a key that breaks graphics in a specific game is off by
+// default): on, vivapinata-nx (which records on its real device) got a hard shadow under its title logo (2,378 dark
+// grass pixels at 21 s against 0 off and on the SDK's emulated GPU). halo3-nx, and any game that records on a device of
+// its own, sets it true.
+REXCVAR_DEFINE_BOOL(banjo_renut_replay_inherits, false, "Banjo/Renut",
                     "halo3-nx (2026-11-03): a replayed draw is the running device with only what its recording set, as "
                     "on the console: a command buffer holds what was set in it and inherits the rest. Off: each recording's "
                     "whole device, which suits a game recording on its real device, and drops every draw of one "

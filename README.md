@@ -116,6 +116,9 @@ toml, so a port that finds one wrong for its game doesn't have to change the cod
 - Port 76 is blur-nx's renderer fixes (keys 211-221): EXPAND / FLOAT resolve aliases, partial resolves that keep
   their destination, occlusion queries answered (a game hooks its own GetData), stack-held surface headers, the
   resolve exponent bias, the EDRAM inherit and more; Viva Pinata's fade mask to recheck (key 218).
+- Port 77 is the rule for keys that break a game's picture: off in the base by default, on in the toml of the game
+  that needs them (Blur's 218 and Halo 3's replay inherits so far). docs/off-by-default.md lists every switch that
+  is off by default, why, and what is known of its speed.
 - Port 44 and the translator changes take effect when a game's shader package is made again. Before measuring on the
   console, build its DKSH cache on the PC (`tools/deko3d_variant_cache.py`): a first run that compiles its shaders while
   it draws is slower on the GPU than the build is.
