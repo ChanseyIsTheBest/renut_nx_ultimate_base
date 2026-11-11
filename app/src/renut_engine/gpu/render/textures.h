@@ -295,6 +295,8 @@ HostTexture *GetDepthResolveTextureLocked(u32 texture_va, RenderScale scale,
 
 // Existing host texture for a guest texture VA, or nullptr.
 HostTexture *FindHostTextureLocked(u32 texture_va);
+// vivapinata-nx (2026-11-11): 't''s texels as stored (no swizzle, no red-blue swap), or kInvalidDescriptor.
+uint32_t RawViewSlotLocked(HostTexture &t);
 
 void ReleaseHostTextureLocked(u32 texture_va);
 

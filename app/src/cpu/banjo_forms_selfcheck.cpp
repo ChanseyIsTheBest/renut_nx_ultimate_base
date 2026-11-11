@@ -30,6 +30,7 @@
 #include <rex/logging.h>
 #include <rex/ppc/diet_ops.h>
 #include <rex/ppc/intrinsics.h>
+#include <rex/ppc/vec_lane.h>  // blur-nx (2026-11-11): the lanes by a run-time index (VecLanes below)
 
 namespace {
 
@@ -258,6 +259,32 @@ void VectorHelpers(Tally& t) {
   }
 }
 
+// blur-nx (2026-11-11): rex/ppc/vec_lane.h, the lanes of a vector register by a run-time index (tools/vec_lane_index.py
+// writes every stvewx / stvehx with them). The guard cannot see a wrong lane here (it compares two forms that both use
+// the helper), so every index of a few vectors is checked against the array read, on the device.
+void VecLanes(Tally& t) {
+  static const uint32_t kV[3][4] = {
+      {0x00010203u, 0x04050607u, 0x08090A0Bu, 0x0C0D0E0Fu},
+      {0xDEADBEEFu, 0x80000000u, 0x7FFFFFFFu, 0x00000001u},
+      {0xFFFFFFFFu, 0x12345678u, 0x9ABCDEF0u, 0x0F0F0F0Fu},
+  };
+  for (int k = 0; k < 3; ++k) {
+    alignas(16) union {
+      uint32_t u32[4];
+      uint16_t u16[8];
+    } v;
+    std::memcpy(v.u32, kV[k], 16);
+    for (uint32_t i = 0; i < 4; ++i) {
+      const uint32_t idx = Opaque(i);
+      t.Expect("VecLaneU32", fmt::format("vector {} lane {}", k, i), rex::ppc::VecLaneU32(v.u32, idx), Opaque(v.u32[i]));
+    }
+    for (uint32_t i = 0; i < 8; ++i) {
+      const uint32_t idx = Opaque(i);
+      t.Expect("VecLaneU16", fmt::format("vector {} lane {}", k, i), rex::ppc::VecLaneU16(v.u16, idx), Opaque(v.u16[i]));
+    }
+  }
+}
+
 }  // namespace
 
 namespace banjo {
@@ -268,6 +295,7 @@ void FormsSelfCheck() {
   Divisions(t);
   FloatCopies(t);
   VectorHelpers(t);
+  VecLanes(t);
   if (t.wrong) {
     for (int i = 0; i < t.wrong; ++i) ::me::native::VerifyDifference();
     REXLOG_ERROR("[enhancements] DIFFERENCE: instruction forms self-check: {} of {} results are NOT as expected (see the lines "

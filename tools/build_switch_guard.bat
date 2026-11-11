@@ -8,6 +8,9 @@ rem   with a TOML that sets banjo_hot_guard_calls = 4000 and banjo_hot_guard_per
 rem The everyday build's options otherwise (no LTO, no PGO). Output: app\out\switch-guard\renut.nro
 setlocal
 set "BUILD_DIR=%~dp0..\app\out\switch-guard"
-set "CMAKE_EXTRA=-DSASRT_HOT_GUARD_FORMS=ON %CMAKE_EXTRA%"
+rem renut-ultimate (2026-11-11, port 81): and the copies hooked (SASRT_HOT_IN_PLACE OFF): the guard runs in the hooks.
+rem The copies' code is the one the everyday and release NROs have in place, so this build checks theirs too.
+set "CMAKE_EXTRA=-DSASRT_HOT_GUARD_FORMS=ON -DSASRT_HOT_IN_PLACE=OFF %CMAKE_EXTRA%"
 set "GUARD_FORMS=ON"
+set "IN_PLACE=OFF"
 call "%~dp0build_switch.bat" %*

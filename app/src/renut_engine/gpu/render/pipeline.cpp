@@ -373,7 +373,31 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineKey &key, const Pipel
     } else {
       desc.stencilBackFace = desc.stencilFrontFace;
     }
+    // sasrt-nx (2026-11-11, port 82; its GPU list's row 1; UNTESTED), sasrt_gpu_stencil_noop: a face's test that
+    // compares always rejects no pixel (its fail operation cannot happen); with a write mask of 0, or keep on the pass
+    // outcome and on the depth-fail outcome where the depth test can fail, it changes no stencil value either.
+    // Both faces so: the stencil off is exact. Counted in the 10 s "[renut] untested GPU rows" line.
+    if (desc.stencilEnabled && sasrt::gpu_round::StencilNoopOn()) {
+      const bool depth_can_fail =
+          desc.depthEnabled && desc.depthFunction != plume::RenderComparisonFunction::ALWAYS;
+      const auto noop = [&](const auto &f) {
+        if (f.compareFunction != plume::RenderComparisonFunction::ALWAYS)
+          return false;
+        if ((desc.stencilWriteMask & 0xFF) == 0)
+          return true;
+        return f.passOp == plume::RenderStencilOp::KEEP &&
+               (!depth_can_fail || f.depthFailOp == plume::RenderStencilOp::KEEP);
+      };
+      if (noop(desc.stencilFrontFace) && noop(desc.stencilBackFace)) {
+        desc.stencilEnabled = false;
+        sasrt::gpu_round::g_census_stencil_noop.fetch_add(1, std::memory_order_relaxed);
+      }
+    }
   }
+  // sasrt-nx (2026-11-11, port 82; its GPU list's row 4; UNTESTED): the census's count of the pipelines that cull both
+  // faces (render/draw.cpp leaves out the triangle draws that would use them, sasrt_gpu_skip_cull_both).
+  if (desc.cullMode == plume::RenderCullMode::FRONT_AND_BACK)
+    sasrt::gpu_round::g_census_cull_both.fetch_add(1, std::memory_order_relaxed);
   desc.depthTargetFormat = key.depth_format;
 
   desc.renderTargetCount = key.color_count;

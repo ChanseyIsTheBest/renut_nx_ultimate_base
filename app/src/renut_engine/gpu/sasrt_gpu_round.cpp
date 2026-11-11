@@ -5,6 +5,7 @@
 #include <rex/cvar.h>
 
 #include "cpu/banjo_enhancements.h"
+#include "renut_engine/gpu/ultimate.h"  // sasrt-nx (2026-11-11, port 82; its GPU list's row 4; UNTESTED): CullBothOn
 
 REXCVAR_DEFINE_BOOL(sasrt_gpu_skip_inert_draws, true, "SASRT/GPU",
                     "Renut's renderer (GPU round of 2026-11-08, item 0, A/B 90): a draw that can write nothing (no colour "
@@ -438,6 +439,33 @@ REXCVAR_DEFINE_BOOL(sasrt_dedicated_targets, true, "SASRT/GPU",
                     "(for buffers too) as soon as the target is freed, instead of a hole in a shared image chunk only "
                     "images can use (SASRT's docked race's resolution changes left ~500 MB of such holes)")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// sasrt-nx (2026-11-11, port 82; its GPU list's rows 1, 2 and 4; UNTESTED): pixel-identical by construction and
+// universal, but run by no game yet (SASRT's race census: 0 cases of each). Each has its own key, on by default and
+// read at start; not GPU round items (rows 1 and 2 are decided as a pipeline is built: no in-run A/B). Their counts are
+// the 10 s "[renut] untested GPU rows" line (UntestedReport, below), so a port can see whether its game hits them.
+// sasrt-nx (2026-11-11, port 82; its GPU list's row 1; UNTESTED): render/pipeline.cpp Build (StencilNoopOn).
+REXCVAR_DEFINE_BOOL(sasrt_gpu_stencil_noop, true, "SASRT/GPU",
+                    "UNTESTED ON THE CONSOLE (exact by construction; Beautiful Katamari hits it: the same frames with "
+                    "it on and off on the PC and in Ryujinx): a stencil test that passes every "
+                    "pixel (compare always) and cannot change the stencil plane (write mask 0, or keep on every "
+                    "outcome that can happen) is built with the stencil off: the same pixels and the same stencil, "
+                    "without the stencil work (the depth half of the rule is banjo-nx's)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// sasrt-nx (2026-11-11, port 82; its GPU list's row 2; UNTESTED): plume_deko3d.h, Deko3DOptions::preciseStencilWrite
+// (ApplyPlume).
+REXCVAR_DEFINE_BOOL(sasrt_gpu_precise_stencil_write, true, "SASRT/GPU",
+                    "UNTESTED (exact by construction; no game has hit it yet): a pipeline marks the depth target "
+                    "written (its next read decompresses it) only when a depth write or a stencil change can happen: "
+                    "no mark for a stencil write mask of 0 or for stencil operations only on outcomes that cannot "
+                    "happen (fail when it compares always, depth-fail with no depth test that can fail). The same "
+                    "depth and stencil values; fewer decompressions")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// sasrt-nx (2026-11-11, port 82; its GPU list's row 4; UNTESTED): render/draw.cpp DrawStateLocked (SkipCullBothOn).
+REXCVAR_DEFINE_BOOL(sasrt_gpu_skip_cull_both, true, "SASRT/GPU",
+                    "UNTESTED (exact by construction; no game has hit it yet): a triangle draw that culls both "
+                    "faces (with banjo_renut_cull_both, which builds such draws culling everything) and exports no "
+                    "memory is left out: it draws no pixel either way")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_INT32(sasrt_gpu_exp_sph_no_global_store, 0, "SASRT/GPU",
                      "EXPERIMENT (2026-11-09): vertex programs loaded with their header's DoesGlobalStore bit cleared (1), "
                      "and DoesLoadOrStore too (3): whether the store flag makes the GPU run SASRT's memexport vertex "
@@ -553,6 +581,8 @@ void ApplyPlume() {
   plume::g_deko3dOptions.trackedImageInvalidate = On(kTexDropTracked);
   plume::g_deko3dOptions.trackedTargetWait = On(kTargetWaitTracked);
   plume::g_deko3dOptions.trackedReadWait = On(kReadWaitTracked);
+  // sasrt-nx (2026-11-11, port 82; its GPU list's row 2; UNTESTED): read as each pipeline is built.
+  plume::g_deko3dOptions.preciseStencilWrite = REXCVAR_GET(sasrt_gpu_precise_stencil_write);
   plume::g_deko3dOptions.expSphStoreBits = uint32_t(REXCVAR_GET(sasrt_gpu_exp_sph_no_global_store));  // an experiment
   plume::Deko3DSetDedicatedTargets(REXCVAR_GET(sasrt_dedicated_targets));  // sasrt-nx (2026-11-09; port 58)
   plume::Deko3DSetTargetBlockCacheMb(uint32_t(REXCVAR_GET(sasrt_target_block_cache_mb)));  // sasrt-nx (2026-11-11)
@@ -602,6 +632,40 @@ std::string Report() {
     text += i + 1 < kCount ? ',' : '.';
   }
   return text;
+}
+
+// sasrt-nx (2026-11-11, port 82; its GPU list's rows 1, 2 and 4; UNTESTED): the keys as read at their first use, the
+// counts (sasrt-nx's census names) and their 10 s line.
+bool StencilNoopOn() {
+  static const bool on = REXCVAR_GET(sasrt_gpu_stencil_noop);
+  return on;
+}
+bool SkipCullBothOn() {
+  static const bool on = REXCVAR_GET(sasrt_gpu_skip_cull_both) && banjo::renut_gpu::CullBothOn();
+  return on;
+}
+std::atomic<uint64_t> g_census_stencil_noop{0}, g_census_cull_both{0}, g_census_cull_both_skipped{0};
+
+std::string UntestedReport() {
+  const auto off = [](bool on) { return on ? "" : " off"; };
+#if defined(PLUME_DEKO3D)
+  const uint64_t marks = plume::g_deko3dPreciseStencilSaved.load(std::memory_order_relaxed);
+#else
+  const uint64_t marks = 0;  // row 2 is the deko3d back end's
+#endif
+  // The game thread's (StatsGameFrame, under its stats mutex): the draws left out since the last line.
+  static uint64_t skipped_last = 0;
+  const uint64_t skipped = g_census_cull_both_skipped.load(std::memory_order_relaxed);
+  const uint64_t skipped_recent = skipped - skipped_last;
+  skipped_last = skipped;
+  return fmt::format("[renut] untested GPU rows (port 82; sasrt-nx's rows 1, 2 and 4), since the start: {} no-op "
+                     "stencil pipelines built off (sasrt_gpu_stencil_noop{}), {} depth marks dropped "
+                     "(sasrt_gpu_precise_stencil_write{}, deko3d), {} cull-both pipelines (banjo_renut_cull_both{}), "
+                     "{} cull-both draws skipped (sasrt_gpu_skip_cull_both{}; {} in the last 10 s)",
+                     g_census_stencil_noop.load(std::memory_order_relaxed), off(StencilNoopOn()), marks,
+                     off(REXCVAR_GET(sasrt_gpu_precise_stencil_write)),
+                     g_census_cull_both.load(std::memory_order_relaxed), off(banjo::renut_gpu::CullBothOn()), skipped,
+                     off(SkipCullBothOn()), skipped_recent);
 }
 
 }  // namespace sasrt::gpu_round

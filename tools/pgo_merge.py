@@ -13,6 +13,9 @@ Step 3: a build folder configured with -DBANJO_PGO=use (and -DBANJO_SWITCH_LTO=O
 The profile folder is pgo/ at the root of the repository (the build's BANJO_PGO_DIR): one .gcda per object, named by
 the object's path in the build folder with # for each separator (GCC's names with -fprofile-prefix-path). The streams
 name the files they fill with the profile folder of the PC that built the instrumented NRO: merge on that PC.
+sasrt-nx (2026-11-11, port 81; machine copies in place): an instrumented build with the
+copies in place (CMake SASRT_HOT_IN_PLACE, the Switch's default) names pgo-inplace/ (BANJO_PGO_DIR_IN_PLACE): pass
+that folder as the second argument.
 
 merge-stream ADDS to .gcda files already there: a second run with the same streams would count them twice, so this
 stops when the profile folder already has .gcda files (move them aside first).
@@ -44,7 +47,8 @@ def main():
             sys.exit('gcov-tool merge-stream failed on ' + path)
     count = sum(1 for f in os.listdir(out) if f.endswith('.gcda'))
     if not count:
-        sys.exit('no .gcda file in %s after merging: the streams name another folder (merge on the PC that built the '
+        sys.exit('no .gcda file in %s after merging: the streams name another folder (an in-place build\'s name '
+                 'pgo-inplace; merge on the PC that built the '
                  'instrumented NRO)' % out)
     r = subprocess.run([sys.executable, os.path.join(root, 'tools', 'pgo_summary.py'), out, str(len(files))])
     if r.returncode:

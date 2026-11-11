@@ -264,7 +264,10 @@ endif()
 #   - SASRT_HOT_CARD_RUNS (idea 39): the 12 bulk shards mark the store cards per run of stores to a page (cpu/
 #     banjo_hot_prelude.h; only for copies written with the runs). OFF: at every store, as the generated tree does.
 option(SASRT_HOT_MERGED_STORES "Localized copies: merged unaligned vector stores (tools/localize_native.py)" ON)
-option(SASRT_HOT_LR_ELIDE "The bulk copies (shards 0-11): the link register's dead moves left out (REX_LR_MOVES_ELIDE)" ON)
+# renut-ultimate (2026-11-11, port 84, the user's call): OFF by default. vivapinata-nx's guard found 8 differences from it
+# (the link register's save elided in one of a copy's forms and not the other: forms in different translation units,
+# only one with the define). ON in a game that has checked its copies with it (a guard run, 0 differences).
+option(SASRT_HOT_LR_ELIDE "The bulk copies (shards 0-11): the link register's dead moves left out (REX_LR_MOVES_ELIDE)" OFF)
 option(SASRT_HOT_PREFETCH "Localized copies: a prefetch after a loop's next-pointer load (REX_PREFETCH_GUEST)" ON)
 option(SASRT_HOT_CARD_RUNS "The bulk copies (shards 0-11): store cards marked per run of stores to a page" ON)
 if(NOT SASRT_HOT_MERGED_STORES)
@@ -306,6 +309,37 @@ if(NOT SASRT_HOT_GUARD_FORMS)
     set_property(SOURCE ${BANJO_HOT_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS BANJO_HOT_GUARD_FORMS=0)
 endif()
 message(STATUS "renut: localized copies' guard forms ${SASRT_HOT_GUARD_FORMS} (SASRT_HOT_GUARD_FORMS)")
+# sasrt-nx (2026-11-11, port 81; machine copies in place): sasrt-nx's docs/handoff/inplace_copies.md.
+# With SASRT_HOT_IN_PLACE every localized copy's hook is a bare redirect (BANJO_HOT_IN_PLACE=1, cpu/banjo_hot_guest.h):
+# the generated function's symbol is the copy's Native, which loses its [[gnu::noinline]] (BANJO_HOT_NATIVE_SPEC,
+# written by tools/localize_native.py), so the compiler and LTO may inline a copy into its callers, and the generated
+# original loses its last reference (--gc-sections and LTO drop it). No state byte, no guard (it implies no guard
+# forms), no run-time key, no in-run A/B 70: a copy its list marks `off` keeps the original, every other one runs, and
+# the start-up log names each key set against that (banjo_hot_guest.cpp, InPlaceNotes). The hand-written natives keep
+# their keys. sasrt-nx's console race, each form with its own PGO + LTO: game thread -4.1 %, process CPU -2.0 %, NRO
+# -4.1 MB. The lists and the copies' code are the same in both forms, so a hooked guard build (tools/
+# build_switch_guard.bat, the PC's verify build) checks the in-place code.
+# Default (the user: every optimisation on): ON on the Switch wherever the guard forms are OFF (the everyday, release
+# and PGO folders), OFF otherwise (the PC verify build, app/out/switch-guard: a guard needs its hooks). An existing
+# folder takes the default at its next configure and keeps it (cmake -DSASRT_HOT_IN_PLACE=ON|OFF <folder>;
+# build_switch.bat's IN_PLACE). The two forms compile to different code: each has its own PGO profile
+# (BANJO_PGO_DIR, BANJO_PGO_DIR_IN_PLACE below). sasrt-nx's list option `inplace_only` (small copies compiled in place
+# only) is not taken: sasrt-nx looked at it and dropped it.
+if(REXGLUE_PLATFORM_SWITCH AND NOT SASRT_HOT_GUARD_FORMS)
+    set(_sasrt_hot_in_place_default ON)
+else()
+    set(_sasrt_hot_in_place_default OFF)
+endif()
+option(SASRT_HOT_IN_PLACE "Localized copies in place of the generated functions (no hooks, no guard, no per-copy keys); default ON on the Switch without guard forms" ${_sasrt_hot_in_place_default})
+if(SASRT_HOT_IN_PLACE)
+    set_property(SOURCE ${BANJO_HOT_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS BANJO_HOT_IN_PLACE=1)
+    if(SASRT_HOT_GUARD_FORMS)
+        set_property(SOURCE ${BANJO_HOT_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS BANJO_HOT_GUARD_FORMS=0)
+        message(WARNING "renut: SASRT_HOT_IN_PLACE ON has no hooks and so no guard: SASRT_HOT_GUARD_FORMS ON is not "
+                        "used (a guard or verify build: -DSASRT_HOT_IN_PLACE=OFF, tools/build_switch_guard.bat)")
+    endif()
+endif()
+message(STATUS "renut: localized copies in place ${SASRT_HOT_IN_PLACE} (SASRT_HOT_IN_PLACE)")
 
 # sa2-nx's CPU rounds of 2026-10-12 (docs/enhancements.md, "sa2-nx's CPU rounds"): one switch back per post-codegen
 # step (tools/post_codegen.py). OFF compiles the statements as they were before the step, on every platform, so a PC
@@ -531,6 +565,11 @@ message(STATUS "banjo: sa2-nx's CPU rounds: definitions '${_banjo_round_definiti
 #     compiler's 30 refused call sites that ran billions of times) and inline-unit-growth 12 (without it the higher
 #     limit fills the default 40 per cent with code the sessions never ran). Compile options that do not touch a
 #     recorded profile.
+#   - sasrt-nx (2026-11-11, port 81; machine copies in place): the copies' two forms
+#     (SASRT_HOT_IN_PLACE above) compile to different code, so each has a profile of its own: BANJO_PGO_DIR (pgo/)
+#     for the hooked form, BANJO_PGO_DIR_IN_PLACE (pgo-inplace/, sasrt-nx's name) for the in-place one. A folder
+#     writes (generate) and reads (use) the one of its form; a use build stops at the configure while that folder has
+#     no .gcda file.
 if(REXGLUE_PLATFORM_SWITCH)
     option(BANJO_SWITCH_LTO "Link-time optimisation of the game code, the app and Renut's renderer (Switch)" OFF)
     set(BANJO_SWITCH_LTO_JOBS "4" CACHE STRING "Parallel LTRANS jobs of the Switch LTO link")
@@ -542,6 +581,14 @@ if(REXGLUE_PLATFORM_SWITCH)
     set(BANJO_PGO "" CACHE STRING "Profile-guided optimisation of the Switch build: empty, generate or use")
     set_property(CACHE BANJO_PGO PROPERTY STRINGS "" generate use)
     set(BANJO_PGO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../pgo" CACHE PATH "Folder of the PGO profile (.gcda files)")
+    # sasrt-nx (2026-11-11, port 81; machine copies in place): the in-place form's profile.
+    set(BANJO_PGO_DIR_IN_PLACE "${CMAKE_CURRENT_SOURCE_DIR}/../pgo-inplace" CACHE PATH
+        "Folder of the PGO profile (.gcda files) of the in-place copies' form (SASRT_HOT_IN_PLACE)")
+    if(SASRT_HOT_IN_PLACE)
+        set(_banjo_pgo_profile "${BANJO_PGO_DIR_IN_PLACE}")
+    else()
+        set(_banjo_pgo_profile "${BANJO_PGO_DIR}")
+    endif()
     set(_banjo_opt_targets renut_recomp renut banjo_renut_gpu plume)
     # renut-ultimate (2026-11-07): the SDK runtime (kernel calls, threads, the audio driver) and FFmpeg (XMA decoding) too,
     # their C and C++ only: about 8 % of busy CPU in the console profile of 3 Nov. They were out only because every build
@@ -550,6 +597,22 @@ if(REXGLUE_PLATFORM_SWITCH)
     set(_banjo_sdk_opt_targets)
     if(BANJO_SWITCH_SDK_OPT AND REXGLUE_OUTPUT_IN_BUILD)
         set(_banjo_sdk_opt_targets rexruntime libavcodec libavutil)
+    endif()
+    # renut-ultimate (2026-11-12, port 89; sasrt-nx's batch B, B1, Blur's finding): the SDK's OBJECT libraries are compiled
+    # with their own options, so they had neither LTO nor PGO. sasrt-nx's console race (in place, handheld clocks):
+    # process CPU -0.7 %, render thread -1.9 %, its audio worker -4.9 %. Four of their files stay out of LTO
+    # (_banjo_sdk_no_lto, below): threading_switch.cpp and switch_perf.cpp define --wrap's __wrap_ functions, which the
+    # link must see as ordinary definitions; exception_handler_switch.cpp and fiber_switch.cpp have top-level asm that
+    # names C symbols (g_rex_exc_*, rex_fiber_trampoline), invisible to LTO, which would drop them.
+    option(BANJO_SWITCH_SDK_OBJECT_OPT "The SDK's OBJECT libraries in the Switch LTO and PGO too (port 89)" ON)
+    set(_banjo_sdk_no_lto)
+    if(BANJO_SWITCH_SDK_OPT AND REXGLUE_OUTPUT_IN_BUILD AND BANJO_SWITCH_SDK_OBJECT_OPT)
+        list(APPEND _banjo_sdk_opt_targets rexaudio rexcore rexfilesystem rexinput rexui)
+        set(_banjo_sdk_no_lto
+            "${CMAKE_CURRENT_SOURCE_DIR}/../sdk/src/core/threading_switch.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../sdk/src/ui/switch_perf.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../sdk/src/core/exception_handler_switch.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../sdk/src/core/fiber_switch.cpp")
     endif()
     if(BANJO_SWITCH_LTO)
         set(_banjo_lto_compile -flto -fno-fat-lto-objects)
@@ -572,9 +635,13 @@ if(REXGLUE_PLATFORM_SWITCH)
             endif()
         endforeach()
         target_link_options(renut PRIVATE ${_banjo_lto_link})
+        if(_banjo_sdk_no_lto)  # port 89: after the targets' -flto, so it wins
+            set_property(SOURCE ${_banjo_sdk_no_lto} TARGET_DIRECTORY rexcore rexui APPEND PROPERTY COMPILE_OPTIONS
+                         -fno-lto)
+        endif()
         message(STATUS "banjo: Switch LTO (${BANJO_SWITCH_LTO_JOBS} jobs)")
     endif()
-    get_filename_component(_banjo_pgo_dir "${BANJO_PGO_DIR}" ABSOLUTE)
+    get_filename_component(_banjo_pgo_dir "${_banjo_pgo_profile}" ABSOLUTE)
     file(TO_NATIVE_PATH "${_banjo_pgo_dir}" _banjo_pgo_dir)
     file(TO_NATIVE_PATH "${CMAKE_BINARY_DIR}" _banjo_pgo_prefix)
     if(BANJO_PGO STREQUAL "generate")
@@ -582,8 +649,17 @@ if(REXGLUE_PLATFORM_SWITCH)
                        -fno-profile-values -fprofile-update=single -fprofile-info-section=gcov_info)
         target_compile_definitions(renut PRIVATE BANJO_PGO_GENERATE=1)
     elseif(BANJO_PGO STREQUAL "use")
-        if(NOT EXISTS "${BANJO_PGO_DIR}")
-            message(FATAL_ERROR "BANJO_PGO=use: no profile in ${BANJO_PGO_DIR}")
+        # Port 81: a folder without .gcda files is no profile either (pgo-inplace/ before its first session).
+        file(GLOB _banjo_pgo_gcda "${_banjo_pgo_profile}/*.gcda")
+        if(NOT _banjo_pgo_gcda)
+            if(SASRT_HOT_IN_PLACE)
+                message(FATAL_ERROR "BANJO_PGO=use: no profile in ${_banjo_pgo_profile}, the in-place copies' form's "
+                        "(SASRT_HOT_IN_PLACE ON). Make one with an instrumented build of this form (docs/building.md, "
+                        "section 4), or configure with -DSASRT_HOT_IN_PLACE=OFF (IN_PLACE=OFF) for the hooked form "
+                        "and its profile in ${BANJO_PGO_DIR}")
+            else()
+                message(FATAL_ERROR "BANJO_PGO=use: no profile in ${_banjo_pgo_profile}")
+            endif()
         endif()
         # -fprofile-correction: the counts were taken without atomic updates (-fprofile-update=single) while several
         # threads ran the same code, so a few increments were lost and some blocks' counts do not add up; GCC
@@ -617,7 +693,7 @@ if(REXGLUE_PLATFORM_SWITCH)
             endif()
         endforeach()
         target_link_options(renut PRIVATE ${_banjo_pgo})
-        message(STATUS "banjo: PGO ${BANJO_PGO} (${BANJO_PGO_DIR})")
+        message(STATUS "banjo: PGO ${BANJO_PGO} (${_banjo_pgo_profile})")
     endif()
 endif()
 

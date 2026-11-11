@@ -131,6 +131,10 @@ def main():
     run(tool('single_floats.py'), '--gen', gen)
     run(tool('inline_memcalls.py'), '--gen', gen)
     run(tool('vec_unaligned_stores.py'), '--gen', gen)
+    # blur-nx (2026-11-11): stvewx / stvehx lanes read from the register, not stored to the stack and loaded back (the
+    # A57 cannot forward the wider store; sdk/include/rex/ppc/vec_lane.h, checked on the device by the forms
+    # self-check). Before the localized copies, so they take the same form.
+    run(tool('vec_lane_index.py'), '--gen', gen)
     # banjo-nx (2026-10-16, CPU codegen agent): the read-only constants ro_constants.py could not see because a label
     # stood between the base register's constant and the load (loop heads): followed over the control-flow graph.
     run(tool('ro_constants_cfg.py'), '--gen', gen, '--image', IMAGE, *(['--xex', xex] if os.path.isfile(xex) else []))

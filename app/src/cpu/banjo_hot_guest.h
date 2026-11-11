@@ -12,6 +12,8 @@
 // the copy: no countdown (for the bulk hooks a counter shared by every thread, written at every call).
 // sasrt-nx (2026-11-10, port 78; its idea 27): always kDirect in a build without the guard's forms
 // (BANJO_HOT_GUARD_FORMS below).
+// sasrt-nx (2026-11-11, port 81; machine copies in place): with BANJO_HOT_IN_PLACE (CMake
+// SASRT_HOT_IN_PLACE) there is no hook at all: the generated function's symbol is the copy (BANJO_HOT_HOOK_EX below).
 #pragma once
 
 #include <atomic>
@@ -101,6 +103,21 @@ void ForEachKey(void (*row)(void* user, const char* key, bool own), void* user);
 // The counters of every hook that was reached, once per report of the renderer (10 s) and at most that often.
 void Report();
 
+// sasrt-nx (2026-11-11, port 81; machine copies in place): with BANJO_HOT_IN_PLACE a copy has no
+// Hook, only this record, read once at start-up (InPlaceNotes in banjo_hot_guest.cpp, from ForEachKey or the first
+// Report): the list's choice for the copy and its key, so the log can name a key set against what the build made.
+// Nothing on a call reads it. (Declared in both forms; only the in-place one defines records.)
+struct InPlaceCopy {
+  const char* name;  // "sub_8299E2E8"
+  const char* key;   // its cvar (defined, not read)
+  bool on;           // the list's choice: false (`off` in the list) keeps the generated original
+  bool bulk;         // a copy of the bulk list (localized_bulk.txt)
+  bool (*own)();     // reads the key
+  InPlaceCopy* next = nullptr;
+
+  InPlaceCopy(const char* name_, const char* key_, bool on_, bool bulk_, bool (*own_)());
+};
+
 }  // namespace banjo::hot
 
 // The counting form is a PC measurement (banjo_hot_count): the Switch build does not make it (nor its code).
@@ -116,8 +133,39 @@ void Report();
 // hook calls its copy directly (InitHook), whatever banjo_cpu_verify and banjo_hot_guard_* say, and the log says so.
 // Only this macro names them: an inline form nothing takes the address of is never made, nor the o_* statements and
 // the f_*<Logged> instances it alone calls (tools/localize_native.py writes them as before).
+// sasrt-nx (2026-11-11, port 81; machine copies in place): BANJO_HOT_IN_PLACE (CMake
+// SASRT_HOT_IN_PLACE: ON by default on the Switch wherever the guard forms are OFF, app/CMakeLists.txt) puts every copy
+// in place of its generated function (BANJO_HOT_HOOK_EX below). No hook means no guard: it implies no guard forms.
+#ifndef BANJO_HOT_IN_PLACE
+#define BANJO_HOT_IN_PLACE 0
+#endif
 #ifndef BANJO_HOT_GUARD_FORMS
+#if BANJO_HOT_IN_PLACE
+#define BANJO_HOT_GUARD_FORMS 0
+#else
 #define BANJO_HOT_GUARD_FORMS 1
+#endif
+#endif
+// The copy's entry, n_<ID>::Native (tools/localize_native.py writes "BANJO_HOT_NATIVE_SPEC inline void Native"): out of
+// line behind a hook (one body, the hook's paths around it), inlinable in place, so the compiler and LTO may put a copy
+// into its callers. Each header falls back to the hooked spec.
+#ifndef BANJO_HOT_NATIVE_SPEC
+#if BANJO_HOT_IN_PLACE
+#define BANJO_HOT_NATIVE_SPEC
+#else
+#define BANJO_HOT_NATIVE_SPEC [[gnu::noinline]]
+#endif
+#endif
+// Headers written before port 81 still say [[gnu::noinline]]: in place their copies stay calls (still no hook). The
+// generator marks headers with the spec in banjo_hot_options.h; python tools/post_codegen.py (or a code generation)
+// writes them again. Not tools/localize_native.py alone: post_codegen.py takes the tree's late steps (store cards and
+// others) out before it and puts them back after; run alone on the finished tree it refuses copies.
+#if BANJO_HOT_IN_PLACE && __has_include("hot/banjo_hot_options.h")
+#include "hot/banjo_hot_options.h"
+#if !defined(BANJO_HOT_NATIVE_SPEC_HEADERS)
+#pragma message( \
+    "BANJO_HOT_IN_PLACE: app/generated/hot predates port 81 (its copies keep [[gnu::noinline]]): run python tools/post_codegen.py")
+#endif
 #endif
 #if BANJO_HOT_GUARD_FORMS
 #define BANJO_HOT_LOGGED(ID) &n_##ID::NativeLogged
@@ -134,6 +182,26 @@ void Report();
   BANJO_HOT_HOOK_EX(SYM, ID, KEY, DEFAULT, SLOT, DESC, false, "Banjo/Enhancements")
 #define BANJO_HOT_HOOK_BULK(SYM, ID, KEY, DEFAULT, SLOT, DESC) \
   BANJO_HOT_HOOK_EX(SYM, ID, KEY, DEFAULT, SLOT, DESC, true, "Banjo/Bulk copies")
+#if BANJO_HOT_IN_PLACE
+// sasrt-nx (2026-11-11, port 81; machine copies in place): the generated function's symbol is the copy
+// itself (sasrt-nx's SASRT_HOT_IN_PLACE). No state byte, no guard, no run-time key, no in-run A/B 70: a copy its list
+// marks off (DEFAULT false) keeps the generated original, every other one runs. The key stays defined (a toml that names
+// it still loads; its description says it is not read), and the record (InPlaceCopy) lets the start-up log name a key
+// set against the list. The original (__imp__SYM) loses its last reference: --gc-sections and LTO drop it.
+#define BANJO_HOT_HOOK_EX(SYM, ID, KEY, DEFAULT, SLOT, DESC, BULK, CATEGORY)                                     \
+  REXCVAR_DEFINE_BOOL(KEY, DEFAULT, CATEGORY, DESC " (not read: this build has the copies in place)")            \
+      .lifecycle(rex::cvar::Lifecycle::kInitOnly);                                                               \
+  REX_EXTERN(__imp__##SYM);                                                                                      \
+  namespace banjo::hot {                                                                                         \
+  InPlaceCopy g_in_place_##ID{#SYM, #KEY, DEFAULT, BULK, [] { return bool(REXCVAR_GET(KEY)); }};                 \
+  }                                                                                                              \
+  REX_HOOK_RAW(SYM) {                                                                                            \
+    if constexpr (DEFAULT)                                                                                       \
+      banjo::hot::n_##ID::Native(ctx, base);                                                                     \
+    else                                                                                                         \
+      __imp__##SYM(ctx, base);                                                                                   \
+  }
+#else
 #define BANJO_HOT_HOOK_EX(SYM, ID, KEY, DEFAULT, SLOT, DESC, BULK, CATEGORY)                                     \
   REXCVAR_DEFINE_BOOL(KEY, DEFAULT, CATEGORY, DESC).lifecycle(rex::cvar::Lifecycle::kInitOnly);                  \
   REX_EXTERN(__imp__##SYM);                                                                                      \
@@ -187,3 +255,4 @@ void Report();
     }                                                                                                            \
     banjo::hot::n_##ID::Native(ctx, base);                                                                       \
   }
+#endif  // BANJO_HOT_IN_PLACE

@@ -26,6 +26,11 @@
 
 namespace renut::gpu::render_thread {
 
+// vivapinata-nx (2026-11-11, vivapinata_tiles_once): a function every queue and wait calls first on any thread but the
+// render thread, so work held back on the game's side (a tile's command buffer run waiting for its twin) is queued
+// before anything after it. Set once at start-up; null for none.
+void SetBeforePushHook(void (*hook)());
+
 // Runs 'work' on the render thread after everything queued before it, with
 // State().mutex held.
 void Queue(std::function<void()> work);

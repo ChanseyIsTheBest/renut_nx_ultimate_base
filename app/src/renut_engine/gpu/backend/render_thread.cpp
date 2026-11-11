@@ -256,8 +256,17 @@ void WakeForWaitLocked() {
     g_work_cv.notify_one();
 }
 
+// vivapinata-nx (2026-11-11, vivapinata_tiles_once): SetBeforePushHook's function.
+std::atomic<void (*)()> g_before_push{nullptr};
+
+[[gnu::always_inline]] inline void BeforePush() {
+  if (void (*hook)() = g_before_push.load(std::memory_order_relaxed); hook && !t_render_thread) [[unlikely]]
+    hook();
+}
+
 void Push(std::function<void()> work, bool locked, const void *prefetch0 = nullptr,
           const void *prefetch1 = nullptr, bool draw = false) {
+  BeforePush();  // vivapinata-nx (2026-11-11): a held tile run goes in first
   if (!g_started.load(std::memory_order_relaxed)) [[unlikely]]
     Start();  // bangaio-nx (2026-10-29, v6): only until it has run (g_started)
   {
@@ -281,6 +290,10 @@ void Push(std::function<void()> work, bool locked, const void *prefetch0 = nullp
 }
 
 } // namespace
+
+void SetBeforePushHook(void (*hook)()) {
+  g_before_push.store(hook, std::memory_order_relaxed);
+}
 
 void Queue(std::function<void()> work) {
   Push(std::move(work), true);
@@ -350,6 +363,7 @@ void CallbacksRun(uint64_t seq) {
 }
 
 bool WaitForFenceProgress(std::chrono::milliseconds timeout) {
+  BeforePush();  // vivapinata-nx (2026-11-11): nothing waits on work still held back
   std::unique_lock lock(g_mutex);
   if (!g_running || g_stopping)
     return false;
@@ -489,6 +503,7 @@ uint64_t FramesDone() {
 }
 
 void Drain() {
+  BeforePush();  // vivapinata-nx (2026-11-11): nothing waits on work still held back
   std::unique_lock lock(g_mutex);
   if (!g_running || std::this_thread::get_id() == g_thread_id)
     return;

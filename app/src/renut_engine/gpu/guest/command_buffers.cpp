@@ -80,6 +80,16 @@ REXCVAR_DEFINE_BOOL(banjo_renut_replay_inherits, false, "Banjo/Renut",
                     "whole device, which suits a game recording on its real device, and drops every draw of one "
                     "recording on a device of its own (Halo 3's no-hardware device has no targets)")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(vivapinata_tiles_once, true, "Banjo/Enhancements",
+                    "vivapinata-nx (2026-11-11, the GPU round; A/B 86): a recorded command buffer the game runs once per "
+                    "predicated tile (SetPredication(tile), RunCommandBuffer, the same buffer for the next tile) is "
+                    "replayed once with every tile's predication. The host draws into one full-size target, so each "
+                    "draw then covers the tiles' rects in one go instead of one per run: half the vertex, tessellation "
+                    "and memexport work of those draws, the same pixels (the rects are disjoint and each pixel gets the "
+                    "same draws in the same order). Only when the runs are adjacent, of the same captured recordings, "
+                    "with no clear or resolve in them, and the running devices are the same but for the predication; "
+                    "anything else is replayed per tile as before. Off: per tile")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(banjo_renut_diag_replay_state, false, "Banjo/Diagnostics",
                     "Diagnostic (halo3-nx): logs the first replayed draws' device words that differ from the running "
                     "device's, what each recording overrides");
@@ -3510,15 +3520,224 @@ void PlanSortedRuns(HostCommandBuffer &b) {
 }
 }  // namespace
 
+namespace {
+struct Run {
+  std::vector<u8> running;  // the running device, whose constants the buffer inherits
+  BufferSet buffers;
+};
+
+void QueueReplay(std::shared_ptr<Run> run, u32 command_buffer_va, u32 predication) {
+  render_thread::Queue([run, command_buffer_va, predication] {
+    Replay(run->running.data(), run->buffers, command_buffer_va, 0, predication);
+  });
+}
+
+// vivapinata-nx (2026-11-11, vivapinata_tiles_once / A/B 86): a run under one tile's predication is held here until
+// the next thing the game queues. The same buffer for another tile joins it (one replay with both tiles' masks); anything
+// else, or any queue or wait (render_thread::SetBeforePushHook), queues it as it was first.
+struct HeldTileRun {
+  std::shared_ptr<Run> run;
+  u32 command_buffer = 0;
+  u32 predication = 0;  // the tiles' masks so far
+  u32 device_va = 0;
+};
+std::mutex g_tiles_once_mutex;
+HeldTileRun g_held;  // run null: none
+std::atomic<uint64_t> g_tiles_once_merged{0}, g_tiles_once_single{0};
+std::atomic<uint32_t> g_tiles_once_why[6];  // per-tile runs by reason, below
+constexpr const char *kTilesOnceWhy[6] = {"another buffer", "a clear or resolve in it", "the running device differs",
+                                          "another device", "a tile already held", "held until something else came"};
+
+// The one tile a predication mask selects among 'tiles', or -1 (none or several).
+int OneTile(u32 mask, u32 tiles) {
+  int tile = -1;
+  for (u32 i = 0; i < tiles && i < 16; ++i) {
+    if (!(mask & (3u << (2 * i))))
+      continue;
+    if (tile >= 0)
+      return -1;
+    tile = int(i);
+  }
+  return tile;
+}
+
+bool HasClearOrResolve(const BufferSet &buffers) {
+  for (const auto &[va, buffer] : buffers) {
+    if (!buffer)
+      continue;
+    for (const Op &op : buffer->ops) {
+      if (op.kind == OpKind::Clear || op.kind == OpKind::Resolve)
+        return true;
+    }
+  }
+  return false;
+}
+
+bool SameRecordings(const BufferSet &a, const BufferSet &b) {
+  if (a.size() != b.size())
+    return false;
+  for (const auto &[va, buffer] : a) {
+    auto it = b.find(va);
+    if (it == b.end() || it->second != buffer)
+      return false;
+  }
+  return true;
+}
+
+// The two runs' devices, the same but for the predication words (the tile's run and its twin), else the first
+// offset that differs.
+bool SameButPredication(const std::vector<u8> &a, const std::vector<u8> &b, u32 &differs) {
+  if (a.size() != b.size()) {
+    differs = 0;
+    return false;
+  }
+  // The device's header (+0x00 m_Pending's dirty masks, +0x28 m_pRing and its limits, +0x34 m_ReferenceCount) is the
+  // command writer's bookkeeping, which moves between the two runs, not state a draw reads (d3d.h's Device).
+  u32 begin = 0x38;
+  auto same = [&](u32 end) {
+    if (end > begin && std::memcmp(a.data() + begin, b.data() + begin, end - begin) != 0) {
+      for (u32 i = begin; i < end; ++i) {
+        if (a[i] != b[i]) {
+          differs = i;
+          break;
+        }
+      }
+      return false;
+    }
+    return true;
+  };
+  // Ascending: TilePredication and RunPredication (SetCommandBufferPredication's), then the device's predication and
+  // run predication state.
+  constexpr u32 kSkipped[4] = {0x2A30, 0x2A34, d3d::kDeviceOffsetPredication, d3d::kDeviceOffsetPredication + 4};
+  for (const u32 skip : kSkipped) {
+    if (skip + 4 > a.size())
+      break;
+    if (!same(skip))
+      return false;
+    begin = skip + 4;
+  }
+  return same(u32(a.size()));
+}
+
+void FlushHeldTileRun() {
+  HeldTileRun held;
+  {
+    std::lock_guard lock(g_tiles_once_mutex);
+    if (!g_held.run)
+      return;
+    held = std::move(g_held);
+    g_held = {};
+  }
+  g_tiles_once_single.fetch_add(1, std::memory_order_relaxed);
+  g_tiles_once_why[5].fetch_add(1, std::memory_order_relaxed);
+  QueueReplay(held.run, held.command_buffer, held.predication);
+}
+
+void ReportTilesOnce() {
+  static auto last = std::chrono::steady_clock::now();
+  const auto now = std::chrono::steady_clock::now();
+  if (now - last < std::chrono::seconds(10))
+    return;
+  last = now;
+  std::string why;
+  for (int i = 0; i < 5; ++i) {
+    if (const uint32_t n = g_tiles_once_why[i].exchange(0, std::memory_order_relaxed))
+      why += fmt::format("{}{} {}", why.empty() ? "" : ", ", n, kTilesOnceWhy[i]);
+  }
+  g_tiles_once_why[5].store(0, std::memory_order_relaxed);
+  RGPU_INFO("[renut] tiles once (vivapinata_tiles_once, A/B 86): {} tile runs replayed once for every tile, {} per tile "
+            "in the last 10 s{}{}",
+            g_tiles_once_merged.exchange(0, std::memory_order_relaxed),
+            g_tiles_once_single.exchange(0, std::memory_order_relaxed), why.empty() ? "" : ": ", why);
+}
+
+// True when the run was taken (held or merged): nothing more to queue.
+bool TilesOnce(u32 device_va, const u8 *device, u32 command_buffer_va, const std::shared_ptr<Run> &run) {
+  static const bool on = [] {
+    const bool v = REXCVAR_GET(vivapinata_tiles_once);
+    if (v)
+      render_thread::SetBeforePushHook(&FlushHeldTileRun);
+    return v;
+  }();
+  if (!on)
+    return false;
+  ReportTilesOnce();
+  if (banjo::renut_gpu::g_ab_off.load(std::memory_order_relaxed) == 86)
+    return false;
+  // Tiling (BeginTiling sets Flags 0x20 until EndTiling) with two tiles or more.
+  const u32 tiles = *reinterpret_cast<const be_u32 *>(device + 0x30B8);  // native::off::TileCount
+  if (!(device[0x2A38] & 0x20) || tiles < 2 || tiles > 16)  // native::off::Flags
+    return false;
+  const u32 predication = Predication(run->running.data());
+  const int tile = OneTile(predication, tiles);
+  if (tile < 0)
+    return false;
+  std::unique_lock lock(g_tiles_once_mutex);
+  if (g_held.run) {
+    int why = -1;
+    u32 differs = 0;
+    if (g_held.device_va != device_va)
+      why = 3;
+    else if (g_held.command_buffer != command_buffer_va || !SameRecordings(g_held.run->buffers, run->buffers))
+      why = 0;
+    else if (g_held.predication & (3u << (2 * tile)))
+      why = 4;
+    else if (!SameButPredication(g_held.run->running, run->running, differs))
+      why = 2;
+    if (why < 0) {
+      // The twin: one run for both. The running device's own predication word is both tiles' too (draws that set none
+      // take it); the replay's mask is the union.
+      g_held.predication |= predication;
+      const u32 word_a = *reinterpret_cast<const be_u32 *>(g_held.run->running.data() + d3d::kDeviceOffsetPredication);
+      const u32 word_b = *reinterpret_cast<const be_u32 *>(run->running.data() + d3d::kDeviceOffsetPredication);
+      *reinterpret_cast<be_u32 *>(g_held.run->running.data() + d3d::kDeviceOffsetPredication) =
+          (word_a && word_b) ? (word_a | word_b) : 0u;
+      g_tiles_once_merged.fetch_add(1, std::memory_order_relaxed);
+      // Every tile in: queue it now.
+      bool all = true;
+      for (u32 i = 0; i < tiles; ++i)
+        all = all && (g_held.predication & (3u << (2 * i)));
+      if (all) {
+        HeldTileRun held = std::move(g_held);
+        g_held = {};
+        lock.unlock();
+        QueueReplay(held.run, held.command_buffer, held.predication);
+      }
+      return true;
+    }
+    if (why == 2) {
+      static uint32_t logged = 0;
+      if (logged++ < 8)
+        RGPU_INFO("[renut] tiles once: buffer {:08X}'s runs for two tiles differ at device offset 0x{:X}: per tile",
+                  command_buffer_va, differs);
+    }
+    g_tiles_once_why[why].fetch_add(1, std::memory_order_relaxed);
+    // The held one goes as it was; this one is held in its place (it may have a twin of its own).
+    HeldTileRun held = std::move(g_held);
+    g_held = {};
+    lock.unlock();
+    g_tiles_once_single.fetch_add(1, std::memory_order_relaxed);
+    QueueReplay(held.run, held.command_buffer, held.predication);
+    lock.lock();
+  }
+  if (HasClearOrResolve(run->buffers)) {
+    g_tiles_once_why[1].fetch_add(1, std::memory_order_relaxed);
+    g_tiles_once_single.fetch_add(1, std::memory_order_relaxed);
+    return false;
+  }
+  g_held.run = run;
+  g_held.command_buffer = command_buffer_va;
+  g_held.predication = predication;
+  g_held.device_va = device_va;
+  return true;
+}
+}  // namespace
+
 void QueueRunCommandBuffer(u32 device_va, u32 command_buffer_va) {
   FlushDeferredVertices(device_va);
   const u8 *device = GuestPtr<const u8>(device_va);
   if (!device)
     return;
-  struct Run {
-    std::vector<u8> running;  // the running device, whose constants the buffer inherits
-    BufferSet buffers;
-  };
   auto run = std::make_shared<Run>();
   run->running.assign(device, device + d3d::kDeviceSnapshotSize);
   {
@@ -3543,10 +3762,10 @@ void QueueRunCommandBuffer(u32 device_va, u32 command_buffer_va) {
       NoteCommandBufferRun(reinterpret_cast<const void *>(uintptr_t(recording->id)), draws, swap);
     }
   }
-  render_thread::Queue([run, command_buffer_va] {
-    const u8 *running = run->running.data();
-    Replay(running, run->buffers, command_buffer_va, 0, Predication(running));
-  });
+  // vivapinata-nx (2026-11-11, vivapinata_tiles_once): a tile's run may wait for its twin (TilesOnce).
+  if (TilesOnce(device_va, device, command_buffer_va, run))
+    return;
+  QueueReplay(run, command_buffer_va, Predication(run->running.data()));
 }
 
 void ReleaseCommandBuffer(u32 command_buffer_va) {

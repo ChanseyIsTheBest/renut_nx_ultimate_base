@@ -92,6 +92,21 @@ struct HostSurface {
   // blur-nx (2026-11-10, port 76; its key 216: blur_renut_sample_grid_resolve): g_surface_write_seq at the last draw into
   // it (not its clears).
   uint64_t blur_draw_seq = 0;
+  // vivapinata-nx (2026-11-11, vivapinata_resolve_from_sibling / A/B 87): the last multisampled colour resolve of this target
+  // that the API drew (ResolveStateLocked): its destination, that destination's resolve signature then, this target's
+  // generation and writes then, and the rect in host pixels (the destination's texels at the same coordinates). A later
+  // resolve of the unchanged target into another destination copies from there: the same texels, one sample read.
+  // Clears since (rect_clears, and their host rects, up to four) do not end it: a later resolve outside them still finds
+  // the same pixels (EndTiling's tiles resolve and clear one after the other).
+  struct MsSibling {
+    uint32_t dest_va = 0;
+    uint64_t dest_sig = 0;
+    uint64_t generation = 0, writes = 0, clears = 0;
+    int32_t left = 0, top = 0, right = 0, bottom = 0;
+    uint32_t cleared_count = 0;
+    int32_t cleared[4][4] = {};  // left, top, right, bottom (host pixels)
+  } ms_sibling;
+  uint64_t rect_clears = 0;  // vivapinata-nx (2026-11-11): the colour clears of it (each also counts in writes)
 
   // The view and bindless slot shaders read the target through (depth
   // resolves); made on first use, see SurfaceSampleSlotLocked.

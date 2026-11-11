@@ -169,6 +169,8 @@ namespace plume {
 
 
     Deko3DOptions g_deko3dOptions;
+    // sasrt-nx (2026-11-11, port 82; its GPU list's row 2; UNTESTED): preciseStencilWrite's count.
+    std::atomic<uint64_t> g_deko3dPreciseStencilSaved{0};
     void Deko3DSetOptions(const Deko3DOptions &options) { g_deko3dOptions = options; }
 
     static Deko3DShaderCacheLookup g_cacheLookup;
@@ -2768,6 +2770,25 @@ namespace plume {
             };
             p->writesDepthStencil = desc.depthWriteEnabled ||
                                     (desc.stencilEnabled && (!keeps(desc.stencilFrontFace) || !keeps(desc.stencilBackFace)));
+            // sasrt-nx (2026-11-11, port 82; its GPU list's row 2; UNTESTED), Deko3DOptions::preciseStencilWrite:
+            // the stencil plane changes only through an outcome that can happen (pass always can; fail only when the
+            // test can fail; depth-fail only when the depth test can fail) whose operation is not keep, and only with
+            // write mask bits. Depth writes as before (not looked at).
+            if (g_deko3dOptions.preciseStencilWrite && p->writesDepthStencil && !desc.depthWriteEnabled) {
+                const bool depthCanFail = desc.depthEnabled && desc.depthFunction != RenderComparisonFunction::ALWAYS;
+                const auto writes = [&](const RenderStencilFaceDesc &f) {
+                    return f.passOp != RenderStencilOp::KEEP ||
+                           (f.compareFunction != RenderComparisonFunction::ALWAYS &&
+                            f.failOp != RenderStencilOp::KEEP) ||
+                           (depthCanFail && f.depthFailOp != RenderStencilOp::KEEP);
+                };
+                const bool stencilWrites = desc.stencilEnabled && (desc.stencilWriteMask & 0xFF) != 0 &&
+                                           (writes(desc.stencilFrontFace) || writes(desc.stencilBackFace));
+                if (!stencilWrites) {
+                    p->writesDepthStencil = false;
+                    g_deko3dPreciseStencilSaved.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
         }
         p->stencilReadMask = uint8_t(desc.stencilReadMask);
         p->stencilWriteMask = uint8_t(desc.stencilWriteMask);

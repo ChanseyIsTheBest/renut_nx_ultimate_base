@@ -1228,6 +1228,37 @@ HostTexture *FindHostTextureLocked(u32 texture_va) {
   return it != g_textures.end() ? it->second.get() : nullptr;
 }
 
+// vivapinata-nx (2026-11-11, vivapinata_resolve_from_sibling): a slot that reads 't''s texels as stored: a view with the
+// x, y, z, w mapping and no red-blue swap whatever the texture's own view does (2026-11-12: the RGBA8 resolve destinations
+// are viewed with red and blue swapped, so the swizzle views could not serve). A copy through it into a texture of the
+// same format writes the stored bytes back, as a resolve of the same target would have. A single-component format's
+// mapping has its one channel in x. Kept with 't' among its swizzle views under a key no fetch swizzle has (those are
+// 12 bits).
+uint32_t RawViewSlotLocked(HostTexture &t) {
+  constexpr u32 kRawKey = 0x80000688u;
+  if (!t.texture)
+    return kInvalidDescriptor;
+  for (const HostTexture::SwizzleView &v : t.swizzle_views) {
+    if (v.swizzle == kRawKey)
+      return v.slot;
+  }
+  plume::RenderTextureViewDesc desc = t.view_desc;
+  desc.componentMapping = SwizzleMapping(0x688, false, t.host_format);
+  HostTexture::SwizzleView v;
+  v.swizzle = kRawKey;
+  v.view = t.texture->createTextureView(desc);
+  if (!v.view)
+    return kInvalidDescriptor;
+  v.slot = Video::AllocateTextureSlotLocked();
+  if (v.slot == kInvalidDescriptor) {
+    Video::RetireLocked(std::move(v.view));
+    return kInvalidDescriptor;
+  }
+  Video::SetTextureSlotLocked(v.slot, t.texture.get(), v.view.get());
+  t.swizzle_views.push_back(std::move(v));
+  return t.swizzle_views.back().slot;
+}
+
 void ReleaseHostTextureLocked(u32 texture_va) {
   auto it = g_textures.find(texture_va);
   if (it == g_textures.end())

@@ -18,6 +18,10 @@ Input: one or more "PROFILE ELF" pairs: logs/rex/rex_profile.log of a console ru
 image+0x... xN" per thread every 10 s) and the ELF of the NRO that wrote it (builds/<package>/renut_<md5>.elf). A
 generated function shows in the ELF as sub_XXXXXXXX (and __imp__sub_XXXXXXXX at the same address); a hooked one as
 two addresses (the hook, and __imp__ the original).
+sasrt-nx (2026-11-11, port 81; machine copies in place): a copy in place of its
+generated function (CMake SASRT_HOT_IN_PLACE, the Switch's default) shows as sub_XXXXXXXX alone (the original is
+dropped); its record, banjo::hot::g_in_place_XXXXXXXX, says it is a copy. Where LTO inlined a copy into a caller, its
+samples are the caller's.
 
   python tools/switch_hot_bulk.py PROFILE ELF [PROFILE ELF ...] [--from-report N] [--top 40]
   python tools/switch_hot_bulk.py PROFILE ELF ... --write app/src/cpu/hot/localized_bulk.txt [--min-samples 3]
@@ -37,6 +41,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 WIN = re.compile(r'^==== ([0-9.]+) s \| mode: (\w+) \| game ([0-9.]+) fps')
 THREAD = re.compile(r'^-- thread (\d+) "([^"]*)": CPU ([0-9.]+)%')
 PC = re.compile(r'^\s+[0-9.]+%\s+pc image\+0x([0-9a-f]+) x(\d+)')
+IN_PLACE = re.compile(r'banjo3hot\d+g_in_place_([0-9A-F]{8})E')  # port 81: _ZN5banjo3hot19g_in_place_823A9E80E
 NM = next((p for p in (os.path.join(os.environ.get('DEVKITPRO', ''), 'devkitA64', 'bin', 'aarch64-none-elf-nm.exe'),
                        'C:/devkitPro/devkitA64/bin/aarch64-none-elf-nm.exe') if os.path.isfile(p)), 'aarch64-none-elf-nm')
 
@@ -46,8 +51,12 @@ def symbols(elf):
                          errors='replace').stdout
     starts, names = [], []
     by_name = {}
+    in_place = set()  # port 81: the copies in place (their records)
     for line in out.splitlines():
         p = line.split(' ', 2)
+        r = IN_PLACE.search(p[2]) if len(p) == 3 else None
+        if r:
+            in_place.add('sub_' + r.group(1))
         if len(p) != 3 or p[1] not in 'TtWw':
             continue
         a = int(p[0], 16)
@@ -59,16 +68,18 @@ def symbols(elf):
             continue
         starts.append(a)
         names.append(p[2])
-    return starts, names, by_name
+    return starts, names, by_name, in_place
 
 
-def demangled_kind(name, by_name):
+def demangled_kind(name, by_name, in_place=frozenset()):
     """('gen', 'sub_X') for generated code, ('hook', 'sub_X') for a hook's copy or original, ('host', name)."""
     m = re.fullmatch(r'(?:__imp__)?(sub_[0-9A-F]{8})', name)
     if m:
         sub = m.group(1)
         if sub in by_name and '__imp__' + sub in by_name and by_name[sub] != by_name['__imp__' + sub]:
             return 'hooked', sub  # the function has a hook: these samples are in its original (cold) or the hook
+        if sub in in_place:
+            return 'copy', sub  # port 81: a copy in place of its generated function (no original left)
         return 'gen', sub
     m = re.search(r'banjo3hot\d+n_([0-9A-F]{8})', name)  # _ZN5banjo3hot10n_823A9E80...
     if m:
@@ -77,7 +88,7 @@ def demangled_kind(name, by_name):
 
 
 def parse(profile, elf, from_report):
-    starts, names, by_name = symbols(elf)
+    starts, names, by_name, in_place = symbols(elf)
     per_func = collections.Counter()           # sub_X -> generated-code samples, all threads
     per_thread = collections.defaultdict(collections.Counter)  # thread name -> {(kind, name): samples}
     totals = collections.Counter()             # thread name -> samples
@@ -98,7 +109,7 @@ def parse(profile, elf, from_report):
         off, n = int(m.group(1), 16), int(m.group(2))
         k = bisect.bisect_right(starts, off) - 1
         name = names[k] if k >= 0 else '?'
-        kind, what = demangled_kind(name, by_name)
+        kind, what = demangled_kind(name, by_name, in_place)
         totals[thread] += n
         per_thread[thread][(kind, what)] += n
         if kind == 'gen':

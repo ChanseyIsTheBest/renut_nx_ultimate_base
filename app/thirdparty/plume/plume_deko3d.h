@@ -1082,6 +1082,11 @@ namespace plume {
     struct Deko3DOptions {
         bool depthCompression = false;
         bool zcull = false;
+        // sasrt-nx (2026-11-11, port 82; its GPU list's row 2; UNTESTED), sasrt_gpu_precise_stencil_write: a pipeline's
+        // "may write the depth target" (writesDepthStencil, the mark a read decompresses after) leaves out the stencil
+        // outcomes that cannot happen (fail when it compares always, depth-fail when the depth test cannot fail) and a
+        // stencil write mask of 0. Read as each pipeline is built.
+        bool preciseStencilWrite = false;
         // A pipeline's vertex shader gets specialization constant 905 (when it declares it), the locations its pixel
         // shader reads of the ones it writes (none without a pixel shader; not with a geometry shader): banjo-nx's
         // tools/deko3d_glsl_opt.py, pass vsout, drops the other outputs and what computes them.
@@ -1255,5 +1260,8 @@ namespace plume {
     void Deko3DSetOptions(const Deko3DOptions &options);
     // banjo-nx (2026-10-19, render-thread proposal 13): read inline (barriers() reads it per call).
     extern Deko3DOptions g_deko3dOptions;
+    // sasrt-nx (2026-11-11, port 82; its GPU list's row 2; UNTESTED): the pipelines whose depth mark
+    // preciseStencilWrite dropped (the old rule marked them), since the start.
+    extern std::atomic<uint64_t> g_deko3dPreciseStencilSaved;
     inline const Deko3DOptions &Deko3DGetOptions() { return g_deko3dOptions; }
 };

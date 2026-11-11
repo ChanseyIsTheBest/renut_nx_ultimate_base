@@ -61,6 +61,12 @@ locals rather than the shared context, write-backs of only the registers that ch
 dispatch from its hook. `tools/post_codegen.py` remakes the listed copies after every code generation, so they stay in step
 with the generated code. Each has a key, `banjo_cpu_native_sub_<ADDR>`, for comparing with it off.
 
+Since port 81 (sasrt-nx's machine copies in place, CMake `SASRT_HOT_IN_PLACE`) the Switch's everyday and released NROs have
+no hooks: the generated function's symbol is its copy, which the compiler and LTO may inline into its callers. There the
+keys do nothing (the log names any that is set against the list): comparing a copy with it off, the guard and
+`banjo_hot_count` need a hooked build (`tools/build_switch_guard.bat`, `IN_PLACE=OFF`, or the PC). A copy that has to
+stay off in a game is marked `off` in its list.
+
 The lists:
 
 - `app/src/cpu/hot/localized.txt` (112): the first batches, chosen by hand from early profiles;
@@ -355,7 +361,8 @@ The PC and Ryujinx have no vote on what gets written, but they are where correct
 - **Ryujinx:** the same guard through a test `katamari.toml` (`banjo_hot_guard_calls = 4000`, `banjo_hot_guard_period = 64`) and
   `tools/run_ryujinx.ps1 -Build switch-guard -Toml <file>`, on the guard build (`tools/build_switch_guard.bat`). Since port 78
   the everyday and released NROs have no guard forms (`SASRT_HOT_GUARD_FORMS`, OFF on the Switch): there the guard keys check
-  no copy, and the log says so once ("this build has no guard forms").
+  no copy, and the log says so once ("this build has no guard forms"). Since port 81 they have no hooks at all (the copies
+  in place); the guard build is hooked and compiles the same copies' code, so its clean run vouches for theirs.
 - **The console:** no `[hot] DIFFERENCE` in a logged run (a guard run: the guard build's NRO).
 
 rc10's result, as the standard to meet: on the PC, 28,049,408 calls of `sub_82277E70` compared with its reference, 4,314,903 of
@@ -371,7 +378,10 @@ Whole-run frame rates depend on the scene: rc9 ranged from 19 to 60 fps with one
 - Same scene, same clocks, on the console, sampling on in both runs.
 - Compare the thread that limits the frame, using the share of the function and the thread's CPU.
 - Use functions whose code did not change as the yardstick: if they got cheaper too, the scene did, not the code.
-- `tools/switch_hot_symbols.py --group` splits a thread into game code, renderer, C library and so on.
+- `tools/switch_hot_symbols.py --group` splits a thread into game code, renderer, C library and so on. In an NRO with
+  the copies in place (port 81) a copy's samples are under its generated name, `sub_X` (game code there), and where LTO
+  inlined it, in its callers'; `tools/switch_hot_bulk.py` tells the copies apart by their records (`g_in_place_*`), and
+  `tools/profile_breakdown.py` by their object (a hot shard) in a build without LTO.
   `docs/console-rc9-breakdown.md` is the model for the report.
 - Call counts: `banjo_hot_count` on the PC. They depend on the path taken, not the processor, so they are usable for working out
   cost a call, with the time still coming from the console.
@@ -388,6 +398,9 @@ A function changed after the instrumented build keeps no profile: GCC drops its 
 2. Any hand-written natives, checked.
 3. The instrumented build (`-DBANJO_PGO=generate`), then a console session.
 4. The optimised build (`tools/build_switch_release.bat`).
+
+Each form of the copies has its own profile (port 81): the everyday and released NROs have them in place, so the
+session is an in-place instrumented build's and its profile goes to `pgo-inplace/` (docs/building.md, section 4).
 
 A sampling run is a different thing from the PGO session: PGO counts show which paths ran and tune the compiler, but they do not
 show time. A PGO profile is not hand-track evidence.

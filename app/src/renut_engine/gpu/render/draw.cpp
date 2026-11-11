@@ -388,9 +388,59 @@ REXCVAR_DEFINE_BOOL(banjo_renut_lean_diagnostics, true, "Banjo/Enhancements",
                     "draw and stream dumps' checks are made once instead of a call per draw")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
+REXCVAR_DEFINE_BOOL(vivapinata_resolve_from_sibling, true, "Banjo/Enhancements",
+                    "vivapinata-nx (2026-11-11, the GPU round; A/B 87): a multisampled colour resolve of a target unchanged "
+                    "(but for colour clears elsewhere) since the API last resolved it to its own place, over a rect inside "
+                    "that one: into the same destination, which still holds that resolve, nothing is done (those texels "
+                    "are there); into another destination of the same format and scale that still holds it, its texels "
+                    "are copied (one sample read each) instead of resolved. Viva Pinata resolves its scene whole into a "
+                    "texture and then, nothing drawn between, per tile into the same texture, each tile cleared after "
+                    "(EndTiling). The same texels either way. Off: resolved again")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
 REXCVAR_DECLARE(bool, banjo_renut_neon_compare);  // banjo-nx (2026-10-20, from sa2-nx): backend/queued.cpp
 
 namespace renut::gpu {
+
+// vivapinata-nx (2026-11-11, vivapinata_resolve_from_sibling / A/B 87): a colour clear of 's' (its writes counted already): its
+// rect goes with the sibling, or the sibling ends when four are taken.
+void NoteSiblingClear(HostSurface &s, const plume::RenderRect &host_rect) {
+  ++s.rect_clears;
+  HostSurface::MsSibling &sib = s.ms_sibling;
+  if (!sib.dest_va)
+    return;
+  if (sib.cleared_count >= 4) {
+    sib = {};
+    return;
+  }
+  int32_t *r = sib.cleared[sib.cleared_count++];
+  r[0] = host_rect.left;
+  r[1] = host_rect.top;
+  r[2] = host_rect.right;
+  r[3] = host_rect.bottom;
+}
+
+bool ResolveFromSiblingOn() {
+  static const bool on = REXCVAR_GET(vivapinata_resolve_from_sibling);
+  return on && banjo::renut_gpu::g_ab_off.load(std::memory_order_relaxed) != 87;
+}
+// 'why': 0 copied from another destination, 1 not resolved (the destination holds it), 2 no record, 3 the target written
+// since (not only cleared), 4 a clear since over this rect, 5 another image or a rect outside the record's, 6 the same
+// destination changed since or elsewhere, 7 the other destination changed since or not copyable. Render thread only.
+void CountResolveFromSibling(int why) {
+  static uint64_t n[8] = {};
+  static auto last = std::chrono::steady_clock::now();
+  ++n[why & 7];
+  const auto now = std::chrono::steady_clock::now();
+  if (now - last >= std::chrono::seconds(10)) {
+    RGPU_INFO("[renut] resolve from the last one (vivapinata_resolve_from_sibling, A/B 87) in the last {:.0f} s: {} "
+              "not resolved (in the destination already), {} copied from another destination; not: {} no record, {} "
+              "written since, {} cleared over, {} outside, {} destination changed, {} other changed",
+              std::chrono::duration<double>(now - last).count(), n[1], n[0], n[2], n[3], n[4], n[5], n[6], n[7]);
+    std::fill(std::begin(n), std::end(n), 0);
+    last = now;
+  }
+}
 
 ChainHint g_chain_hint;  // banjo-nx (2026-10-20, from sa2-nx): draw.h
 // banjo-nx (2026-10-26): the chain reuse's answers (CountChainReuse's 'what') counted in plain words on the render
@@ -11669,7 +11719,47 @@ void SasrtNoteExport(uint64_t sig, uint64_t moved_sig, const MemExportStream *ex
   }
 }
 
+// sasrt-nx (2026-11-11, port 82; its GPU list's row 4; UNTESTED), sasrt_gpu_skip_cull_both: a triangle draw culling
+// both faces, built as FRONT_AND_BACK (banjo_renut_cull_both, pipeline.cpp), rasterises nothing; left out when neither
+// shader exports memory (an export draw's vertex shader still runs). Points have no facing and lines are not culled:
+// only triangle kinds. renut-ultimate (port 82): not rectangle lists or tessellated draws either, which sasrt-nx's form
+// took: MakeKey clears their cull bits (they are drawn unculled), so leaving them out would drop what is drawn now.
+// Direct3D 12 has no such cull mode and draws both faces: there these draws now draw nothing, as on Vulkan, deko3d and
+// the console. Counted in the 10 s "[renut] untested GPU rows" line.
+[[gnu::noinline]] bool SasrtCullBothLocked(const u8 *device_state, const DrawCall &call) {
+  if (call.tessellation || (call.primitive != kTriangleList && call.primitive != kTriangleFan &&
+                            call.primitive != kTriangleStrip && call.primitive != kQuadList))
+    return false;
+  const GuestDevice device(device_state);
+  if (!device.valid() || (u32(device.dev().m_ControlPacket.ModeControl) & 3u) != 3u)
+    return false;
+  const auto exports = [](const ShaderRecord *r) {
+    if (!r->entry)
+      return true;
+    for (const u32 m : r->entry->memExportConstants)
+      if (m)
+        return true;
+    return false;
+  };
+  const ShaderRecord *vs = FindShaderLocked(device.U32(d3d::kDeviceOffsetVertexShader), RecordKind::VertexShader);
+  if (!vs || exports(vs))
+    return false;
+  if (const u32 ps_va = device.U32(d3d::kDeviceOffsetPixelShader)) {
+    const ShaderRecord *ps = FindShaderLocked(ps_va, RecordKind::PixelShader);
+    if (!ps || exports(ps))
+      return false;
+  }
+  std::atomic<uint64_t> &skipped = sasrt::gpu_round::g_census_cull_both_skipped;  // a load and a store (one writer)
+  skipped.store(skipped.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+  return true;
+}
+
 bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayConstants *replay) {
+  {  // sasrt-nx (2026-11-11, port 82; its GPU list's row 4; UNTESTED), sasrt_gpu_skip_cull_both: before everything else
+    static const bool cull_both = sasrt::gpu_round::SkipCullBothOn();
+    if (cull_both && SasrtCullBothLocked(device_state, call)) [[unlikely]]
+      return true;
+  }
   // sasrt-nx (2026-11-08, sasrt_gpu_skip_inert_draws): before the fast path and the targets (SasrtInertDrawLocked). The
   // chain's next draw then finds no kept state of this one (its sequence number is not the last kept + 1): the full path.
   if (sasrt::gpu_round::On(sasrt::gpu_round::kInertDraws)) {
@@ -13925,6 +14015,7 @@ void ClearTargets(const Targets &t, u32 flags, const plume::RenderRect &rect, co
     const bool repeat = repeat_on && is_whole && c->clear_known && c->clear_generation == c->generation &&
                         c->clear_writes == c->writes && std::memcmp(c->clear_color, color, sizeof(c->clear_color)) == 0;
     ++c->writes;  // banjo-nx (banjo_renut_resolve_skip)
+    NoteSiblingClear(*c, host_rect);  // vivapinata-nx (2026-11-11, vivapinata_resolve_from_sibling)
     c->write_seq = ++g_surface_write_seq;  // sasrt-nx: the EDRAM depth restore
     g_blur_color_write_last = c->write_seq;  // blur-nx (2026-11-11, port 76; its key 220)
     g_clears_whole += is_whole;
@@ -14002,6 +14093,7 @@ void ClearTargets(const Targets &t, u32 flags, const plume::RenderRect &rect, co
       continue;
     const plume::RenderRect alias_host = ScaleRect(alias_rect, a.scale);
     ++alias->writes;  // banjo-nx (banjo_renut_resolve_skip)
+    NoteSiblingClear(*alias, alias_host);  // vivapinata-nx (2026-11-11, vivapinata_resolve_from_sibling)
     alias->clear_known = false;  // banjo-nx (banjo_renut_clear_repeat): not followed through aliases
     cmd->clearColor(0, clear_color, &alias_host, 1);
   }
@@ -15086,6 +15178,7 @@ void ResolveStateLocked(const u8 *device_state, u32 flags, const ClearRect *sour
         // path's HandOverResolveLocked does; a level or slice of a stacked destination never holds any.)
         if ((dest->handed_from || dest->held_current) && (slice != 0 || z != 0 || dest_level != 0))
           MaterialiseLocked(*dest, false);
+        const uint64_t prev_sig = dest->resolve_signature;  // vivapinata-nx (2026-11-12, A/B 87): what dest held before
         dest->resolve_signature = sig;
         g_bound.framebuffer = nullptr;
         // The destination is of the surface's scale.
@@ -15185,10 +15278,90 @@ void ResolveStateLocked(const u8 *device_state, u32 flags, const ClearRect *sour
                 host_y, z, &box);
           }
         } else if (multisampled) {
-          TransitionSurfaceLocked(surface, plume::RenderTextureLayout::RESOLVE_SOURCE);
-          TransitionTextureLocked(dest, plume::RenderTextureLayout::RESOLVE_DEST);
-          cmd->resolveTextureRegion(dest->texture.get(), host_x, host_y, surface->texture.get(),
-                                    &rect);
+          // vivapinata-nx (2026-11-11, vivapinata_resolve_from_sibling / A/B 87): the last resolve of this target to its own
+          // place (recorded below) and the target unchanged since but for colour clears outside this rect. Into the same
+          // destination, which still holds that resolve (its signature) at the same place, over a rect inside it: those
+          // texels are this resolve's already, so nothing is resolved. Into another destination of the same format and
+          // scale: that one's texels are copied (one sample a texel, through an identity view: no swizzle, no red-blue
+          // swap) instead of resolved again. Viva Pinata resolves its scene whole into BCCA0550, then into BCCA05D0, then
+          // per tile into BCCA0550 again, each tile cleared after (EndTiling).
+          bool copied = false;
+          if (ResolveFromSiblingOn() && slice == 0 && z == 0 && dest_level == 0 && exp_bias == 0) {
+            const HostSurface::MsSibling &sib = surface->ms_sibling;
+            // Every write since was a colour clear (rect_clears), and none of them reached this rect.
+            int why = !sib.dest_va                                                         ? 2
+                      : surface->writes - sib.writes != surface->rect_clears - sib.clears ? 3
+                                                                                           : 0;
+            for (uint32_t i = 0; !why && i < sib.cleared_count; ++i) {
+              const int32_t *c = sib.cleared[i];
+              if (!(c[2] <= rect.left || c[0] >= rect.right || c[3] <= rect.top || c[1] >= rect.bottom))
+                why = 4;
+            }
+            if (!why && (sib.generation != surface->generation || rect.left < sib.left || rect.top < sib.top ||
+                         rect.right > sib.right || rect.bottom > sib.bottom))
+              why = 5;
+            if (!why && sib.dest_va == dest_texture_va) {
+              if (prev_sig == sib.dest_sig && rect.left == int32_t(host_x) && rect.top == int32_t(host_y) &&
+                  !dest->handed_from && !dest->held_current) {
+                dest->resolve_signature = prev_sig;  // it still holds that resolve, of which this one is a part
+                copied = true;
+                why = 1;
+              } else {
+                why = 6;
+              }
+            } else if (!why) {
+              HostTexture *from = FindHostTextureLocked(sib.dest_va);
+              // 7: the other destination's reason, for the diagnostic line (vivapinata-nx, 2026-11-12)
+              static uint64_t refused[8] = {};
+              const int r = !from || from == dest || !from->texture        ? 0
+                            : !from->gpu_written                           ? 1
+                            : from->resolve_signature != sib.dest_sig      ? 2
+                            : from->host_format != dest->host_format       ? 3
+                            : !(from->scale == surface->scale)             ? 4
+                            : from->handed_from || from->held_current      ? 5
+                            : from->dimension != TextureDimension::Tex2D || from->stacked ? 6
+                                                                           : 7;
+              if (r < 7 && (++refused[r] & (refused[r] - 1)) == 0)  // the 1st, 2nd, 4th, 8th ... of each
+                RGPU_INFO("[renut] resolve from another destination {:08X} into {:08X} refused: reason {} ({} times; "
+                          "0 none, 1 not GPU-written, 2 changed since, 3 format {} / {}, 4 scale, 5 handed, 6 not 2D)",
+                          sib.dest_va, dest_texture_va, r, refused[r], from ? int(from->host_format) : -1,
+                          int(dest->host_format));
+              why = 7;
+              if (r == 7) {
+                const uint32_t slot = RawViewSlotLocked(*from);  // x, y, z, w, no red-blue swap; else none
+                TransitionTextureLocked(from, plume::RenderTextureLayout::SHADER_READ);
+                copied = slot != kInvalidDescriptor && DrawCopyFromSlotLocked(slot, dest, rect, host_x, host_y, 1.0f);
+                if (copied)
+                  why = 0;
+              }
+            }
+            CountResolveFromSibling(why);
+            if (banjo::renut_gpu::ResolveTraceOn()) [[unlikely]]
+              RGPU_INFO("[trace]   from the last one: {} {} (record {:08X} rect ({},{})-({},{}); this ({},{})-({},{}) at "
+                        "({},{}))",
+                        why == 0 ? "copied" : why == 1 ? "not resolved" : "resolved", why, sib.dest_va, sib.left, sib.top,
+                        sib.right, sib.bottom, rect.left, rect.top, rect.right, rect.bottom, host_x, host_y);
+          }
+          if (!copied) {
+            TransitionSurfaceLocked(surface, plume::RenderTextureLayout::RESOLVE_SOURCE);
+            TransitionTextureLocked(dest, plume::RenderTextureLayout::RESOLVE_DEST);
+            cmd->resolveTextureRegion(dest->texture.get(), host_x, host_y, surface->texture.get(),
+                                      &rect);
+            // The destination's texels at the target's coordinates (a resolve to its own place): a sibling for later.
+            surface->ms_sibling = {};
+            if (rect.left == int32_t(host_x) && rect.top == int32_t(host_y)) {
+              HostSurface::MsSibling &sib = surface->ms_sibling;
+              sib.dest_va = dest_texture_va;
+              sib.dest_sig = sig;
+              sib.generation = surface->generation;
+              sib.writes = surface->writes;
+              sib.clears = surface->rect_clears;
+              sib.left = rect.left;
+              sib.top = rect.top;
+              sib.right = rect.right;
+              sib.bottom = rect.bottom;
+            }
+          }
         } else if (surface->sasrt_fixed16 && slice == 0 && z == 0 && banjo::renut_gpu::Fixed16ClampOn() &&
                    ResolveFixed16Locked(surface, dest, rect, host_x, host_y)) {
           // sasrt-nx (2026-10-20): drawn with the fixed-point range.

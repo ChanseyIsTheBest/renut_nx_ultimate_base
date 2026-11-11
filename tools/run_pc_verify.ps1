@@ -14,6 +14,14 @@ if ((Test-Path $cache) -and (Select-String -Path $cache -Pattern '^SASRT_HOT_GUA
                   "tools\build_pc.bat")
     exit 2
 }
+# renut-ultimate (2026-11-11, port 81; sasrt-nx's machine copies in place): with the copies in place (CMake
+# SASRT_HOT_IN_PLACE, OFF by default on the PC) there is no hook, so no guard.
+if ((Test-Path $cache) -and (Select-String -Path $cache -Pattern '^SASRT_HOT_IN_PLACE:BOOL=(ON|1|TRUE|YES|Y)$' -Quiet)) {
+    Write-Output ("app\out\pc has the copies in place (SASRT_HOT_IN_PLACE ON): no hook, so this run would check no " +
+                  "native copy. Configure it with -DSASRT_HOT_IN_PLACE=OFF (cmake -DSASRT_HOT_IN_PLACE=OFF app\out\pc), " +
+                  "then tools\build_pc.bat")
+    exit 2
+}
 $extra = "--banjo_cpu_verify=true --banjo_hot_guard_calls=4000 --banjo_hot_guard_period=1 " +
          "--katamari_hand_transform_chain_verify=true --katamari_hand_sphere_box=true"
 # renut-ultimate (port 70, 2026-11-10): an empty --input_script= stopped the run at the command line ("1 required TEXT

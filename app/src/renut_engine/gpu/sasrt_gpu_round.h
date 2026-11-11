@@ -118,4 +118,14 @@ const char *AbName(int target);  // nullptr: not one of these
 void ApplyPlume();
 std::string Report();            // the 10 s line's text (and the counts start again)
 
+// sasrt-nx (2026-11-11, port 82; its GPU list's rows 1, 2 and 4; UNTESTED): three pixel-identical rows no game has run
+// yet, outside the items above (their own keys, read at start; no A/B target, not in the "[sasrt gpu]" line). Row 2 is
+// plume's Deko3DOptions::preciseStencilWrite (ApplyPlume); its count is plume's g_deko3dPreciseStencilSaved.
+bool StencilNoopOn();   // sasrt_gpu_stencil_noop (row 1: render/pipeline.cpp Build)
+bool SkipCullBothOn();  // sasrt_gpu_skip_cull_both and banjo_renut_cull_both (row 4: render/draw.cpp DrawStateLocked)
+// The counts since the start: pipelines built with a no-op stencil off (row 1), pipelines built culling both faces (row
+// 4's census) and the cull-both draws left out (row 4; the render thread's, a load and a store).
+extern std::atomic<uint64_t> g_census_stencil_noop, g_census_cull_both, g_census_cull_both_skipped;
+std::string UntestedReport();  // the 10 s "[renut] untested GPU rows" line's text
+
 }  // namespace sasrt::gpu_round

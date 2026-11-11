@@ -64,20 +64,43 @@ then `tools/run_ryujinx.ps1 -Build switch-guard -Toml <file>`. `GUARD_FORMS=ON` 
 folder `tools/build_switch.bat` builds; `tools/build_switch_release.bat` holds its folder at OFF unless `GUARD_FORMS=ON`
 (sasrt-nx's `-Final` and `-GuardForms`).
 
-The released NRO, in folders of their own (`BUILD_DIR` and `CMAKE_EXTRA` of `tools/build_switch.bat`):
+Since port 81 (sasrt-nx's machine copies in place: CMake `SASRT_HOT_IN_PLACE`, ON on the Switch wherever the guard forms
+are OFF, OFF on the PC and in `app/out/switch-guard`) the everyday and released NROs have no hooks in front of the copies:
+the generated function's symbol is its copy, which the compiler and LTO may inline into its callers, and the generated
+original is dropped. The copies' keys (`banjo_cpu_native_sub_*`, `banjo_cpu_native_bulk`), the guard and verify keys,
+`banjo_hot_count` and the in-run A/B's target 70 do nothing there, and the log names any that is set; a copy marked `off`
+in its list stays generated code. The hand-written natives keep their keys. `IN_PLACE=OFF` (or `ON`) sets the option in
+any folder `tools/build_switch.bat` builds (`GUARD_FORMS=ON` sets it OFF); the guard build is hooked and compiles the
+same copies' code, so a clean guard run checks the in-place NROs' copies too. After this port, run
+`python tools/post_codegen.py` once (or a code generation): it writes the copies' headers with the in-place entry
+(not tools/localize_native.py alone: run on the finished tree, after the store cards and other late steps, it refuses
+copies) (an in-place build of older headers says so at compile time; its copies stay calls).
+
+The released NRO, in folders of their own (`BUILD_DIR` and `CMAKE_EXTRA` of `tools/build_switch.bat`). The two forms of the
+copies compile to different code, so each has its own profile (port 81): `pgo/` for the hooked form (CMake
+`BANJO_PGO_DIR`), `pgo-inplace/` for the in-place one (`BANJO_PGO_DIR_IN_PLACE`). A folder writes and reads the one of
+its form, so with the defaults these steps make and use `pgo-inplace/`; with `IN_PLACE=OFF` on both folders, `pgo/`:
 
 1. **Instrumented:** `-DBANJO_PGO=generate -DBANJO_SWITCH_LTO=ON`. Play it: it writes `pgo/banjo_pgo_<N>.stream` next to
    the NRO every 2 minutes, at HOME and at exit.
 2. **Merge** on the PC that built it (the streams name its folders): `python tools/pgo_merge.py <folder with the
-   streams>` fills `pgo/` (it stops if `pgo/` already has `.gcda` files: move them aside first).
-3. **Optimised:** `-DBANJO_PGO=use -DBANJO_SWITCH_LTO=ON -DBANJO_RENUT_RELEASE_SHADERS=ON`. It carries no game shader and
-   reads `deko3d_glsl.bin` beside itself. `pgo/` in this repository is the released build's profile. A function changed
-   since the instrumented build keeps no profile.
+   streams> pgo-inplace` fills `pgo-inplace/` (the second argument `pgo`, or none, for a hooked session; it stops if
+   the folder already has `.gcda` files: move them aside first).
+3. **Optimised:** `-DBANJO_PGO=use -DBANJO_SWITCH_LTO=ON -DBANJO_RENUT_RELEASE_SHADERS=ON` (`tools/build_switch_release.bat`,
+   in place; its configure stops while `pgo-inplace/` has no profile, and `IN_PLACE=OFF` builds the hooked form with
+   `pgo/`). It carries no game shader and reads `deko3d_glsl.bin` beside itself. `pgo/` in this repository is the
+   profile of the releases before port 81 (the hooked form). A function changed since the instrumented build keeps no
+   profile.
 
 Keep the temporary folder's path free of spaces (GCC's parallel LTO link writes a makefile with it unquoted). Each build
 folder keeps its own SDK libraries (`<folder>/rexglue-sdk/out`, renut-ultimate's `REXGLUE_OUTPUT_IN_BUILD`), so the
 stages no longer replace each other's, and the SDK runtime and FFmpeg get the folder's LTO and PGO options
-(`BANJO_SWITCH_SDK_OPT`). Their counts need an instrumented run of this build: the profile in `pgo/` has none.
+(`BANJO_SWITCH_SDK_OPT`), and since port 89 the SDK's OBJECT libraries too (rexaudio, rexcore,
+rexfilesystem, rexinput, rexui; `BANJO_SWITCH_SDK_OBJECT_OPT`), but for four files kept out of LTO:
+threading_switch.cpp and switch_perf.cpp (they define `--wrap`'s `__wrap_` functions),
+exception_handler_switch.cpp and fiber_switch.cpp (top-level asm naming C symbols, which LTO cannot
+see). A new SDK file with either needs the same (`_banjo_sdk_no_lto` in app/CMakeLists.txt), or the LTO
+link fails. Their counts need an instrumented run of this build: the profile in `pgo/` has none.
 
 The fixed settings are `app/katamari_switch_defaults.toml`, compiled in; the player's are `app/katamari_switch.toml`,
 written next to the NRO as `katamari.toml` when it is missing. A key added to `katamari.toml` overrides a fixed one (the
