@@ -418,6 +418,18 @@ def address_taken(gen, image, starts, bodies):
                     if a in starts and a not in resolved:
                         taken[a].add('lis pair')
     taken[ENTRY_POINT].add('entry point')
+    # blur-nx (2026-11-12, from sasrt-nx's guard finding): a promoted indirect call with several targets is one line
+    # (`if (REX_PROMOTED_IS(...)) { ... sub_A(ctx, base); } else if (REX_PROMOTED_IS(...)) { ... sub_B(ctx, base); }`),
+    # and the parse below records its first target only as the node's call: B's LiveOut would miss what this caller
+    # reads after it. Every promoted target is an indirect call's target, so its LiveOut must be everything anyway:
+    # marked here. In Blur every one of the 34 later targets was already taken by a data word or a lis pair (no change).
+    promoted = re.compile(r'REX_PROMOTED_IS\(ctr\.u32, 0x([0-9A-F]{8})u\)')
+    for addr, (_, lines) in bodies.items():
+        for line in lines:
+            if 'REX_PROMOTED_IS' in line:
+                for t in promoted.findall(line):
+                    if int(t, 16) in starts:
+                        taken[int(t, 16)].add('promoted target')
     # Every address the port's own sources name (hooks, natives, verify, host code calling guest functions).
     sources = [os.path.join(ROOT, 'app', 'src'), os.path.join(ROOT, 'sdk', 'src'), os.path.join(ROOT, 'sdk', 'include')]
     # Not app/thunks.toml: it names every jump thunk and its target for tools/thunk_calls.py; a thunk is a tail call

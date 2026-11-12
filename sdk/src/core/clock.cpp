@@ -130,6 +130,68 @@ size_t CensusSites(uint64_t* addresses, uint64_t* counts, size_t capacity) {
   }
   return n;
 }
+
+// blur-nx (2026-11-12, CG-13's census): the denormal sites, a table of their own (the same open addressing).
+namespace {
+constexpr size_t kDenormalSites = size_t(1) << 14;
+Site g_denormal_sites[kDenormalSites];
+
+void CountDenormalSite(uint64_t a) {
+  size_t i = size_t((a * 0x9E3779B97F4A7C15ull) >> 50);
+  for (size_t probe = 0; probe < 64; ++probe, i = (i + 1) & (kDenormalSites - 1)) {
+    uint64_t have = g_denormal_sites[i].address.load(std::memory_order_relaxed);
+    if (have == 0 && g_denormal_sites[i].address.compare_exchange_strong(have, a, std::memory_order_relaxed)) have = a;
+    if (have == a) {
+      g_denormal_sites[i].count.store(g_denormal_sites[i].count.load(std::memory_order_relaxed) + 1,
+                                      std::memory_order_relaxed);
+      return;
+    }
+  }
+}
+}  // namespace
+
+void CensusDenormalSite(uint64_t address) {
+  CountDenormalSite(address);
+}
+
+#if defined(__clang__) || defined(__GNUC__)
+__attribute__((noinline))
+#endif
+void CensusFpuRegionEnd(uint32_t csr) {
+  Census(kCensusFpuRegions, 1);
+  // x86 MXCSR: DE (bit 1) a denormal operand, UE (bit 4) an underflow. Other hosts: nothing to read here.
+#if defined(__x86_64__) || defined(_M_X64)
+  if (csr & 0x12u) {
+    Census(kCensusFpuDenormal, 1);
+#if defined(__clang__) || defined(__GNUC__)
+    CountDenormalSite(reinterpret_cast<uint64_t>(__builtin_return_address(0)));
+#endif
+  }
+#else
+  (void)csr;
+#endif
+}
+
+size_t CensusDenormalSites(uint64_t* addresses, uint64_t* counts, size_t capacity) {
+  size_t n = 0;
+  for (size_t i = 0; i < kDenormalSites; ++i) {
+    const uint64_t c = g_denormal_sites[i].count.load(std::memory_order_relaxed);
+    if (!c) continue;
+    const uint64_t a = g_denormal_sites[i].address.load(std::memory_order_relaxed);
+    size_t at = n < capacity ? n : capacity;
+    while (at > 0 && counts[at - 1] < c) --at;
+    if (at >= capacity) continue;
+    const size_t last = n < capacity ? n : capacity - 1;
+    for (size_t k = last; k > at; --k) {
+      addresses[k] = addresses[k - 1];
+      counts[k] = counts[k - 1];
+    }
+    addresses[at] = a;
+    counts[at] = c;
+    if (n < capacity) ++n;
+  }
+  return n;
+}
 }  // namespace rex::syscount
 #endif
 

@@ -173,3 +173,8 @@ then its `test/release_node.mjs` (its README). `wasm/renut_hlsl` must be rebuilt
   copy as a control.
 - **The console** decides performance: the same NRO both ways (an in-run A/B target, or ABBA order) with a control
   from the same session, fps from Renut's wall-clock 10 s lines.
+  Over the network, `tools/switch_remote.py` (sys-botbase and sys-ftpd-light; only the port's own folder on the SD
+  card, nothing deleted): [porting-a-360-game-prompt.md](porting-a-360-game-prompt.md), appendix A.
+- **Picture bugs:** a RenderDoc capture first, of the PC build or of Ryujinx (`tools/run_ryujinx_rdc.ps1`, then the
+  `tools/rdc_*.py` scripts through `tools/rdc_run.ps1`; `RENDERDOC_DIR` names the RenderDoc folder): the porting
+  guide's appendix B.

@@ -2494,6 +2494,10 @@ void InheritEdramBeforeDrawLocked(const Targets &t, u32 color_mask, const u32 *b
       std::memcpy(&push.translate[0], &src_w, 4);
       std::memcpy(&push.translate[1], &src_h, 4);
       std::memcpy(&push.param0, &src_rows, 4);
+      // blur-nx (2026-11-13, MSAA lowered): the host targets' sample counts (edram_inherit.hlsli): a 4x view made 2x by
+      // msaa_level read sample indices 2 and 3 of a 2-sample image (nothing there).
+      const u32 host_samples = (u32(target->samples) & 0xFu) | ((u32(source->samples) & 0xFu) << 4);
+      std::memcpy(&push.param1, &host_samples, 4);
       push.texture_index = source_slot;
       push.sampler_index = kPointClampSamplerSlot;
 #if defined(PLUME_DEKO3D)
@@ -2562,6 +2566,18 @@ struct ViewportState {
   // relative to that tile.
   float pixel_origin[2] = {0.0f, 0.0f};
 };
+
+// blur-nx (2026-11-13, MSAA lowered; banjo_renut_alpha_to_mask_test): alpha to coverage on a single-sample target covers
+// the pixel when alpha >= 0.5 (MakeKey leaves the pipeline's alpha to coverage off for it). Combined with the game's own
+// alpha test: off (7) -> alpha >= 0.5 as before; greater (4) or greater-or-equal (6) below 0.5 -> alpha >= 0.5 (both must
+// pass); a test at 0.5 or above, or of another kind, stays the game's. Blur's foliage has alpha to coverage AND an
+// alpha test near 0: with msaa_level 1 its cards were drawn whole (the coverage dropped, only the near-zero test left).
+void AlphaToMaskTestSingleSample(u32 &func, float &threshold) {
+  if (func == 7 || ((func == 4 || func == 6) && !(threshold >= 0.5f))) {
+    func = 6;  // >=
+    threshold = 0.5f;
+  }
+}
 
 // The screen rect of the one tile a draw is predicated to while tiling
 // (SetTilesLocked); false for a draw that runs in more tiles, or none.
@@ -10767,12 +10783,10 @@ int FastDrawLocked(const u8 *device_state, const DrawCall &call, const ReplayCon
     const u32 color_control = dev.m_ControlPacket.ColorControl;
     u32 func = (color_control & 8) ? (color_control & 7) : 7;
     float threshold = dev.m_ValuesPacket.AlphaRef;
-    if (func == 7 && ((color_control >> 4) & 1) && banjo::renut_gpu::AlphaToMaskTestOn()) {
+    if (((color_control >> 4) & 1) && banjo::renut_gpu::AlphaToMaskTestOn()) {
       const HostSurface *first = targets.color_count ? targets.colors[0] : targets.depth;
-      if (ps && first && first->samples == plume::RenderSampleCount::COUNT_1) {
-        func = 6;
-        threshold = 0.5f;
-      }
+      if (ps && first && first->samples == plume::RenderSampleCount::COUNT_1)
+        AlphaToMaskTestSingleSample(func, threshold);  // blur-nx (2026-11-13): with the game's own test too
     }
     if (verify && !((fields & (kFieldBools | kFieldViewPackets)) || entries_changed || depth_only != f.depth_only ||
                     targets_changed) &&
@@ -12530,15 +12544,14 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
   float alpha_threshold = dev.m_ValuesPacket.AlphaRef;
   // banjo-nx (2026-10-26): this draw's function (the kept block's sc.alpha_test_func is the draw before's: read here
   // since API-level stage 1, every other alpha-to-coverage draw lost its test, the console's title-screen grass cards).
-  if (alpha_test_func == 7 && ((color_control >> 4) & 1) && banjo::renut_gpu::AlphaToMaskTestOn()) {
+  if (((color_control >> 4) & 1) && banjo::renut_gpu::AlphaToMaskTestOn()) {
     // banjo-nx (banjo_renut_alpha_to_mask_test, 2026-10-18): alpha to coverage on a single-sample target is an alpha
     // test at 0.5 (MakeKey leaves the pipeline's alpha to coverage off for it). NVIDIA GPUs dither alpha to coverage
     // without samples: the checker-patterned grass, fur and foliage edges of the console and Ryujinx runs.
+    // blur-nx (2026-11-13): also when the game has its own alpha test (AlphaToMaskTestSingleSample).
     const HostSurface *first = targets.color_count ? targets.colors[0] : targets.depth;
-    if (ps && first && first->samples == plume::RenderSampleCount::COUNT_1) {
-      alpha_test_func = 6;  // >=
-      alpha_threshold = 0.5f;
-    }
+    if (ps && first && first->samples == plume::RenderSampleCount::COUNT_1)
+      AlphaToMaskTestSingleSample(alpha_test_func, alpha_threshold);
   }
   SetShared(sc, sc.alpha_test_func, alpha_test_func);  // banjo-nx (2026-10-26)
   SetShared(sc, sc.alpha_threshold, alpha_threshold);
@@ -15439,14 +15452,18 @@ void ResolveStateLocked(const u8 *device_state, u32 flags, const ClearRect *sour
         // resolve averages each pixel's samples, which are that target's 2x2 (1x2) blocks. Blur's 640x360 half-size scene
         // comes from its 1280x720 post target this way (the reference's capture: the motion blur's source is that image;
         // here it was black).
+        // blur-nx (2026-11-13, MSAA lowered): decided by the console's sample count (the header's): with msaa_level 1 or
+        // 2 the 4x view is single-sampled or 2x here, but its samples are still the grid target's 2x2 blocks on the
+        // console (Blur's half-size scene was black or wrong without this).
+        const u32 guest_msaa = (u32(surface->info_word) >> 16) & 3;  // 0: 1x, 1: 2x, 2: 4x
         HostSurface *grid_alias = nullptr;
-        if (multisampled && slice == 0 && z == 0 && dest_level == 0 && banjo::renut_gpu::SampleGridResolveOn() &&
+        if (guest_msaa != 0 && slice == 0 && z == 0 && dest_level == 0 && banjo::renut_gpu::SampleGridResolveOn() &&
             dest->host_format == surface->format) {
           grid_alias = SampleGridAliasLocked(surface);
           if (grid_alias && grid_alias->blur_draw_seq <= surface->blur_draw_seq)
             grid_alias = nullptr;
         }
-        const uint32_t grid_x = surface->samples == plume::RenderSampleCount::COUNT_4 ? 2u : 1u;
+        const uint32_t grid_x = guest_msaa == 2 ? 2u : 1u;
         // blur-nx (2026-11-10, port 76; its key 219: blur_renut_resolve_exp_bias): with a bias, a resolve is drawn (a copy
         // cannot scale): a single-sampled source straight from its view, a multisampled one through a staging image of its
         // own format (resolved whole by the API).

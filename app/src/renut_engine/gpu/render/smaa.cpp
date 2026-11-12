@@ -406,6 +406,9 @@ bool CompareWanted(VideoState &s, uint32_t width, uint32_t height, plume::Render
   const int32_t every = banjo::renut_gpu::SmaaCompareSeconds();
   if (every <= 0 || g_compare.frame)
     return false;
+  // blur-nx (2026-11-12): the readback and its TGA files are 4 bytes a texel: 8-bit targets only (not RGBA16F).
+  if (format != plume::RenderFormat::R8G8B8A8_UNORM && format != plume::RenderFormat::B8G8R8A8_UNORM)
+    return false;
   const auto now = std::chrono::steady_clock::now();
   if (g_compare.last != std::chrono::steady_clock::time_point{} && now - g_compare.last < std::chrono::seconds(every))
     return false;
@@ -553,9 +556,13 @@ bool CompositePs(uint64_t ps_hash) {
 bool SmaaRunLocked(HostSurface *surface) {
   VideoState &s = State();
   Smaa &m = g_smaa;
+  // blur-nx (2026-11-12): RGBA16F too. Blur composites into its 1280x720 float target (the 360's 2_10_10_10_FLOAT
+  // EDRAM, which Renut makes RGBA16F; pixel shader 91C0712EC807B3DF, the tone-mapped image before the HUD); the passes
+  // already make their source copy and pipelines in the target's own format (edges and weights stay R8G8 / RGBA8).
   if (!surface || surface->depth || !surface->texture || surface->samples != plume::RenderSampleCount::COUNT_1 ||
       (surface->format != plume::RenderFormat::R8G8B8A8_UNORM &&
-       surface->format != plume::RenderFormat::B8G8R8A8_UNORM))
+       surface->format != plume::RenderFormat::B8G8R8A8_UNORM &&
+       surface->format != plume::RenderFormat::R16G16B16A16_FLOAT))
     return false;
   // Once a frame: a second composite in the same frame would soften the image twice.
   const uint64_t frame = TextureFrameLocked();

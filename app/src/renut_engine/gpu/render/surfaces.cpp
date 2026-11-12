@@ -1198,10 +1198,13 @@ HostSurface *SampleGridAliasLocked(const HostSurface *s) {
     return nullptr;
   // The single-sampled target of the view's sample grid: 4x is 2x2 samples a pixel (twice the pitch), 2x is 1x2 (the
   // same pitch; its rows are the samples' rows).
+  // blur-nx (2026-11-13, MSAA lowered): the console's sample count (the header's), not the host target's: msaa_level
+  // may make a 4x view single-sampled here, and the trick is the console's EDRAM layout, which stays 4x.
   u32 across = 0;
-  if (s->samples == plume::RenderSampleCount::COUNT_4)
+  const plume::RenderSampleCounts guest = SampleCount(s->info_word);
+  if (guest == plume::RenderSampleCount::COUNT_4)
     across = 2;
-  else if (s->samples == plume::RenderSampleCount::COUNT_2)
+  else if (guest == plume::RenderSampleCount::COUNT_2)
     across = 1;
   else
     return nullptr;
@@ -1554,7 +1557,10 @@ HostSurface *DepthRestoreSourceLocked(const HostSurface *depth) {
       if (own_found)
         for (const auto &[key, target] : g_targets) {
           HostSurface *c = target.get();
+          // blur-nx (2026-11-13, MSAA lowered): and the console's sample count (TargetKey bits 26-27): msaa_level makes a
+          // 4x depth view single-sampled here, which must not take a true 1x colour view's pixels (another layout).
           if (c && !c->depth && (key & kBaseAndPitchMask) == (own_key & kBaseAndPitchMask) &&
+              ((key >> 26) & 3) == ((own_key >> 26) & 3) &&
               c->samples == plume::RenderSampleCount::COUNT_1 && c->scale == depth->scale &&
               (c->format == plume::RenderFormat::R8G8B8A8_UNORM || c->format == plume::RenderFormat::B8G8R8A8_UNORM))
             d->sasrt_restore_candidates.push_back(c);
@@ -1588,6 +1594,7 @@ HostSurface *DepthRestoreSourceLocked(const HostSurface *depth) {
   for (const auto &[key, target] : g_targets) {
     HostSurface *c = target.get();
     if (!c || c->depth || !c->texture || (key & kBaseAndPitch) != (own & kBaseAndPitch) ||
+        ((key >> 26) & 3) != ((own >> 26) & 3) ||  // blur-nx (2026-11-13): the console's sample count too (above)
         c->samples != plume::RenderSampleCount::COUNT_1 || c->scale != depth->scale ||
         (c->format != plume::RenderFormat::R8G8B8A8_UNORM && c->format != plume::RenderFormat::B8G8R8A8_UNORM))
       continue;

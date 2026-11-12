@@ -234,6 +234,25 @@ void RuntimeCensusReport(int seconds) {
                 "cold paths {:.0f}; proven flush checks executed {:.0f}",
                 diet[0], diet[1], diet[2], diet[3], proven_s);
     REXLOG_INFO("[census] float copy forms per second (fp_copy_pairs): loads {:.0f}, stores {:.0f}", diet[4], diet[5]);
+    // blur-nx (2026-11-12, codegen-ideas-3 CG-13's census): what one flush mode for all code would change. The
+    // any-mode cold paths above are scalar results in VMX code that met a denormal; the FPU-mode regions are the plain
+    // scalar code between switches, and a region with a denormal operand or an underflow (x86 flags, a lower bound)
+    // holds at least one result that would change.
+    const double regions = per_s(kCensusFpuRegions), denormal = per_s(kCensusFpuDenormal);
+    REXLOG_INFO("[census] CG-13 (one flush mode): per second {:.0f} any-mode cold paths and {:.0f} of {:.0f} FPU-mode "
+                "regions with a denormal operand or an underflow: scalar results the one-mode build would change",
+                diet[3], denormal, regions);
+  }
+  {
+    // CG-13's census: where those happen (cumulative, image offset:count; tools/census_sites.py --denormal).
+    static int denormal_reports = 0;
+    if ((++denormal_reports % 3) == 0) {
+      uint64_t addresses[48], counts[48];
+      const size_t n = CensusDenormalSites(addresses, counts, 48);
+      std::string list;
+      for (size_t i = 0; i < n; ++i) list += fmt::format(" +{:X}:{}", addresses[i] - CensusImageBase(), counts[i]);
+      if (n) REXLOG_INFO("[census] denormal sites (CG-13, cumulative, image offset:count):{}", list);
+    }
   }
   // Where the mode is switched: the most counted code addresses so far, as offsets into the executable
   // (tools/census_sites.py turns them into functions and generated source lines).

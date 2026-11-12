@@ -178,3 +178,14 @@ Ports 1-43 are the first round: the universal fixes of the other ports' renderer
   registers and forwards stack stores into vector loads (sasrt-nx: -2.5 % CPU). Check a game's convention with
   tools/cc_entry_census.py and cc_exit_census.py, and take it with a code generation.
 - Port 122 (sasrt-nx's) makes tools/pgo_merge.py refuse a folder of streams from more than one build.
+- Port 123 (from blur-nx) adds CG-13, all guest float code in one flush mode (`BLUR_FPCR_ONE_MODE`, OFF: not
+  bit-exact for scalar denormals; Blur's console +4.6 % fps), and its census.
+- Port 124 (from blur-nx) counts every promoted call target as address-taken in leaf_dead_stores.
+- Port 125 (from blur-nx) turns the user clip slot off for pipelines that write no clip distance (Renut's host
+  passes on deko3d; Blur's black band).
+- Port 126 adds tools/switch_remote.py (sys-botbase and sys-ftpd-light, the port's own SD folder only, no delete)
+  and the porting guide's appendices on the console and RenderDoc.
+- Port 127 (from blur-nx) keeps the console's EDRAM tricks working when `msaa_level` lowers a target's samples
+  (port 118's default of 1): the sample-grid resolve, the EDRAM inherit, alpha to coverage with the game's own
+  alpha test, and the depth restore's candidates go by the console's sample count.
+- Port 128 (from blur-nx) lets SMAA run on RGBA16F composite targets (Blur's float composite).

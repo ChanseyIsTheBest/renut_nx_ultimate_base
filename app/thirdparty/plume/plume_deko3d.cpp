@@ -1727,6 +1727,9 @@ namespace plume {
         shader->usage.readsVertexId = shader->stage != DkStage_Vertex || shader->glsl->find("gl_VertexID") != std::string::npos;
         // vivapinata-nx (2026-11-03, tools/deko3d_glsl_opt.py vskill): a vertex shader with the kill's constant 914.
         shader->usage.writesVertexKill = shader->stage == DkStage_Vertex && shader->glsl->find("SPIRV_CROSS_CONSTANT_ID_914") != std::string::npos;
+        // blur-nx (2026-11-12): see Deko3DShaderUsage::writesClipDistance.
+        shader->usage.writesClipDistance = (shader->stage != DkStage_Vertex && shader->stage != DkStage_Geometry) ||
+                                           shader->glsl->find("gl_ClipDistance") != std::string::npos;
         // banjo-nx (2026-10-18): the varying locations it declares ("layout(location = N) in / out" lines).
         // katamari-nx (2026-11-01, rc10's black screen): an interpolation qualifier may come first ("layout(location = N)
         // centroid in", XenosRecomp's inputs the shader's header samples at the centroid); without it, those inputs were
@@ -2617,6 +2620,20 @@ namespace plume {
             const Deko3DShader *vs = static_cast<const Deko3DShader *>(desc.vertexShader);
             if (desc.specConstants[i].index == 929 && desc.specConstants[i].value == 0 && vs &&
                 std::find(vs->specIds.begin(), vs->specIds.end(), 929u) != vs->specIds.end())
+                p->noUserClip = true;
+        }
+        // blur-nx (2026-11-12, Blur's black band on the console; the user: "it's probably some clipping issue / seems
+        // like deko3d only"): the clip slot off as well when the last stage before the rasterizer (the geometry shader,
+        // or else the vertex shader) writes no clip distance. Deko3DOptions::userClipEnable turns slot 0 on for every
+        // other draw (rr6-nx's fix for deko3d leaving every slot on), and Renut's host passes draw with present_vs, which
+        // writes none: on the console the hardware then clipped their full-screen triangle on whatever that output held,
+        // so a colour resolve (drawn on deko3d alone: DrawResolveCopy) could fill only a band of the target and the passes
+        // reading it showed the rest black (Blur's race intro). Ryujinx clips only with what a shader writes, which is why
+        // neither it nor the PC ever showed it. A shader that writes no clip distance asks for no clipping: exact.
+        {
+            const Deko3DShader *last = static_cast<const Deko3DShader *>(desc.geometryShader ? desc.geometryShader
+                                                                                             : desc.vertexShader);
+            if (last && !last->usage.writesClipDistance)
                 p->noUserClip = true;
         }
         // banjo-nx (2026-10-21, asyncVariants): the epoch before any of its variants is queued, so one done meanwhile

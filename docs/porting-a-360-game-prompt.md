@@ -24,6 +24,8 @@ port instead, change the base's name and the pages of step 1 of the reading list
 | `<RENUT_DIR>` | Your copy of renut-nx (the method docs) | `D:\Banjo kazooie port\banjo-nx` |
 | `<RYU_DATA>` | The folder of Ryujinx data folders | `D:\New folder\ryu-data` |
 | `<SD_FOLDER>` | The one folder on the console's SD card this port may touch | `sdmc:/switch/pacman-nx` |
+| `<CONSOLE_IP>` | The console's address on your network (it runs sys-botbase and sys-ftpd-light: Appendix A) | `192.168.0.20` |
+| `<RENDERDOC_DIR>` | RenderDoc 1.46, the portable 64-bit build (Appendix B) | `D:\tools\RenderDoc_1.46_64` |
 
 ```text
 Port the Xbox 360 game <GAME> to PC and the Nintendo Switch with ReXGlue, starting from the ultimate base
@@ -42,6 +44,17 @@ Inputs
 - Method docs, read-only (the base was built on renut-nx and does not carry them): <RENUT_DIR>\docs
 - Ryujinx data folder for this port: <RYU_DATA>\<SHORT> (make it from <RYU_DATA>\katamari's system folders, keys and
   firmware, not its sdcard).
+
+The console and RenderDoc (<BASE_DIR>\docs\porting-a-360-game-prompt.md, appendices A and B, has the details)
+- The console at <CONSOLE_IP> runs sys-botbase (TCP 6000: button presses, screenshots, the running title ID) and
+  sys-ftpd-light (TCP 5000: the SD card). Drive it only through <BASE_DIR>\tools\switch_remote.py with --root
+  <SD_FOLDER>: it refuses any other path on the card and has no delete command. Every console run needs my word first,
+  and is arranged with the other port sessions that share the console. Before pressing A on the Home menu, read the
+  selected tile's name on a screenshot; after the launch, check the running title ID; on a wrong title, stop pressing.
+- RenderDoc (<RENDERDOC_DIR>) for every picture bug: capture the frame (the PC build with banjo_renderdoc_game_s, or
+  Ryujinx's Vulkan back end with tools\run_ryujinx_rdc.ps1), read it with the tools\rdc_*.py scripts inside qrenderdoc
+  (tools\rdc_run.ps1), and find the draw and the cause in the capture before changing code. Compare a Ryujinx capture
+  with a PC capture of the same moment: the emulator translates the shaders itself.
 
 Read first, in this order
 1. <BASE_DIR>\README.md and docs\building.md (the build, the code generation, PGO), then docs\ultimate-fixes.md (one row
@@ -92,8 +105,11 @@ The work, in order
      own A/B shows the same fault.
 4. Test in Ryujinx. Build the NRO and run it with tools/run_ryujinx.ps1 and this port's own data folder, to the title
    screen and an attract loop or first gameplay, with captures every 15 s and the verify keys on. Fix every visual
-   difference against the PC build. A new shader package means the device compiles its variants on the first run: make
-   the DKSH cache again before judging hitches.
+   difference against the PC build, each found in a RenderDoc capture first (Appendix B). A new shader package means the
+   device compiles its variants on the first run: make the DKSH cache again before judging hitches.
+   On the console, when I say: the run order of Appendix A (upload with switch_remote.py put, the launch checked by its
+   tile's name and its title ID, the game's input_script for the presses, screenshots with shot, the logs fetched with
+   get, my own setup put back after).
 5. The enhancements. The base has renut-nx's and the other ports' CPU, GPU and shader enhancements on by default except
    those off-by-default.md lists; each still gets checked on this game (its key and in-run A/B target, in the emulator
    with the verify keys: 0 differences). The section 4 trials (vivapinata_shader_noearly's A/B 151 and the like) are per
@@ -157,3 +173,86 @@ At <STOP_TIME> stop, and report:
 - the fixes handed off for the ultimate base
 - anything that needs my decision
 ```
+
+## Appendix A: the console over the network (sys-botbase and sys-ftpd-light)
+
+**Setup, once, by the console's owner.** The console runs Atmosphère. Install two sysmodules from their releases:
+**sys-botbase** (masagrator's fork; it listens on TCP 6000 for controller presses, screenshots, the running title ID and
+memory reads) and **sys-ftpd-light** (an FTP server on TCP 5000, anonymous login, for the SD card). Each release unpacks
+into `/atmosphere/contents/<its program id>/` with a `boot2.flag`, so it starts at boot; reboot once. Give the console a
+fixed address on the router. On the PC, write that address into `out/switch_host.txt` and the port's folder (for example
+`/switch/pacman-nx`) into `out/switch_sd_root.txt` (`out/` is not committed), or pass `--host` and `--root`.
+
+**`tools/switch_remote.py`** (the base's; rr6-nx's of 2026-11-04 as sasrt-nx grew it). In Git Bash, set
+`MSYS_NO_PATHCONV=1` for commands that name a card path, or Git Bash rewrites `/switch/...`.
+
+| Command | What it does |
+| --- | --- |
+| `shot [OUT.jpg]` | A screenshot of what the console shows (sys-botbase's `pixelPeek`) |
+| `click A [B ...]` | Button taps, one after another (A B X Y L R ZL ZR PLUS MINUS HOME CAPTURE DUP DDOWN DLEFT DRIGHT LSTICK RSTICK) |
+| `hold BTN [ms]`, `chord A B ... [ms]`, `stick L\|R X Y [ms]` | A button held, several held together, a stick moved (X and Y in -1..1) |
+| `title`, `version`, `heap` | The running title ID, sys-botbase's version, the game's heap base |
+| `ls [PATH]`, `get REMOTE [LOCAL]`, `put LOCAL REMOTE` | The port's folder on the card: list, download (a folder: every file in it), upload |
+| `album-ls`, `album-get` | The Album, read only (screenshots the owner took) |
+| `raw "CMD ..."` | One sys-botbase command as it is, from a short list that cannot write memory or reach the card |
+
+Every card path is checked against the port's folder and refused outside it; nothing on the card is ever deleted.
+
+**A console run, in order.**
+
+1. The owner's word, and no other session using the console (the sessions here agree a time and say "done" after).
+2. `put` the NRO and the run's toml into the port's folder (the toml can carry `input_script` / `input_script_sticks`:
+   the presses from inside the game, at exact times from its start, more reliable than presses over the network).
+3. `shot` on the Home menu, and read the selected tile's name: forwarder icons look alike. Then `click A` once, and after
+   a few seconds `title`: it must be this port's title ID (read it once with `title` while the game runs). On any other
+   title, stop: no more presses.
+4. While it runs: `shot` for the evidence. The first sys-botbase press after a launch can be lost (rr6-nx: release, then
+   press); after the console has slept, `raw detachController` once, or the presses are ignored.
+5. At the end: close the game (`click HOME`, then `X`, then `A`), `get logs` (the profiler's lines are there), and put
+   back the owner's own NRO and settings if the run replaced them.
+
+sys-ftpd-light runs out of sockets after a few transfers on one connection (451 on every PASV for a while):
+switch_remote.py opens a connection per file and retries. rr6-nx's and sasrt-nx's `tools/console_run.py` automate a
+whole run for their games (upload, the checked launch, timed presses, logs, a contact sheet of the shots): start from
+one for a new game. Measure on the console only with the same NRO both ways (an in-run A/B target or ABBA order) and a
+control from the same session; read the fps from Renut's wall-clock 10 s log lines.
+
+## Appendix B: RenderDoc
+
+**Setup.** RenderDoc 1.46, the portable 64-bit build, at `<RENDERDOC_DIR>`; set the `RENDERDOC_DIR` environment
+variable to that folder (`tools/run_ryujinx_rdc.ps1` and `tools/rdc_run.ps1` read it; without it they use banjo-nx's
+copy). `tools/run_ryujinx_rdc.ps1` names Katamari's emulator and data folders, as `tools/run_ryujinx.ps1` names the
+base's: point both at this port's.
+
+**Capturing.**
+
+- **The PC build** (Renut on Vulkan): start `renut.exe` with RenderDoc's Vulkan layer loaded, from qrenderdoc's *Launch
+  Application*, or with `VK_LAYER_PATH=<RENDERDOC_DIR>` and `VK_INSTANCE_LAYERS=VK_LAYER_RENDERDOC_Capture` set, and give
+  it `banjo_renderdoc_game_s = N` (the next three game frames, N seconds after the first game frame) or
+  `banjo_renderdoc_capture_s = N` (one frame, N seconds after the renderer starts). The captures go to `capturas/rdc`
+  beside the exe.
+- **The Switch build in Ryujinx** (deko3d, translated to Vulkan by the emulator):
+  `powershell -File tools/run_ryujinx_rdc.ps1 -Seconds 420 -Name rdc1 -Toml <toml> -Times "330,345"` runs the emulator
+  with RenderDoc's layer and takes captures at those seconds (`tools/rdc_trigger.py` inside qrenderdoc), into
+  `out/emu_runs/<Name>`; the same rules as `tools/run_ryujinx.ps1` (one emulator at a time, free memory). The emulator's
+  own shader translation is in that picture: compare with a PC capture of the same moment before blaming the port.
+
+**Reading a capture.** `powershell -File tools/rdc_run.ps1 -Script rdc_passes.py -In <capture.rdc> -Out <folder>` runs one
+of the `tools/rdc_*.py` scripts inside qrenderdoc and prints its report; each script's header names its `RDC_*` settings
+(`RDC_EVENTS`, `RDC_PIXELS`, `RDC_TARGET`...).
+
+| Script | What it gives |
+| --- | --- |
+| `rdc_passes.py` | Every render pass's colour target as a PNG, and passes.txt: start here, to see where the picture goes wrong |
+| `rdc_last.py` | The frame as it was shown |
+| `rdc_draws.py` | The draws of a range: their shaders (Renut labels each draw with its vertex and pixel shader), targets, textures, blend |
+| `rdc_event.py`, `rdc_draw_detail.py` | Chosen draws: depth, stencil and rasterizer state, the vertex outputs (NaN, w <= 0), a pixel history |
+| `rdc_pixel.py`, `rdc_history.py` | Which draws wrote a pixel, and what each wrote |
+| `rdc_bindings.py` | What a draw can read, every descriptor (also for the emulator's translated shaders, where RenderDoc shows none) |
+| `rdc_state.py`, `rdc_stencil.py` | Fixed-function state; stencil contents |
+| `rdc_save.py`, `rdc_pick.py`, `rdc_mips.py`, `rdc_channel.py` | Textures saved as PNG, pixel values, every mip level's range, one channel |
+| `rdc_buffer.py`, `rdc_mesh.py` | Buffer contents; a draw's vertices |
+
+A worked example: [katamari-notes.md](katamari-notes.md), "The depth-of-field blur: found with RenderDoc and fixed"
+(a multisampled depth fetch the emulator replaced with 0, found from the capture's bindings and the emulator's log).
+renut-nx's `docs/deko3d-renderer.md` section 12 has more.

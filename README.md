@@ -100,7 +100,7 @@ Windows, LLVM clang and the VS Build Tools for the PC build; devkitA64, libnx an
 | `tools/` | Code generation steps, build and test scripts, shader tools, the difftests (`tools/difftest`) |
 | `pgo/` | katamari-nx's PGO profile (counts of which code ran, no game code or data) |
 | `dist/` | The settings of the test builds |
-| `docs/` | The documentation (below) |
+| `docs/` | The documentation (below; [docs/README.md](docs/README.md) is its index) |
 | `shaders/` | masseffect-nx's old shader tools, not used by Renut's build ([shaders/README.md](shaders/README.md)) |
 
 </div>
@@ -109,6 +109,7 @@ Windows, LLVM clang and the VS Build Tools for the PC build; devkitA64, libnx an
 
 | Page | What it is |
 | --- | --- |
+| [docs/README.md](docs/README.md) | The index: where to start for each task, and what each page is |
 | [docs/building.md](docs/building.md) | Building, code generation, the shaders, the Switch builds, PGO, the installer, tests |
 | [docs/porting-a-360-game-prompt.md](docs/porting-a-360-game-prompt.md) | Starting a new port from the base: the order of work and the rules |
 | [docs/ultimate-fixes.md](docs/ultimate-fixes.md) | Every fix the base took, with its source, evidence, tests and switch |

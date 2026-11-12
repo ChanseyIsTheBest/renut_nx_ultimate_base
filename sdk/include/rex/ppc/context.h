@@ -186,6 +186,36 @@ constexpr uint32_t kRoundUp = 0x02;
 constexpr uint32_t kRoundDown = 0x03;
 constexpr uint32_t kRoundMask = 0x03;
 
+// blur-nx (2026-11-12, codegen-ideas-3 CG-13's census; PC game code only: REX_DIET_CENSUS_ON, x86): an FPU-mode region
+// (the guest code between a switch of the flush mode off and the next switch on) ends at that switch; the host's
+// sticky status flags then say whether an operation in it met a denormal operand or gave an underflow
+// (rex::syscount::CensusFpuRegionEnd). So that the flags are the region's own, the cached word every switch writes
+// back keeps them clear (InitHost, loadFromHost): each switch then clears what the previous region raised.
+#if defined(REX_DIET_CENSUS_ON) && !defined(__SWITCH__) && (defined(__x86_64__) || defined(_M_X64))
+#define REX_FPU_CENSUS_REGION_END() ::rex::syscount::CensusFpuRegionEnd(uint32_t(getcsr()))
+#define REX_FPU_CENSUS_CLEAN(word) ((word) &= ~decltype(word)(0x3F))
+#else
+#define REX_FPU_CENSUS_REGION_END() ((void)0)
+#define REX_FPU_CENSUS_CLEAN(word) ((void)0)
+#endif
+
+// blur-nx (2026-11-12, codegen-ideas-3 CG-13, the user: "build CG 13 ... it probably should be off by default"): CMake
+// BLUR_FPCR_ONE_MODE (REX_FPCR_ONE_MODE) keeps the host's flush mode on for all guest code: a guest thread sets it at
+// start (InitHost), any other thread at its first switch on (enableFlushMode still writes it once when the cached word
+// says off), and every switch off is nothing, so there is no `msr fpcr` in the game code after the first. The VMX unit
+// flushes denormals as the Xenon's does; the scalar FPU now flushes them too, which the Xenon's does not: NOT
+// bit-exact for scalar values below FLT_MIN / DBL_MIN (the census, REX_DIET_CENSUS_ON, counts them on the PC).
+#if defined(REX_FPCR_ONE_MODE)
+#ifndef REX_FLUSH_KNOWN_ON
+#define REX_FLUSH_KNOWN_ON() ((void)0)
+#define REX_FLUSH_KNOWN_OFF() ((void)0)
+#endif
+#ifndef REX_FLUSH_HOIST_KNOWN_ON
+#define REX_FLUSH_HOIST_KNOWN_ON() ((void)0)
+#define REX_FLUSH_HOIST_KNOWN_OFF() ((void)0)
+#endif
+#endif
+
 struct FPSCRRegister {
   uint32_t csr;
 
@@ -205,11 +235,15 @@ struct FPSCRRegister {
   // Restoring the whole word would unmask every FP exception when csr is 0.
   inline void restoreGuestBits(uint32_t saved) noexcept {
     csr = (getcsr() & ~GuestMask) | (saved & GuestMask);
+#if defined(REX_FPCR_ONE_MODE)
+    csr |= FlushMask;  // CG-13
+#endif
     setcsr(csr);
   }
 
   inline uint32_t loadFromHost() noexcept {
     csr = getcsr();
+    REX_FPU_CENSUS_CLEAN(csr);
     return HostToGuest[(csr & RoundMaskVal) >> RoundShift];
   }
 
@@ -224,6 +258,11 @@ struct FPSCRRegister {
   }
 
   REX_SMALL_HELPER void enableFlushModeUnconditional() noexcept {
+#if defined(REX_FPCR_ONE_MODE)
+    enableFlushMode();
+    return;
+#endif
+    REX_FPU_CENSUS_REGION_END();
     REX_SYS_CENSUS_SITE(rex::syscount::kCensusFlushWrite);
     if ((csr & FlushMask) == FlushMask) REX_SYS_CENSUS(rex::syscount::kCensusFlushSame, 1);
     csr |= FlushMask;
@@ -231,6 +270,9 @@ struct FPSCRRegister {
   }
 
   REX_SMALL_HELPER void disableFlushModeUnconditional() noexcept {
+#if defined(REX_FPCR_ONE_MODE)
+    return;
+#endif
     REX_SYS_CENSUS_SITE(rex::syscount::kCensusFlushWrite);
     if ((csr & FlushMask) == 0) REX_SYS_CENSUS(rex::syscount::kCensusFlushSame, 1);
     csr &= ~FlushMask;
@@ -239,6 +281,7 @@ struct FPSCRRegister {
 
   REX_SMALL_HELPER void enableFlushMode() noexcept {
     if ((csr & FlushMask) != FlushMask) [[unlikely]] {
+      REX_FPU_CENSUS_REGION_END();
       REX_SYS_CENSUS_SITE(rex::syscount::kCensusFlushWrite);
       csr |= FlushMask;
       setcsr(csr);
@@ -246,6 +289,9 @@ struct FPSCRRegister {
   }
 
   REX_SMALL_HELPER void disableFlushMode() noexcept {
+#if defined(REX_FPCR_ONE_MODE)
+    return;
+#endif
     if ((csr & FlushMask) != 0) [[unlikely]] {
       REX_SYS_CENSUS_SITE(rex::syscount::kCensusFlushWrite);
       csr &= ~FlushMask;
@@ -255,11 +301,19 @@ struct FPSCRRegister {
 
   // tools/flush_mode_flow.py: the test of a check the control flow proved redundant (PC builds keep it).
   REX_SMALL_HELPER bool flushModeIsOn() const noexcept { return (csr & FlushMask) == FlushMask; }
+#if defined(REX_FPCR_ONE_MODE)
+  REX_SMALL_HELPER bool flushModeIsOff() const noexcept { return true; }  // CG-13: no mode to check
+#else
   REX_SMALL_HELPER bool flushModeIsOff() const noexcept { return (csr & FlushMask) == 0; }
+#endif
 
   inline void InitHost() noexcept {
     csr = getcsr();
+    REX_FPU_CENSUS_CLEAN(csr);
     Platform::InitHostExceptions(csr);
+#if defined(REX_FPCR_ONE_MODE)
+    csr |= FlushMask;  // CG-13: the flush mode on for the thread's whole life
+#endif
     setcsr(csr);
   }
 };

@@ -65,11 +65,21 @@ float4 main(float4 position : SV_Position) : SV_Target0
 #endif
     const EdramSpanFields dst = UnpackSpan(asuint(g_Push.scale.x));
     const EdramSpanFields src = UnpackSpan(asuint(g_Push.scale.y));
+    // blur-nx (2026-11-13, MSAA lowered by msaa_level): the host targets' own sample counts (param1: the target's in bits
+    // 0-3, the source's in bits 4-7; 0 from an older caller means "as the console's"). The layouts here are the
+    // console's (its headers); a 4x view made 2x on the host has its two samples on the 4x grid's diagonal, (0,0) and
+    // (1,1), and a 4x sample position reads the host sample of its row. Made 1x, the single-sampled forms read and write
+    // each pixel's first sample position, which stands for all four.
+    const uint host_samples = asuint(g_Push.param1);
+    const uint dst_host = host_samples & 0xFu;
+    const uint src_host = (host_samples >> 4) & 0xFu;
     const uint2 pixel = uint2(position.xy);
     // The destination sample's place in its own sample grid (samples across and down are 1 or 2: shifts).
     const uint2 dst_shift = uint2(dst.samples_x - 1u, dst.samples_y - 1u);
     uint2 sample_xy = pixel << dst_shift;
-    if (dst.samples_x == 2u)
+    if (dst.samples_x == 2u && dst_host == 2u)
+        sample_xy += uint2(sample_index & 1u, sample_index & 1u);
+    else if (dst.samples_x == 2u)
         sample_xy += uint2(sample_index & 1u, sample_index >> 1);
     else if (dst.samples_y == 2u)
         sample_xy.y += sample_index & 1u;
@@ -101,7 +111,9 @@ float4 main(float4 position : SV_Position) : SV_Target0
         discard;
 #if EDRAM_INHERIT_SRC_MS
     uint s = 0u;
-    if (src.samples_x == 2u)
+    if (src.samples_x == 2u && src_host == 2u)
+        s = src_sample.y & 1u;  // blur-nx (2026-11-13): a 4x view made 2x on the host (see above)
+    else if (src.samples_x == 2u)
         s = (src_sample.x & 1u) | ((src_sample.y & 1u) << 1);
     else if (src.samples_y == 2u)
         s = src_sample.y & 1u;

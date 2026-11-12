@@ -229,6 +229,10 @@ namespace plume {
         uint32_t txqMask = 0;
         // vivapinata-nx (2026-11-03): a vertex shader that has the kill's constant 914 (tools/deko3d_glsl_opt.py vskill).
         bool writesVertexKill = false;
+        // blur-nx (2026-11-12): a vertex or geometry shader whose text names gl_ClipDistance (true for the other stages).
+        // One that does not writes no clip distance in any variant, and its pipelines draw with the clip slot off
+        // (Deko3DGraphicsPipeline::noUserClip).
+        bool writesClipDistance = true;
     };
 
     struct Deko3DShader : RenderShader {

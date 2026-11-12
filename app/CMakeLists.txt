@@ -72,6 +72,16 @@ option(BLUR_FMADDS_SINGLE "Scalar fmadds and kin rounded once in single precisio
 if(NOT BLUR_FMADDS_SINGLE)
     add_compile_definitions(REX_FMADDS_DOUBLE_ROUNDING)
 endif()
+# blur-nx (2026-11-12, codegen-ideas-3 CG-13; the user: "build CG 13 ... it probably should be off by default"): all guest
+# float code with the host's flush mode on (rex/ppc/context.h, rex/ppc/diet_ops.h): no `msr fpcr` switch in the game code
+# after a thread's first, and the any-mode float helpers as the plain operations. NOT bit-exact: the Xenon's scalar FPU
+# keeps denormals (values below FLT_MIN / DBL_MIN), which this flushes to zero as its VMX unit does. The PC census
+# (banjo_diag_runtime_census: "[census] CG-13" lines, tools/census_sites.py --denormal) counts the results it changes.
+# A compile-time switch: every generated file, the copies and the SDK runtime change with it (retrain the PGO profile).
+option(BLUR_FPCR_ONE_MODE "All guest float code in the flush mode (no FPCR switches; not bit-exact for scalar denormals)" OFF)
+if(BLUR_FPCR_ONE_MODE)
+    add_compile_definitions(REX_FPCR_ONE_MODE)
+endif()
 include(generated/rexglue.cmake)
 
 # banjo-nx (from sa2-nx): the optimised codegen. The build re-runs the generator by itself whenever an input in
