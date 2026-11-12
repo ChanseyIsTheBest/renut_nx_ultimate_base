@@ -207,6 +207,10 @@ toml, so a port that finds one wrong for its game doesn't have to change the cod
   (`vivapinata_depth_resolve_skip_unread`, off: not exact in principle).
 - Port 116 marks Katamari's `disable_msaa` as not read (`msaa_level` sets the samples).
 - Port 117 takes a home-network address out of `log_network`'s help text.
+- Port 118 makes MSAA off (`msaa_level` 1) and SMAA on (`banjo_renut_smaa`) the base's defaults; a game lists its
+  final composite shader in `banjo_renut_smaa_after_ps` for SMAA to run.
+- Port 119 (sasrt-nx's, from vivapinata-nx) lets dynamic resolution step up when the next height has 1 ms of room,
+  one step at a time, with a grid of heights per mode.
 - Port 44 and the translator changes take effect when a game's shader package is made again. Before measuring on the
   console, build its DKSH cache on the PC (`tools/deko3d_variant_cache.py`): a first run that compiles its shaders while
   it draws is slower on the GPU than the build is.

@@ -54,6 +54,21 @@ REXCVAR_DEFINE_INT32(banjo_renut_dynamic_steps, 4, "Nuts&Bolts/Graphics",
                      "GPU's time picks the highest that fits. 0: only the two ends")
     .range(0, 8)
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// sasrt-nx (2026-11-09, the user: "more steps, especially in docked"): each mode's grid of heights (a multiple of 9:
+// whole host pixels across the 1280-wide screen). 36 (banjo's) is whole pixels at 320x180 too; 18 at 640x360, and a
+// quarter-size target's edge then rounds to the nearest pixel (RenderScale::Coord), half a pixel off at most.
+// vivapinata-nx (2026-11-12, the owner: 6 steps, then "Yes, port the grid"): 540-720 has room for only 4 heights on 36
+// lines; Viva's built-in settings take 18 handheld (app/vivapinata_switch_defaults.toml).
+REXCVAR_DEFINE_INT32(sasrt_dynamic_lines_handheld, 36, "Nuts&Bolts/Graphics",
+                     "banjo_renut_dynamic_resolution: the handheld steps are multiples of this many lines (9 to 72, a "
+                     "multiple of 9; 36 banjo's; from sasrt-nx)")
+    .range(9, 72)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_INT32(sasrt_dynamic_lines_docked, 36, "Nuts&Bolts/Graphics",
+                     "banjo_renut_dynamic_resolution: the docked steps are multiples of this many lines (9 to 72, a "
+                     "multiple of 9; 36 banjo's; from sasrt-nx)")
+    .range(9, 72)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_DOUBLE(banjo_renut_dynamic_up_s, 1.0, "Nuts&Bolts/Graphics",
                       "banjo_renut_dynamic_resolution: seconds in a row the high height must be predicted to fit (and "
                       "since the last change) before it is taken again (0.1 to 600; 1 = quick, the user's choice)")
@@ -224,6 +239,12 @@ int32_t DynamicTestSeconds() {
 int32_t DynamicSteps() {
   static const int32_t v = int32_t(REXCVAR_GET(banjo_renut_dynamic_steps));
   return v < 0 ? 0 : v > 8 ? 8 : v;
+}
+int32_t DynamicStepLines(bool docked) {  // sasrt-nx (2026-11-09): sasrt_dynamic_lines_handheld / _docked
+  static const int32_t h = int32_t(REXCVAR_GET(sasrt_dynamic_lines_handheld));
+  static const int32_t d = int32_t(REXCVAR_GET(sasrt_dynamic_lines_docked));
+  const int32_t v = (docked ? d : h) / 9 * 9;
+  return v < 9 ? 9 : v > 72 ? 72 : v;
 }
 
 uint32_t AnisotropyCap() {

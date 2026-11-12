@@ -592,8 +592,9 @@ void LatchResolutionScaleLocked() {
           g_dynamic_steps[m][n++] = low;
 #if defined(PLUME_DEKO3D)
           const int between = DynamicSteps();
+          const int32_t grid = DynamicStepLines(docked_mode);  // sasrt-nx (2026-11-09): each mode's grid, 36 before
           for (int i = 1; i <= between && n < kMaxDynamicSteps - 1; ++i) {
-            const int32_t h = (low + (high - low) * i / (between + 1) + 18) / 36 * 36;
+            const int32_t h = (low + (high - low) * i / (between + 1) + grid / 2) / grid * grid;
             if (h > g_dynamic_steps[m][n - 1] && h < high)
               g_dynamic_steps[m][n++] = h;
           }
@@ -809,6 +810,26 @@ REXCVAR_DEFINE_BOOL(sasrt_dynamic_cpu_aware, true, "Nuts&Bolts/Graphics",
                     "when the GPU's time is above both, and up while the next step is predicted under 85 % of the larger "
                     "(from sasrt-nx). Off: the budget alone, as before")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// sasrt-nx (2026-11-09, the user: "raise it if there's 1.0 ms of room for 1 second"): the next step is taken when its
+// predicted time is at least this far under the budget for banjo_renut_dynamic_up_s in a row (in place of "under 85 %
+// of the budget": 29.3 ms at 34.5, which held the handheld race at 612 lines with the GPU at 27-30 ms there). 0: the
+// 85 % rule. The prediction (the time now times the pixel ratio) is an overestimate, so a step taken by it fits.
+// vivapinata-nx (2026-11-12, the owner: "copy sonic racing it fixed the issue"): run c28 held 576 lines at 26.96 ms GPU
+// against a 32 ms budget (612 predicted 30.4 ms, over the 85 % rule's 27.2; under this rule's 31.0).
+REXCVAR_DEFINE_DOUBLE(sasrt_dynamic_up_room_ms, 1.0, "Nuts&Bolts/Graphics",
+                      "banjo_renut_dynamic_resolution: step up when the next height's predicted GPU time a frame has "
+                      "been this many ms under the budget for banjo_renut_dynamic_up_s (0: under 85 % of the budget; "
+                      "from sasrt-nx)");
+
+// sasrt-nx (2026-11-09, the user: "more steps, especially in docked"; console run steps_race, handheld 540-720 every
+// 18 lines): a step up went to the highest step predicted with room, often two at once (666 -> 702), onto a height
+// neither settable code held: 14 targets made again each time (17 such changes in the race against 2 with 6 steps).
+// One step at a time, the moves stay between the heights the codes hold (and 720, code 0) unless the band moves.
+REXCVAR_DEFINE_BOOL(sasrt_dynamic_up_one_step, true, "Nuts&Bolts/Graphics",
+                    "banjo_renut_dynamic_resolution: a step up goes one step (when the next has the room), not to the "
+                    "highest step with room: fewer changes of a settable code's height (each makes its targets again; "
+                    "from sasrt-nx)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 // sasrt-nx (2026-11-09 night, SASRT's run mem12; port 58): see the step-up branch below.
 REXCVAR_DEFINE_BOOL(sasrt_dynamic_up_memory, true, "SASRT/Graphics",
@@ -850,6 +871,9 @@ void NoteGpuFrameForDynamicResolution(double gpu_ms) {
       cpu_average = cpu_average > 0.0 ? cpu_average * 0.94 + cpu_side * 0.06 : cpu_side;
     budget = std::max(budget, cpu_average);
   }
+  // sasrt-nx (2026-11-09, sasrt_dynamic_up_room_ms): the predicted time a step up must stay at or under.
+  static const double up_room = REXCVAR_GET(sasrt_dynamic_up_room_ms);
+  const double up_limit = up_room > 0.0 ? budget - up_room : budget * 0.85;
   // The time a step is predicted to take: the average times the pixel ratio.
   const auto predicted = [&](int s) {
     const double r = double(heights[s]) / current;
@@ -887,16 +911,17 @@ void NoteGpuFrameForDynamicResolution(double gpu_ms) {
       const double need_mb = double(g_current_set_mb.load(std::memory_order_relaxed)) * r * r;
       memory_ok = free_mb == UINT32_MAX || double(free_mb) >= double(banjo::renut_gpu::MemoryLowMarkMb()) + need_mb;
       static uint32_t held_logged = 0;
-      if (!memory_ok && predicted(step + 1) < budget * 0.85 && held_logged++ < 16)
+      if (!memory_ok && predicted(step + 1) <= up_limit && held_logged++ < 16)
         RGPU_INFO("[renut] dynamic resolution: {} lines held back: {} MB free, the next set ~{:.0f} MB and the low mark "
                   "{} MB (sasrt_dynamic_up_memory)", heights[step + 1], free_mb, need_mb,
                   banjo::renut_gpu::MemoryLowMarkMb());
     }
-    if (predicted(step + 1) >= budget * 0.85 || banjo::renut_gpu::MemoryLow() || !memory_ok)  // port 58: the governor
+    if (predicted(step + 1) > up_limit || banjo::renut_gpu::MemoryLow() || !memory_ok)  // port 58: the governor
       fits_since = now;
     if (since >= up_seconds && std::chrono::duration<double>(now - fits_since).count() >= up_seconds) {
       next = step + 1;
-      while (next + 1 < count && predicted(next + 1) < budget * 0.85)
+      static const bool one_step = REXCVAR_GET(sasrt_dynamic_up_one_step);  // sasrt-nx (2026-11-09)
+      while (!one_step && next + 1 < count && predicted(next + 1) <= up_limit)
         ++next;
     }
   }
