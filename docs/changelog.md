@@ -189,3 +189,5 @@ Ports 1-43 are the first round: the universal fixes of the other ports' renderer
   (port 118's default of 1): the sample-grid resolve, the EDRAM inherit, alpha to coverage with the game's own
   alpha test, and the depth restore's candidates go by the console's sample count.
 - Port 128 (from blur-nx) lets SMAA run on RGBA16F composite targets (Blur's float composite).
+- Port 129 (sasrt-nx's finding) makes port 45's deferred depth decompress drop the bound targets' serial and mark
+  its texture used, as the other decompresses do (a later bind of the same targets could be skipped).
