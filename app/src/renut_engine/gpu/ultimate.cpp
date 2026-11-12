@@ -348,6 +348,32 @@ REXCVAR_DEFINE_BOOL(renut_diag_formats, true, "Banjo/Enhancements",
                     "textures asked for linear filtering")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
+// dishonored-nx (2026-10-31; port 104): tiled textures uploaded with an all-zero level watched until their data comes in.
+REXCVAR_DEFINE_BOOL(dishonored_renut_zero_level_recheck, true, "Banjo/Enhancements",
+                    "From dishonored-nx: a tiled texture with a level whose guest data was all zeros at its upload (the "
+                    "game streams the small levels in after the first bind, where the sampled content check does not "
+                    "look) has its whole data hashed every 8 frames, at most 24 textures a frame, until it changes, then "
+                    "is uploaded again (black walls and heads at a distance in Dishonored). Off: the sampled check only")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
+// dishonored-nx (2026-10-30; port 101): vertex fills and fetch data copies read only committed guest memory.
+REXCVAR_DEFINE_BOOL(dishonored_renut_vertex_readable_check, true, "Banjo/Enhancements",
+                    "From dishonored-nx: a vertex stream fill or fetch data copy whose range runs past the guest memory "
+                    "the game committed converts the committed part and zeros the rest, where the read faulted the render "
+                    "thread before (the Xbox 360's GPU reads whatever is there). Each fill asks the heap's page table (its "
+                    "lock and a walk over the range's pages). Off: the whole range read as before. The Switch only (the "
+                    "PC's heaps are not a plain offset from the base)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
+// dishonored-nx (2026-10-31; port 106): a 2_10_10_10_FLOAT (7e3) target's pixel shader output clamped to the 7e3 range.
+REXCVAR_DEFINE_BOOL(dishonored_renut_clamp_7e3, true, "Banjo/Enhancements",
+                    "From dishonored-nx: a pixel shader drawing into a 2_10_10_10_FLOAT (7e3) target with exponent bias 0 "
+                    "clamps that output to the 7e3 range (colour 0 to 31.875, alpha 0 to 1, NaN to 0), as the Xenos stores "
+                    "it. The host target is 16-bit float, which kept negative light passes (black walls in Dishonored) and "
+                    "highlights far above the range (a washed-out frame). Needs the shader package with the clamp7e3 pass "
+                    "(constant 990). Blending past the range is not clamped. Off: the output as the shader computes it")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
 namespace banjo::renut_gpu {
 int Deko3DUserClipEnable() { return REXCVAR_GET(banjo_deko3d_user_clip_enable); }
 bool ConstNanFlushOn() {
@@ -539,6 +565,18 @@ bool Float32PointFilterOn() {
 }
 bool DiagFormatsOn() {
   static const bool on = REXCVAR_GET(renut_diag_formats);
+  return on;
+}
+bool ZeroLevelRecheckOn() {
+  static const bool on = REXCVAR_GET(dishonored_renut_zero_level_recheck);
+  return on;
+}
+bool VertexReadableCheckOn() {
+  static const bool on = REXCVAR_GET(dishonored_renut_vertex_readable_check);
+  return on;
+}
+bool Clamp7e3On() {
+  static const bool on = REXCVAR_GET(dishonored_renut_clamp_7e3);
   return on;
 }
 }  // namespace banjo::renut_gpu

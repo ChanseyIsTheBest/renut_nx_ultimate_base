@@ -337,15 +337,29 @@ void XmaDecoder::WorkerThreadMain() {
     // Full sweep as a safety net: it is how it used to work, and it serves any context left enabled
     // without a mark. Only when there were no pending ones, so the 320 locks are not walked after every
     // kick and the fast loop keeps the work being counted.
+    // blur-nx (2026-11-11, CPU batch 2): only the contexts the bitmap has enabled (XmaEnabledWord; Work() returns at
+    // once for the others, after loading their flags: 320 cache lines a sweep, about 5 % of a core in the console
+    // race of the LTO+PGO build). BLUR_XMA_SWEEP_ALL (compile time): every context, as before.
     if (!pending_was) {
+#if !defined(BLUR_XMA_SWEEP_ALL)
+      for (uint32_t word = 0; word < kContextCount / 32 && worker_running_; ++word) {
+        uint32_t bits = XmaEnabledWord(word);
+        uint32_t index = 0;
+        while (bits && rex::bit_scan_forward(bits, &index)) {
+          bits &= ~(1u << index);
+          XmaContext& context = contexts_[word * 32 + index];
+#else
       for (uint32_t n = 0; n < kContextCount && worker_running_; n++) {
-        XmaContext& context = contexts_[n];
-        bool worked = context.Work();
-        if (worked) {
-          context.SignalWorkDone();
-          PROFILE_XMA_FRAME_DECODED();
+        {
+          XmaContext& context = contexts_[n];
+#endif
+          bool worked = context.Work();
+          if (worked) {
+            context.SignalWorkDone();
+            PROFILE_XMA_FRAME_DECODED();
+          }
+          did_work = did_work || worked;
         }
-        did_work = did_work || worked;
       }
     }
 

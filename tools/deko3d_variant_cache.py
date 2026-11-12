@@ -299,8 +299,16 @@ def read_list(path, blend_skip_on, alpha_guess=ALPHA_GUESS):
                 spec[933 + k] = sw[k]
         if sw[7] & 3 and ps:  # sasrt-nx (2026-11-08): sasrt_gpu_gpr_cap(_filter), constant 910
             spec[910] = 1
+        if sw[7] & 0x100 and ps:  # vivapinata-nx (2026-11-12): vivapinata_shader_round's off half, constant 975
+            spec[975] = 0
+        if sw[7] & 0x200 and ps:  # vivapinata-nx (2026-11-12): vivapinata_shader_noearly, constant 976
+            spec[976] = 0
+        if sw[7] & 0x400 and ps:  # vivapinata-nx (2026-11-12): vivapinata_shader_earlykill, constant 977
+            spec[977] = 1
         if sw[7] & 4 and vs:  # sasrt-nx (2026-11-08): sasrt_gpu_export_window_ubo, constant 944
             spec[944] = 1
+        if sw[7] >> 28 and ps:  # dishonored-nx (2026-10-31; port 106): dishonored_renut_clamp_7e3, constant 990
+            spec[990] = sw[7] >> 28
         if sw[8] and vs:  # sasrt-nx (2026-11-08): sasrt_gpu_export_format_spec, constants 940-943
             for k in range(4):
                 spec[940 + k] = sw[8 + k]
@@ -348,9 +356,18 @@ def read_list(path, blend_skip_on, alpha_guess=ALPHA_GUESS):
         # constants have no signs, gamma or exponent adjust gets 926 = its pixel shader's textureFetchMask without bit 31
         # (render/draw.cpp PlainFetchMask), so that variant is made too for each (--plain-guess, from the shader table).
         guess_mask = PLAIN_GUESS.get(ps) if ps and not plain else None
+        # vivapinata-nx (2026-11-12, the shader round): with vivapinata_shader_round, 926 also has the vertex shader's
+        # fetch constants (render/draw.cpp SasrtPlainFetchMask's vs_entry), which no list before it recorded: those
+        # variants too, the vertex shader's fetches guessed plain as the pixel shader's are.
+        vs_mask = PLAIN_GUESS.get(vs, 0) if ps else 0
         if guess_mask:
             for s in made:
                 out.append((hashes, {**s, 926: guess_mask}))
+                if vs_mask:
+                    out.append((hashes, {**s, 926: guess_mask | vs_mask}))
+        if plain and vs_mask and (plain | vs_mask) != plain:
+            for s in made:
+                out.append((hashes, {**s, 926: plain | vs_mask}))
     return out
 
 
@@ -412,6 +429,15 @@ def main():
                          "pixel shader's variant with every fetch plain (constant 926), for lists made before the "
                          "plain-fetch key")
     ap.add_argument('--dry-run', action='store_true', help='count the variants (and the merged cache entries among them)')
+    ap.add_argument('--earlykill-ab', action='store_true',
+                    help='vivapinata-nx (2026-11-12): also every pixel variant with constant 977 = 1 (the alpha test '
+                         'moved up: vivapinata_shader_earlykill, A/B 152)')
+    ap.add_argument('--noearly-ab', action='store_true',
+                    help='vivapinata-nx (2026-11-12): also every pixel variant with constant 976 = 0 (the early alpha '
+                         'test skipped: vivapinata_shader_noearly, A/B 151)')
+    ap.add_argument('--round-ab', action='store_true',
+                    help='vivapinata-nx (2026-11-12): also every pixel variant with constant 975 = 0, the shader '
+                         "round's A/B off half (vivapinata_shader_round, A/B 150)")
     ap.add_argument('--sasrt-guess', action='store_true',
                     help='sasrt-nx (2026-11-08): each listed pipeline also with the third round\'s guessable key words '
                          '(constant 932 = 5, the register cap of the listed pixel shaders): lists made before them')
@@ -462,6 +488,12 @@ def main():
         pipelines += read_list(path, a.blend_skip, tuple(int(x) for x in a.alpha_guess.split(',') if x))
     if a.sasrt_guess:  # sasrt-nx (2026-11-08): the third round's key words as race draws have them (sasrt_guess)
         pipelines += [(h, sasrt_guess(h, sp)) for h, sp in list(pipelines)]
+    if a.noearly_ab:  # vivapinata-nx (2026-11-12): each pixel shader's variant also with 976 = 0 (A/B 151's on half)
+        pipelines += [(h, {**sp, 976: 0}) for h, sp in list(pipelines) if h[1] != '0' * 16 and 976 not in sp]
+    if a.earlykill_ab:  # vivapinata-nx (2026-11-12): each pixel shader's variant also with 977 = 1 (A/B 152's on half)
+        pipelines += [(h, {**sp, 977: 1}) for h, sp in list(pipelines) if h[1] != '0' * 16 and 977 not in sp]
+    if a.round_ab:  # vivapinata-nx (2026-11-12): each pixel shader's variant also with 975 = 0 (A/B 150's off half)
+        pipelines += [(h, {**sp, 975: 0}) for h, sp in list(pipelines) if h[1] != '0' * 16 and 975 not in sp]
     for path in a.variants:
         for line in open(path, encoding='utf-8', errors='replace'):
             parts = line.split()

@@ -416,6 +416,27 @@ struct PendingFill {
 };
 std::vector<PendingFill> g_pending_fills;
 
+// dishonored-nx (2026-10-31, dishonored_renut_zero_level_recheck; port 104): whether a level's guest bytes (at most the
+// first 64 KB) are all zero: a level the game has not streamed in yet (a zero DXT block is black).
+static bool GuestLevelZero(const uint8_t *p, size_t bytes) {
+  if (!p || !bytes)
+    return false;
+  bytes = std::min<size_t>(bytes, 64 * 1024);
+  size_t i = 0;
+  for (; i + 8 <= bytes; i += 8) {
+    uint64_t w;
+    std::memcpy(&w, p + i, 8);
+    if (w)
+      return false;
+  }
+  for (; i < bytes; ++i)
+    if (p[i])
+      return false;
+  return true;
+}
+// Its counts, logged every 600 frames while a texture is watched.
+uint64_t g_zero_rechecks = 0, g_zero_reuploads = 0, g_zero_marked = 0;
+
 // Records the copies of every level into 't'. The guest data is read now, or
 // when the command list is submitted if 'defer_read'.
 bool Upload(HostTexture &t, const TextureFetch &fetch, bool defer_read) {
@@ -438,6 +459,9 @@ bool Upload(HostTexture &t, const TextureFetch &fetch, bool defer_read) {
   t.layout = plume::RenderTextureLayout::COPY_DEST;
 
   const bool is_3d_data = fetch.Dimension() == TextureDimension::Tex3D;
+  // dishonored-nx (2026-10-31; port 104): dishonored_renut_zero_level_recheck: a level all zero in guest memory
+  const bool zero_check = fetch.Tiled() && banjo::renut_gpu::ZeroLevelRecheckOn();
+  bool any_zero = false;
   // Host array layers (cube faces, stacked layers); a stacked texture's extra
   // layer (StackedLayers) repeats its last one.
   const uint32_t slices = is_3d_data ? 1 : t.stacked ? StackedLayers(t) : t.depth;
@@ -480,6 +504,9 @@ bool Upload(HostTexture &t, const TextureFetch &fetch, bool defer_read) {
         g_pending_fills.push_back({t.info, fetch, src, blocks_w, blocks_h, d, dst, row_pitch, slice_pitch});
       else
         ReadLevel(t.info, fetch, src, blocks_w, blocks_h, d, dst, row_pitch, slice_pitch);
+      if (zero_check && !any_zero)  // dishonored-nx (port 104): the level's storage (a packed tail's: the tail)
+        any_zero = GuestLevelZero(src.base, size_t(src.pitch_blocks) * src.height_blocks * t.info.guest_block_bytes *
+                                                std::max(1u, layout.depth));
       // Footprints are in texels, block-aligned for compressed formats. Decoded
       // blocks are plain texels, so a level smaller than a block (a small mip)
       // takes only its own part of the decoded block.
@@ -522,6 +549,16 @@ bool Upload(HostTexture &t, const TextureFetch &fetch, bool defer_read) {
             0, 0, 0, !vulkan && t.info.decoded_blocks ? &level_box : nullptr);
       }
     }
+  }
+  // dishonored-nx (2026-10-31, dishonored_renut_zero_level_recheck; port 104): a tiled upload with an all-zero level: its
+  // whole guest data is hashed now and watched (BindTextureLocked) until it changes.
+  const bool was_zero = t.zero_levels;
+  t.zero_levels = zero_check && any_zero;
+  if (t.zero_levels) {
+    t.zero_hash = ContentHash(fetch, t);
+    t.zero_check_frame = g_frame;
+    if (!was_zero)
+      ++g_zero_marked;
   }
   return true;
 }
@@ -1395,8 +1432,10 @@ TextureBinding BindTextureLocked(u32 texture_va, const TextureFetch &device_fetc
     banjo::renut_gpu::CountExpAdjust(adjust);
   if (HostTexture *resolved = ResolvedAlias(texture_va, fetch, desc)) {
     resolved->used_frame = g_frame;
-    if (resolved->words)
+    if (resolved->words) {
       banjo::renut_gpu::CountDepthFloatSampled();  // banjo-nx (2026-10-18): a depth resolve's float target sampled
+      DepthResolveReadLocked(*resolved, 1);        // vivapinata-nx (2026-11-12, vivapinata_depth_resolve_skip_unread)
+    }
     FlushResolveMipsLocked(*resolved);  // banjo-nx (2026-10-28, banjo_renut_lazy_resolve_mips)
     TransitionTextureLocked(resolved, plume::RenderTextureLayout::SHADER_READ);
     if (fx) {
@@ -1547,6 +1586,31 @@ TextureBinding BindTextureLocked(u32 texture_va, const TextureFetch &device_fetc
       if (!t.uploaded || hash != t.content_hash) {
         t.content_hash = hash;
         t.uploaded = Upload(t, fetch, false);
+      } else if (t.zero_levels && g_frame - t.zero_check_frame >= 8) {
+        // dishonored-nx (2026-10-31, dishonored_renut_zero_level_recheck; port 104): a level was all zeros at the upload:
+        // the whole data hashed, at most 24 textures a frame, uploaded again once it changed.
+        static uint64_t budget_frame = 0;
+        static uint32_t budget = 0;
+        if (budget_frame != g_frame) {
+          budget_frame = g_frame;
+          budget = 24;
+        }
+        if (budget) {
+          --budget;
+          ++g_zero_rechecks;
+          t.zero_check_frame = g_frame;
+          if (ContentHash(fetch, t) != t.zero_hash) {
+            ++g_zero_reuploads;
+            t.uploaded = Upload(t, fetch, false);
+          }
+        }
+        static uint64_t report_frame = 0;
+        if (g_frame - report_frame >= 600) {
+          report_frame = g_frame;
+          RGPU_INFO("[levels] textures with an all-zero level: {} marked, {} whole-data checks, {} uploaded again after "
+                    "their data came in (dishonored_renut_zero_level_recheck)",
+                    g_zero_marked, g_zero_rechecks, g_zero_reuploads);
+        }
       }
     }
     // banjo-nx (2026-10-19, the colour flash): a texture neither a resolve nor an upload filled is sampled with what
@@ -1559,6 +1623,8 @@ TextureBinding BindTextureLocked(u32 texture_va, const TextureFetch &device_fetc
                   g_frame, texture_va, t.width, t.height, u32(fetch.Format()), fetch.Tiled() ? ", tiled" : "");
     }
   }
+  if (t.words)
+    DepthResolveReadLocked(t);  // vivapinata-nx (2026-11-12, vivapinata_depth_resolve_skip_unread): before its transition
   FlushResolveMipsLocked(t);  // banjo-nx (2026-10-28, banjo_renut_lazy_resolve_mips)
   TransitionTextureLocked(&t, plume::RenderTextureLayout::SHADER_READ);
   if (t.words)

@@ -92,6 +92,18 @@ its form, so with the defaults these steps make and use `pgo-inplace/`; with `IN
    profile of the releases before port 81 (the hooked form). A function changed since the instrumented build keeps no
    profile.
 
+Two more PGO options were tried and are not used (blur-nx, 2026-11-12, its CPU batch 3; port 111):
+
+- **Value profiles** (`-fprofile-values`): devkitA64's libgcov is not usable with them as it stands. Its indirect-call
+  profiler reads `tpidr_el0` (these builds use `-mtp=soft`: the training NRO crashed in 8 s), its top-n writer frees
+  lists it keeps across dumps, its top-n profiler callocs from the game threads, and the writer walks lists other
+  threads are still growing. With all four worked around (blur-nx's app/src/banjo_pgo.cpp: a TLS profiler of its own, a
+  static node pool, the threads held during a dump) the training NRO still corrupted memory at its first dump (about
+  2:15 in, on the console and in Ryujinx, 4 runs of 4), while the same tree trained without value profiles ran clean.
+- **`-fipa-reorder-for-locality`** (GCC 16): 24.56 fps against 24.77 in Blur with the same toml, the NRO 2.3 MB larger
+  (it clones callees); and with it GCC 16.1's LTO dropped a top-level asm (the `.incbin` that defines the SPIR-V
+  cache: an undefined reference at the link), so the generated `.incbin` files would have to be built without LTO.
+
 Keep the temporary folder's path free of spaces (GCC's parallel LTO link writes a makefile with it unquoted). Each build
 folder keeps its own SDK libraries (`<folder>/rexglue-sdk/out`, renut-ultimate's `REXGLUE_OUTPUT_IN_BUILD`), so the
 stages no longer replace each other's, and the SDK runtime and FFmpeg get the folder's LTO and PGO options

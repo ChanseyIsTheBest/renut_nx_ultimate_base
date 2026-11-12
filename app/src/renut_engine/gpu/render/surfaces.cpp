@@ -391,8 +391,8 @@ RenderScale CodeForHeightLocked(int32_t height) {
     }
   }
   const uint32_t g = std::gcd(uint32_t(height), 720u);
-  RenderScale::kNumerators[code] = uint32_t(height) / g;
-  RenderScale::kDenominators[code] = 720u / g;
+  // sasrt-nx (2026-11-12, batch C/D, item C13; port 93): with its factor
+  RenderScale::SetRatio(code, uint32_t(height) / g, 720u / g);
   const int32_t old_height = g_code_height[pick];
   g_code_height[pick] = height;
   g_code_used[pick] = g_latches;
@@ -613,8 +613,7 @@ void LatchResolutionScaleLocked() {
 #if defined(PLUME_DEKO3D)
       auto set = [](uint32_t code, int32_t h) {
         const uint32_t g = std::gcd(uint32_t(h), 720u);
-        RenderScale::kNumerators[code] = uint32_t(h) / g;
-        RenderScale::kDenominators[code] = 720u / g;
+        RenderScale::SetRatio(code, uint32_t(h) / g, 720u / g);  // sasrt-nx (2026-11-12, batch C/D, item C13; port 93)
       };
       set(RenderScale::kHandheldCode, hh);
       set(RenderScale::kDockedCode, dh);

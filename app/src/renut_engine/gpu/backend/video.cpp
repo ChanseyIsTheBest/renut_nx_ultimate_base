@@ -47,6 +47,7 @@
 #include "host_shaders/depth_resolve_ps.spirv.h"
 #include "host_shaders/depth_resolve_float_ps.spirv.h"  // sasrt-nx (2026-11-08)
 #include "host_shaders/present_ps.spirv.h"
+#include "host_shaders/present_lut_ps.spirv.h"  // vivapinata-nx (2026-11-12)
 #include "host_shaders/present_vs.spirv.h"
 #include "host_shaders/rectangle_list_gs.spirv.h"
 #include "host_shaders/point_sprite_gs.spirv.h"
@@ -67,6 +68,7 @@
 #include "host_shaders/depth_resolve_ps.deko3d.h"
 #include "host_shaders/depth_resolve_float_ps.deko3d.h"  // sasrt-nx (2026-11-08)
 #include "host_shaders/present_ps.deko3d.h"
+#include "host_shaders/present_lut_ps.deko3d.h"  // vivapinata-nx (2026-11-12)
 #include "host_shaders/present_vs.deko3d.h"
 #include "host_shaders/rectangle_list_gs.deko3d.h"
 #include "host_shaders/point_sprite_gs.deko3d.h"
@@ -88,6 +90,7 @@
 #include "host_shaders/depth_resolve_ps.dxil.h"
 #include "host_shaders/depth_resolve_float_ps.dxil.h"  // sasrt-nx (2026-11-08)
 #include "host_shaders/present_ps.dxil.h"
+#include "host_shaders/present_lut_ps.dxil.h"  // vivapinata-nx (2026-11-12)
 #include "host_shaders/present_vs.dxil.h"
 #include "host_shaders/rectangle_list_gs.dxil.h"
 #include "host_shaders/point_sprite_gs.dxil.h"
@@ -319,6 +322,15 @@ bool BuildPresentPipeline(VideoState &s) {
     return false;
   }
   s.present_pipeline->setName("renut present");
+  // vivapinata-nx (2026-11-12, vivapinata_present_lut): the scan-out with the gamma ramp as a 256 x 256 table
+  // (present_lut_ps.hlsl); optional: without it the scan-out is present_ps's.
+  s.present_lut_ps = CreateHostShader(s.device.get(), RENUT_HOST_SHADER(present_lut_ps), "present_lut_ps");
+  if (s.present_lut_ps) {
+    desc.pixelShader = s.present_lut_ps.get();
+    s.present_lut_pipeline = s.device->createGraphicsPipeline(desc);
+    if (s.present_lut_pipeline)
+      s.present_lut_pipeline->setName("renut present (gamma table)");
+  }
   return true;
 }
 

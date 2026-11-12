@@ -32,6 +32,8 @@
 
 namespace rex::system {
 
+void ApplyGuestCoreLayoutAtWait();  // dishonored-nx (sa2-nx's; port 103): xthread.cpp, RexSetGuestThreadCoreLayout
+
 XObject::XObject(Type type) : kernel_state_(nullptr), pointer_ref_count_(1), type_(type) {
   handles_.reserve(10);
 }
@@ -195,6 +197,7 @@ uint32_t XObject::TimeoutTicksToMs(int64_t timeout_ticks) {
 
 X_STATUS XObject::Wait(uint32_t wait_reason, uint32_t processor_mode, uint32_t alertable,
                        uint64_t* opt_timeout) {
+  ApplyGuestCoreLayoutAtWait();  // dishonored-nx (sa2-nx's; port 103)
   REX_SYS_CENSUS(rex::syscount::kCensusWait, 1);
   auto wait_handle = GetWaitHandle();
   if (!wait_handle) {
@@ -229,6 +232,7 @@ X_STATUS XObject::Wait(uint32_t wait_reason, uint32_t processor_mode, uint32_t a
 X_STATUS XObject::SignalAndWait(XObject* signal_object, XObject* wait_object, uint32_t wait_reason,
                                 uint32_t processor_mode, uint32_t alertable,
                                 uint64_t* opt_timeout) {
+  ApplyGuestCoreLayoutAtWait();  // dishonored-nx (sa2-nx's; port 103)
   auto timeout_ms = opt_timeout ? std::chrono::milliseconds(chrono::Clock::ScaleGuestDurationMillis(
                                       TimeoutTicksToMs(*opt_timeout)))
                                 : std::chrono::milliseconds::max();
@@ -256,6 +260,7 @@ X_STATUS XObject::SignalAndWait(XObject* signal_object, XObject* wait_object, ui
 X_STATUS XObject::WaitMultiple(uint32_t count, XObject** objects, uint32_t wait_type,
                                uint32_t wait_reason, uint32_t processor_mode, uint32_t alertable,
                                uint64_t* opt_timeout) {
+  ApplyGuestCoreLayoutAtWait();  // dishonored-nx (sa2-nx's; port 103)
   // port 59 (2026-11-10, from LostOdysseyRecomp 299ac550): no heap allocation per call: up to 64 objects
   // (the 360's MAXIMUM_WAIT_OBJECTS) on the stack, more on the heap as before (newlib's malloc has one lock
   // for every thread).

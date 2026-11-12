@@ -91,6 +91,9 @@ def main():
     # cpu_aggressive (2026-10-16): the late rewrites below change statements the analyses parse (r1l for ctx.r1,
     # REX_LR_WRITE_SAME, computed gotos, hoisted checks): on a tree that was processed before they are taken back out
     # first, so every analysis sees the text it was written for. On a fresh codegen these find nothing.
+    # blur-nx (2026-11-11, CPU batch 1): the DC ZVA pairs come out before the cards (store_cards.py finds a dcbz by its
+    # memset, and tools/localize_native.py knows the memset's store, not REX_DCBZ128).
+    run(tool('vec_dcbz_zva.py'), '--gen', gen, '--restore')
     # banjo-nx (2026-10-19): the store cards were the last step: out first.
     run(tool('store_cards.py'), '--gen', gen, '--restore')
     run(tool('switch_goto.py'), '--gen', gen, '--restore')
@@ -135,6 +138,13 @@ def main():
     # A57 cannot forward the wider store; sdk/include/rex/ppc/vec_lane.h, checked on the device by the forms
     # self-check). Before the localized copies, so they take the same form.
     run(tool('vec_lane_index.py'), '--gen', gen)
+    # blur-nx (2026-11-11, CPU batch 1; the user: "do all the exact ones", "optimise the hell out of CPU ... in large
+    # batches"): docs/vector-store-ideas.md VS-27, VS-08, VS-25 and docs/vector-ideas-2.md VX-20, VX-21, each exact and
+    # checked by the app's forms self-check on the device. Before the localized copies, so they take the same forms.
+    run(tool('vec_cvt_fixed.py'), '--gen', gen)      # vcfsx / vcfux with a scale: one SCVTF / UCVTF #n
+    run(tool('vec_prefetch_line.py'), '--gen', gen)  # a guest dcbt prefetches the whole 128-byte line
+    run(tool('vec_lvlx_splat.py'), '--gen', gen)     # lvlx + vspltw 0: one 4-byte load (where the lvlx is dead after)
+    run(tool('vec_shift_whole.py'), '--gen', gen)    # vsrw / vsraw as one vector shift; vslw without the dead clamp
     # banjo-nx (2026-10-16, CPU codegen agent): the read-only constants ro_constants.py could not see because a label
     # stood between the base register's constant and the load (loop heads): followed over the control-flow graph.
     run(tool('ro_constants_cfg.py'), '--gen', gen, '--image', IMAGE, *(['--xex', xex] if os.path.isfile(xex) else []))
@@ -160,6 +170,10 @@ def main():
     # macros (their default is the expression the generator writes; CMake SASRT_VMX_FAST_ESTIMATES / SASRT_VMX_FUSED_MADD,
     # ON, give the faster AArch64 forms). Before the copies, so they get the macros too.
     run(tool('vmx_float_macros.py'), '--gen', gen)
+    # blur-nx (2026-11-12, the user: "Please do the fmadds change"): fmadds / fmsubs / fnmadds / fnmsubs rounded once in
+    # single precision, as the Xenon does (sdk/include/rex/ppc/fma_single.h; not bit-exact to the double rounding the
+    # generator wrote; CMake BLUR_FMADDS_SINGLE=OFF gives it back). Before the copies, so they take the same form.
+    run(tool('fma_single.py'), '--gen', gen)
     if not scratch:
         # The localized native copies (app/generated/hot, from sa2-nx): made from the text as it stands after every
         # step above, so each copy matches the function the build compiles. The list is app/src/cpu/hot/localized.txt;
@@ -196,6 +210,19 @@ def main():
     # banjo-nx (2026-10-19, CPU proposal 1): the store cards, after everything else (the inline copies included): every
     # store outside the stack marks its page for Renut's cached vertex and index copies (REX_STORE_CARDS_OFF).
     run(tool('store_cards.py'), '--gen', gen)
+    # blur-nx (2026-11-11, CPU batch 2, docs/vector-store-ideas.md VS-14): in the copies, one card check per group of
+    # card stores to the same base in a straight stretch (two at its end: the lowest and highest offset's page).
+    run(tool('card_groups.py'), '--gen', gen)
+    # blur-nx (2026-11-11, CPU batch 2, docs/vector-ideas-2.md VX-15 / VX-14): in the copies' f_ bodies only (the o_
+    # bodies stay the guard's reference), two or four broadcast dot products merged by vmrghw / vmrglw as one
+    # pairwise-add tree (sdk/include/rex/ppc/vec_batch2.h).
+    run(tool('vec_dp_merge.py'), '--gen', gen)
+    # blur-nx (2026-11-11, CPU batch 2, docs/vector-ideas-2.md VX-29 / VX-02): in the copies' f_ bodies, vupkd3d128 of a
+    # zero register as 1.0 and vcuxwfp128 / vcsxwfp128 of a known splat as their constants.
+    run(tool('vec_const_fold.py'), '--gen', gen)
+    # blur-nx (2026-11-11, CPU batch 1, docs/vector-store-ideas.md VS-05): a 128-byte dcbzl as two DC ZVA (no read of
+    # the line it zeroes). After store_cards.py, which finds the dcbz by its memset to put the card in front.
+    run(tool('vec_dcbz_zva.py'), '--gen', gen)
     if scratch:
         print(f'post_codegen: optimised codegen steps done on {gen}')
         return

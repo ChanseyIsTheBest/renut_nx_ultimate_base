@@ -92,8 +92,14 @@ REXCVAR_DEFINE_BOOL(audio_xma_output_done_when_drained, false, "Audio",
                     "every sample) clears output_buffer_valid, as Xenia clears it whenever the ring is empty after a "
                     "pass: the sound is done. false = only a pass that wrote PCM and filled the ring clears it "
                     "(banjo-nx's rule)");
+// blur-nx (2026-11-12, CPU batch 3; port 111): 24 filled in Blur's first race minute and answered 26 % of the frames; 256
+// answered 65 % (the XMA Decoder 15.2 -> 10.9 ms a frame, 23.84 -> 24.77 fps on the console, 0 differences in the sampled
+// verify). It is heap: the heap's room at the race's end was 834 MB with 24 and about 600 MB with 256 (Blur's texture
+// reserve is 384 MB). The default stays 24: a game with many short repeated sounds sets more in its toml, carefully
+// when it is near its texture limit.
 REXCVAR_DEFINE_INT32(banjo_xma_frame_cache_mb, 24, "Banjo/Audio",
-                     "XMA frame cache: memory for the decoded frames (about 2 KB each); full, it starts again")
+                     "XMA frame cache: memory for the decoded frames (about 2 KB each); full, it starts again. A game "
+                     "with many short repeated sounds may want more (Blur: 256, 26 -> 65 % of the frames answered)")
     .range(1, 256);
 
 
@@ -619,6 +625,30 @@ void XmaContext::NoteProduction(bool produced, uint8_t reason, const XMA_CONTEXT
                 "loops {})",
                 id_, ms, passed_silence_, silence_reason_, uint32_t(data.input_buffer_0_valid),
                 uint32_t(data.input_buffer_1_valid), uint32_t(data.current_buffer), uint32_t(data.loop_count));
+  }
+}
+
+// blur-nx (2026-11-11, CPU batch 2): the bitmap of the enabled contexts (context.h). The flag is stored first, with
+// release; the bit after, with release: a sweep that sees the bit sees the flag. A sweep that does not see a bit
+// set during it misses that context this time, as the walk of the flags did when the flag was set behind it; the
+// kick that enabled it signals the worker, which looks again. Work() still checks both flags itself.
+namespace {
+constexpr uint32_t kEnabledWords = 10;  // 320 contexts
+std::atomic<uint32_t> g_enabled_bits[kEnabledWords];
+}  // namespace
+
+uint32_t XmaEnabledWord(uint32_t word) {
+  return word < kEnabledWords ? g_enabled_bits[word].load(std::memory_order_acquire) : 0u;
+}
+
+void XmaContext::set_is_enabled(bool is_enabled) {
+  is_enabled_.store(is_enabled, std::memory_order_release);
+  if (id_ < kEnabledWords * 32) {
+    const uint32_t bit = 1u << (id_ & 31);
+    if (is_enabled)
+      g_enabled_bits[id_ >> 5].fetch_or(bit, std::memory_order_release);
+    else
+      g_enabled_bits[id_ >> 5].fetch_and(~bit, std::memory_order_release);
   }
 }
 

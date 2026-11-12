@@ -182,6 +182,10 @@ public:
           __builtin_prefetch(next, 1);
           __builtin_prefetch(next + 64, 1);
           __builtin_prefetch(next + 128, 1);
+          // sasrt-nx (2026-11-12, batch C/D, item C8; port 93): the line of the stack headers' count, which
+          // CaptureStackHeaders writes at every capture (sasrt-nx's +320 and +384, its recorded surfaces, are the
+          // stack headers' own here, written only for a stack surface: not fetched)
+          __builtin_prefetch(next + 256, 1);
         }
         return capture;
       }

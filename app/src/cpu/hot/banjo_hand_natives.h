@@ -46,6 +46,12 @@
 #endif
 
 #include "cpu/banjo_hot_common.h"
+// blur-nx (2026-11-12; port 96): the natives' fmadds / fnmsubs take the generated code's form (tools/fma_single.py
+// writes it into the pch; a file without the pch gets the same definition here).
+#ifndef REX_FMADDS
+#include <rex/ppc/fma_single.h>
+#define REX_FMADDS(a, b, c) rex::ppc::FmaddsSingle((a), (b), (c))
+#endif
 #include <rex/ppc/diet_ops.h>  // katamari-nx: rex::ppc::SingleToDoublePure
 
 // katamari-nx: the in-run A/B's target in its off half (renut_engine/gpu/banjo_renut_tuning.cpp).
@@ -587,9 +593,11 @@ template <int kMode, uint32_t N>
     for (uint32_t c = 0; c < N; ++c) {
       uint8_t* at = samples + 1024u * c + 4u * i;
       const double d = double(LoadF(at) - l[c]);                        // fsubs
-      const float h = float(std::fma(dq, double(b[c]), -d));            // fnmsubs before its negation
-      b[c] = float(std::fma(ndfreq, double(h), double(b[c])));          // fmadds: freq * high + band
-      l[c] = float(std::fma(dfreq, double(b[c]), double(l[c])));        // fmadds
+      // renut-ultimate (2026-11-12, port 96): REX_FMADDS, the generated code's form of these (rounded once in single
+      // precision; tools/fma_single.py); its negated forms are (-REX_FMADDS), so h keeps its meaning.
+      const float h = float(REX_FMADDS(dq, double(b[c]), -d));          // fnmsubs before its negation
+      b[c] = float(REX_FMADDS(ndfreq, double(h), double(b[c])));        // fmadds: freq * high + band
+      l[c] = float(REX_FMADDS(dfreq, double(b[c]), double(l[c])));      // fmadds
       StoreF(at, kMode > 0 ? -h : kMode < 0 ? l[c] : b[c]);
     }
   }
@@ -1473,12 +1481,15 @@ template <class S>
   const double yy = ::rex::ppc::MulSingleAnyMode(y, y);
   const double x = ::rex::ppc::SingleToDoubleAnyMode(katamari::LoadW(pp));
   const double z = SingleToDoublePure(katamari::LoadW(pp + 8));
+  // renut-ultimate (2026-11-12, port 96): the rounding is REX_FMADDS (the generated code's fmadds form); the exact
+  // sums still decide the declines (a denormal sum: rounding is monotonic, so REX_FMADDS's result is a normal float
+  // or zero exactly where the exact sum is).
   const double s1 = std::fma(x, x, yy);
   if (s1 != 0.0 && std::fabs(s1) < 0x1p-126) [[unlikely]] return false;
-  const double xy = katamari::Round1(s1);
+  const double xy = REX_FMADDS(x, x, yy);
   const double s2 = std::fma(z, z, xy);
   if (s2 != 0.0 && std::fabs(s2) < 0x1p-126) [[unlikely]] return false;
-  const double dist = REX_FSQRTS(katamari::Round1(s2));
+  const double dist = REX_FSQRTS(REX_FMADDS(z, z, xy));
   // The diagonal (fsubs with the flush mode off).
   const double d0 = ::rex::ppc::SubSingleAnyMode(SingleToDoublePure(katamari::LoadW(pb + 16)),
                                                  SingleToDoublePure(katamari::LoadW(pb)));
@@ -1570,11 +1581,12 @@ template <class S>
     const double x = ::rex::ppc::SingleToDoublePure(katamari::LoadW(pi));
     const double y = ::rex::ppc::SingleToDoublePure(katamari::LoadW(pi + 4));
     const double z = ::rex::ppc::SingleToDoublePure(katamari::LoadW(pi + 8));
-    const double ox = Round1(std::fma(m0, x, Round1(std::fma(m32, z, REX_FMULS(m16, y)))));
+    // renut-ultimate (2026-11-12, port 96): the fmadds as REX_FMADDS (the generated code's form)
+    const double ox = REX_FMADDS(m0, x, REX_FMADDS(m32, z, REX_FMULS(m16, y)));
     katamari::StoreW(po, katamari::FloatBits(ox));
-    const double oy = Round1(std::fma(x, m4, Round1(std::fma(m36, z, REX_FMULS(m20, y)))));
+    const double oy = REX_FMADDS(x, m4, REX_FMADDS(m36, z, REX_FMULS(m20, y)));
     katamari::StoreW(po + 4, katamari::FloatBits(oy));
-    const double oz = Round1(std::fma(y, m24, Round1(std::fma(m8, x, REX_FMULS(z, m40)))));
+    const double oz = REX_FMADDS(y, m24, REX_FMADDS(m8, x, REX_FMULS(z, m40)));
     katamari::StoreW(po + 8, katamari::FloatBits(oz));
   }
   return true;
@@ -1630,10 +1642,11 @@ template <class S>
     const double x = ::rex::ppc::SingleToDoublePure(katamari::LoadW(pi));
     const double y = ::rex::ppc::SingleToDoublePure(katamari::LoadW(pi + 4));
     const double z = ::rex::ppc::SingleToDoublePure(katamari::LoadW(pi + 8));
-    const double ox = REX_FADDS(Round1(std::fma(m0, x, Round1(std::fma(m32, z, REX_FMULS(m16, y))))), m48);
-    const double oy = REX_FADDS(Round1(std::fma(m4, x, Round1(std::fma(m36, z, REX_FMULS(m20, y))))), m52);
-    const double oz = REX_FADDS(Round1(std::fma(m8, x, Round1(std::fma(m40, z, REX_FMULS(m24, y))))), m56);
-    double w = REX_FADDS(Round1(std::fma(m44, z, Round1(std::fma(m12, x, REX_FMULS(m28, y))))), m60);
+    // renut-ultimate (2026-11-12, port 96): the fmadds as REX_FMADDS (the generated code's form)
+    const double ox = REX_FADDS(REX_FMADDS(m0, x, REX_FMADDS(m32, z, REX_FMULS(m16, y))), m48);
+    const double oy = REX_FADDS(REX_FMADDS(m4, x, REX_FMADDS(m36, z, REX_FMULS(m20, y))), m52);
+    const double oz = REX_FADDS(REX_FMADDS(m8, x, REX_FMADDS(m40, z, REX_FMULS(m24, y))), m56);
+    double w = REX_FADDS(REX_FMADDS(m44, z, REX_FMADDS(m12, x, REX_FMULS(m28, y))), m60);
     if (w == one) {
       katamari::StoreW(po, katamari::FloatBits(ox));
       katamari::StoreW(po + 4, katamari::FloatBits(oy));
@@ -1707,15 +1720,15 @@ template <class S>
     uint8_t* wr = body + write_slot;
     // Positions (three) and rotation (four): slot + rate x dt, in the original's order.
     for (uint32_t c = 0; c < 7; ++c) {
-      const double v = Round1(std::fma(F(body + 64 + 4 * c), dt, F(rd + 4 * c)));
+      const double v = REX_FMADDS(F(body + 64 + 4 * c), dt, F(rd + 4 * c));  // port 96: the generated form
       katamari::StoreW(wr + 4 * c, katamari::FloatBits(v));
     }
     const double q1 = F(wr + 4);
     double sum = REX_FMULS(q1, q1);
     const double q0 = F(wr), q2 = F(wr + 8), q3 = F(wr + 12);
-    sum = Round1(std::fma(q0, q0, sum));
-    sum = Round1(std::fma(q2, q2, sum));
-    sum = Round1(std::fma(q3, q3, sum));
+    sum = REX_FMADDS(q0, q0, sum);  // renut-ultimate (2026-11-12, port 96): the fmadds as REX_FMADDS
+    sum = REX_FMADDS(q2, q2, sum);
+    sum = REX_FMADDS(q3, q3, sum);
     const double inv = REX_FDIVS(one, REX_FSQRTS(sum));
     katamari::StoreW(wr, katamari::FloatBits(REX_FMULS(q0, inv)));
     katamari::StoreW(wr + 4, katamari::FloatBits(REX_FMULS(q1, inv)));
@@ -1755,7 +1768,7 @@ template <class S>
   const double shifted = double(float(signed_pi + angle));
   const double turns = REX_FMULS(shifted, double(std::bit_cast<float>(uint32_t(REX_RO_U32(0x82005148, 0x3E22F983)))));
   const double whole = double(float(double(int64_t(int32_t(::rex::ppc::fctiwz(turns))))));
-  const double r = double(float(-std::fma(whole, two_pi, -angle)));
+  const double r = (-REX_FMADDS(whole, two_pi, -angle));  // fnmsubs (port 96: the generated form)
   const double r2 = REX_FMULS(r, r);
   const double r3 = REX_FMULS(r2, r);
   // The three stfs with the mode still off (a denormal single would be flushed by the conversion with it on).
@@ -1971,9 +1984,10 @@ constexpr uint32_t kZeroVa = 0x82000B34u;      // and the zero the original stor
   katamari::Pin(m0); katamari::Pin(m4); katamari::Pin(m8); katamari::Pin(m16); katamari::Pin(m20);
   katamari::Pin(m24); katamari::Pin(m32); katamari::Pin(m36); katamari::Pin(m40);
   katamari::Pin(x); katamari::Pin(y); katamari::Pin(z);
-  double ox = Round1(std::fma(m0, x, Round1(std::fma(m32, z, REX_FMULS(m16, y)))));
-  double oy = Round1(std::fma(x, m4, Round1(std::fma(m36, z, REX_FMULS(m20, y)))));
-  double oz = Round1(std::fma(y, m24, Round1(std::fma(m8, x, REX_FMULS(z, m40)))));
+  // renut-ultimate (2026-11-12, port 96): the fmadds as REX_FMADDS (the generated code's form)
+  double ox = REX_FMADDS(m0, x, REX_FMADDS(m32, z, REX_FMULS(m16, y)));
+  double oy = REX_FMADDS(x, m4, REX_FMADDS(m36, z, REX_FMULS(m20, y)));
+  double oz = REX_FMADDS(y, m24, REX_FMADDS(m8, x, REX_FMULS(z, m40)));
   katamari::Pin(ox); katamari::Pin(oy); katamari::Pin(oz);
   out[0] = katamari::FloatBits(ox);
   out[1] = katamari::FloatBits(oy);

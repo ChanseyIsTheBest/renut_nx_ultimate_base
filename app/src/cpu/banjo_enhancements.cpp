@@ -495,6 +495,7 @@ void LogEnhancements() {
               REXCVAR_GET(masseffect_gpu_marks_categories) ? "on" : "off");
   // Every helper that has a form for one processor only, against plain C++ references (banjo_forms_selfcheck.cpp).
   FormsSelfCheck();
+  BlurMicrobench();
 }
 
 }  // namespace banjo

@@ -305,7 +305,10 @@ bool build_vrfim(BuilderContext& ctx) {
 }
 
 bool build_vrfin(BuilderContext& ctx) {
-  ctx.emit_set_flush_mode(true);
+  // blur-nx (2026-11-11, docs/vector-ideas-2.md VX-01; the user: "do all the exact ones"): no flush mode. Its result is
+  // the same in both: int -> float gives 0 or a normal number (a scale 2^-n, n <= 31, of a nonzero integer is at least
+  // 2^-31); float -> int truncates a denormal (or its product with 2^n, below 2^-95) to 0 either way; round to nearest
+  // / to zero turns a denormal into the signed zero FZ would have made. (vrfim / vrfip keep it: floor(-denormal) is -1.)
   ctx.emit_vec_fp_unary_expr(
       "simde_mm_round_ps(simde_mm_load_ps({vA}.f32), "
       "SIMDE_MM_FROUND_TO_NEAREST_INT | SIMDE_MM_FROUND_NO_EXC)");
@@ -321,7 +324,10 @@ bool build_vrfip(BuilderContext& ctx) {
 }
 
 bool build_vrfiz(BuilderContext& ctx) {
-  ctx.emit_set_flush_mode(true);
+  // blur-nx (2026-11-11, docs/vector-ideas-2.md VX-01; the user: "do all the exact ones"): no flush mode. Its result is
+  // the same in both: int -> float gives 0 or a normal number (a scale 2^-n, n <= 31, of a nonzero integer is at least
+  // 2^-31); float -> int truncates a denormal (or its product with 2^n, below 2^-95) to 0 either way; round to nearest
+  // / to zero turns a denormal into the signed zero FZ would have made. (vrfim / vrfip keep it: floor(-denormal) is -1.)
   ctx.emit_vec_fp_unary_expr(
       "simde_mm_round_ps(simde_mm_load_ps({vA}.f32), "
       "SIMDE_MM_FROUND_TO_ZERO | SIMDE_MM_FROUND_NO_EXC)");
@@ -687,7 +693,9 @@ bool build_vcmpbfp(BuilderContext& ctx) {
 }
 
 bool build_vcmpeqfp(BuilderContext& ctx) {
-  ctx.emit_set_flush_mode(true);
+  // blur-nx (2026-11-11, docs/vector-ideas-2.md VX-03): vcmpeqfp v, v, v is the NaN test (a value equals itself
+  // unless it is a NaN; a denormal equals itself whether or not FZ flushed it): no flush mode for it.
+  if (ctx.insn.operands[1] != ctx.insn.operands[2]) ctx.emit_set_flush_mode(true);
   ctx.emit_vec_fp_binary("cmpeq");
   if (isRecordForm(ctx.insn))
     ctx.println("\t{}.setFromMask(simde_mm_load_ps({}.f32), 0xF);", ctx.cr(6),
@@ -819,7 +827,10 @@ bool build_vcmpgtsw(BuilderContext& ctx) {
 //=============================================================================
 
 bool build_vctsxs(BuilderContext& ctx) {
-  ctx.emit_set_flush_mode(true);
+  // blur-nx (2026-11-11, docs/vector-ideas-2.md VX-01; the user: "do all the exact ones"): no flush mode. Its result is
+  // the same in both: int -> float gives 0 or a normal number (a scale 2^-n, n <= 31, of a nonzero integer is at least
+  // 2^-31); float -> int truncates a denormal (or its product with 2^n, below 2^-95) to 0 either way; round to nearest
+  // / to zero turns a denormal into the signed zero FZ would have made. (vrfim / vrfip keep it: floor(-denormal) is -1.)
   ctx.print("\tsimde_mm_store_si128((simde__m128i*){}.s32, rex::ppc::simde_mm_vctsxs(",
             ctx.v(ctx.insn.operands[0]));
   if (ctx.insn.operands[2] != 0)
@@ -831,7 +842,10 @@ bool build_vctsxs(BuilderContext& ctx) {
 }
 
 bool build_vcfsx(BuilderContext& ctx) {
-  ctx.emit_set_flush_mode(true);
+  // blur-nx (2026-11-11, docs/vector-ideas-2.md VX-01; the user: "do all the exact ones"): no flush mode. Its result is
+  // the same in both: int -> float gives 0 or a normal number (a scale 2^-n, n <= 31, of a nonzero integer is at least
+  // 2^-31); float -> int truncates a denormal (or its product with 2^n, below 2^-95) to 0 either way; round to nearest
+  // / to zero turns a denormal into the signed zero FZ would have made. (vrfim / vrfip keep it: floor(-denormal) is -1.)
   ctx.print("\tsimde_mm_store_ps({}.f32, ", ctx.v(ctx.insn.operands[0]));
   if (ctx.insn.operands[2] != 0) {
     const float value = std::ldexp(1.0f, -static_cast<int32_t>(ctx.insn.operands[2]));
@@ -847,7 +861,10 @@ bool build_vcfsx(BuilderContext& ctx) {
 }
 
 bool build_vcfux(BuilderContext& ctx) {
-  ctx.emit_set_flush_mode(true);
+  // blur-nx (2026-11-11, docs/vector-ideas-2.md VX-01; the user: "do all the exact ones"): no flush mode. Its result is
+  // the same in both: int -> float gives 0 or a normal number (a scale 2^-n, n <= 31, of a nonzero integer is at least
+  // 2^-31); float -> int truncates a denormal (or its product with 2^n, below 2^-95) to 0 either way; round to nearest
+  // / to zero turns a denormal into the signed zero FZ would have made. (vrfim / vrfip keep it: floor(-denormal) is -1.)
   ctx.print("\tsimde_mm_store_ps({}.f32, ", ctx.v(ctx.insn.operands[0]));
   if (ctx.insn.operands[2] != 0) {
     const float value = std::ldexp(1.0f, -static_cast<int32_t>(ctx.insn.operands[2]));
@@ -865,7 +882,10 @@ bool build_vcfux(BuilderContext& ctx) {
 
 bool build_vctuxs(BuilderContext& ctx) {
   // Vector Convert To Unsigned Fixed-Point Word Saturate
-  ctx.emit_set_flush_mode(true);
+  // blur-nx (2026-11-11, docs/vector-ideas-2.md VX-01; the user: "do all the exact ones"): no flush mode. Its result is
+  // the same in both: int -> float gives 0 or a normal number (a scale 2^-n, n <= 31, of a nonzero integer is at least
+  // 2^-31); float -> int truncates a denormal (or its product with 2^n, below 2^-95) to 0 either way; round to nearest
+  // / to zero turns a denormal into the signed zero FZ would have made. (vrfim / vrfip keep it: floor(-denormal) is -1.)
   ctx.print("\tsimde_mm_store_si128((simde__m128i*){}.u32, rex::ppc::simde_mm_vctuxs(",
             ctx.v(ctx.insn.operands[0]));
   if (ctx.insn.operands[2] != 0)

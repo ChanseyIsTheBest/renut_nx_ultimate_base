@@ -61,7 +61,13 @@ REXCVAR_DEFINE_BOOL(pacman_renut_queue_drain, true, "PacMan/Renderer",
 REXCVAR_DECLARE(bool, pacman_renut_double_buffer);  // gpu/backend/video.cpp
 // pacman-nx (2026-11-03, the user: "look how futari does it"): futari-nx's futari_vblank_display_sync and
 // futari_vblank_phase_auto (futari_renut_vblank.cpp, docs/futari-notes.md "Input lag"). See display_sync.h.
-REXCVAR_DEFINE_BOOL(pacman_vblank_display_sync, true, "PacMan/Renderer",
+// renut-ultimate (2026-11-12, port 97; the user's call): off by default. It fixed pacman-nx's input lag at its full
+// frame rate, but in blur-nx, a game under the refresh rate (18-21 fps), it cost 15-18 % of the frame rate with no
+// latency gain (each frame waits for a refresh it has just missed). A game that wants it sets it true in its own toml
+// (with banjo_display_sync, which it needs). docs/off-by-default.md.
+REXCVAR_DEFINE_BOOL(pacman_vblank_display_sync, false, "PacMan/Renderer",
+                    "OFF BY DEFAULT in the base (slower in a game under the refresh rate: blur-nx at 18-21 fps lost 15-18 % "
+                    "of its frame rate with no latency gain; pacman-nx turns it on). "
                     "The display's refresh starts the game's frames, as the 360's vertical blank paces a game: the game "
                     "waits at its Swap until the refresh plus the phase (banjo_display_phase_auto). Off: the game runs "
                     "until the render thread holds it back, with frames queued behind each other (about 3 refreshes of "

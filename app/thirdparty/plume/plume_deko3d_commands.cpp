@@ -2109,6 +2109,21 @@ namespace plume {
         return true;
     }
 
+    void Deko3DReportCounter(RenderCommandList *commandList, const RenderQueryPool *queryPool, uint32_t index,
+                             uint32_t counter) {
+        auto *list = static_cast<Deko3DCommandList *>(commandList);
+        const auto *pool = static_cast<const Deko3DQueryPool *>(queryPool);
+        if (!list || !list->cmd || !pool || !pool->block || index >= pool->results.size())
+            return;
+        list->flushBarriers();
+        dkCmdBufReportCounter(list->cmd, DkCounter(counter), dkMemBlockGetGpuAddr(pool->block) + uint64_t(index) * 16);
+    }
+
+    const volatile uint64_t *Deko3DQueryPoolWords(const RenderQueryPool *queryPool) {
+        const auto *pool = static_cast<const Deko3DQueryPool *>(queryPool);
+        return pool && pool->block ? static_cast<const volatile uint64_t *>(dkMemBlockGetCpuAddr(pool->block)) : nullptr;
+    }
+
     bool Deko3DSetBlendConstant(RenderCommandList *commandList, const float rgba[4]) {
         if (!commandList)
             return false;

@@ -97,8 +97,12 @@ extern std::atomic<bool> g_latched_ready;
 void LatchNow();
 
 // The item's key as latched at the first use (the toml is final by then), and not in its A/B "off" half.
+// sasrt-nx (2026-11-12, batch C/D, item D3; port 93): the flag read relaxed, as banjo's Latch(): no load-acquire at
+// each switch a draw passes (it kept the A57 from starting the draw's later loads early). The values come from the
+// configuration only: on deko3d they are latched before the device exists (InstallShaderCache's ApplyPlume), elsewhere
+// at the first use; a thread that finds the flag unset latches them itself.
 [[gnu::always_inline]] inline bool On(Item i) {
-  if (!g_latched_ready.load(std::memory_order_acquire)) [[unlikely]]
+  if (!g_latched_ready.load(std::memory_order_relaxed)) [[unlikely]]
     LatchNow();
   const int ab = banjo::renut_gpu::g_ab_off.load(std::memory_order_relaxed);
   return g_latched.on[i] && ab != kAbBase + i && !(ab == kAbRtGroup && i >= kRtRestoreCandidates);

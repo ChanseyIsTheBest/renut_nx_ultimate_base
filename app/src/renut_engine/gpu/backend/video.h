@@ -111,6 +111,8 @@ struct PresentImage {
   uint32_t source_width = 0;   // region to scan out (0 = whole texture)
   uint32_t source_height = 0;
   float gamma = 0.0f;  // banjo-nx (banjo_renut_diag_show_texture): the scan-out's exponent, 0 = the output gamma
+  // vivapinata-nx (2026-11-12, vivapinata_present_lut): the texture holds 8-bit unorm channels (a load gives n / 255)
+  bool unorm8 = false;
 };
 
 using OverlayHook = std::function<void(plume::RenderCommandList *, plume::RenderFramebuffer *,
@@ -184,6 +186,9 @@ struct VideoState {
   std::unique_ptr<plume::RenderShader> present_vs;
   std::unique_ptr<plume::RenderShader> present_ps;
   std::unique_ptr<plume::RenderPipeline> present_pipeline;
+  // vivapinata-nx (2026-11-12, vivapinata_present_lut): present_lut_ps.hlsl's (none: the plain one)
+  std::unique_ptr<plume::RenderShader> present_lut_ps;
+  std::unique_ptr<plume::RenderPipeline> present_lut_pipeline;
   float output_gamma = 1.0f;
   // The guest texture the last Swap scanned out; stall presents (the guest not
   // presenting for a while) show it again rather than a black frame.

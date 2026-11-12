@@ -1060,11 +1060,11 @@ bool g_joining = false;             // Loop has taken an item and not joined it 
  * comes back here instead of to the heap. At most PoolBlocks() blocks and PoolMaxBytes() are kept; any other block
  * goes back to the heap.
  */
-// Only the guest threads' 16 MB stacks. The SDK's own threads (4 MB by default, long-lived) stay with libnx as
-// before, and their blocks never take the pool's places.
+// Only the guest threads' stacks (switch_guest_stack_mb: 8 MB by default since port 112, 16 before). The SDK's own
+// threads (4 MB by default, long-lived) stay with libnx as before, and their blocks never take the pool's places.
 constexpr size_t kPoolMinStack = size_t(8) << 20;
-// sa2-nx (2026-10-20; port 58): switch_thread_stack_pool blocks, each a guest stack with its TLS (16 MB unless
-// switch_guest_stack_mb says less).
+// sa2-nx (2026-10-20; port 58): switch_thread_stack_pool blocks, each a guest stack with its TLS (switch_guest_stack_mb:
+// 8 MB by default since port 112).
 constexpr size_t kPoolMaxBlocks = 64;
 size_t PoolBlocks() {
   static const size_t blocks = size_t(std::clamp<int32_t>(REXCVAR_GET(switch_thread_stack_pool), 4, 64));

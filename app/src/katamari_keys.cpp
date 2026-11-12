@@ -29,9 +29,11 @@ REXCVAR_DEFINE_BOOL(banjo_native_xaudio_src_verify, false, "Katamari/Not built",
 // The hand-written natives' keys and banjo_hot_count are cpu/banjo_hot_guest.cpp's (Katamari's natives: memset and the
 // matrix routines, cpu/hot/banjo_hand_natives.h).
 
-// renut_engine/hooks.cpp's MSAA switch, which Renut's renderer reads (render/surfaces and the tuning): N&B's own key.
-// Katamari's MSAA is what the game asks for.
-REXCVAR_DEFINE_BOOL(disable_msaa, false, "Katamari/Graphics", "Draw the game's MSAA targets with one sample (not exact)");
+// renut_engine/hooks.cpp's MSAA switch: N&B's own key, read only by its mid-asm hooks at N&B's render-target setup
+// (hooks.cpp, which this port does not build). Renut's renderer reads msaa_level (1/2/4) instead (vivapinata-nx's note,
+// 2026-11-12; docs/katamari-notes.md, run emu3_nomsaa). Kept so the tomls that name it still load.
+REXCVAR_DEFINE_BOOL(disable_msaa, false, "Katamari/Graphics",
+                    "Not read in this port (N&B's key): msaa_level sets the samples (4, 2 or 1)");
 
 // The frame cap (renut_engine/frameHooks.cpp's limiter, not built here because of its N&B hooks).
 REXCVAR_DEFINE_STRING(frame_cap, "Off", "Katamari/Performance",

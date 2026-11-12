@@ -542,6 +542,18 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineKey &key, const Pipel
   if (key.pixel_shader && ((banjo::renut_gpu::Gpr32On() && !(key.reserved & 2u)) ||
                            (key.sasrt_words[7] & 3u)))  // sasrt-nx (2026-11-08): sasrt_gpu_gpr_cap(_filter)
     spec[spec_count++] = plume::RenderSpecConstant(910, 1);
+  // vivapinata-nx (2026-11-12, the shader round; A/B 150): the round's passes as before them (constant 975, 1 by default in
+  // the GLSL; render/draw.cpp SasrtSpecWordsOf sets [7] bit 8 when vivapinata_shader_round is off or in its off half).
+  if (key.pixel_shader && (key.sasrt_words[7] & 0x100u))
+    spec[spec_count++] = plume::RenderSpecConstant(975, 0);
+  // vivapinata-nx (2026-11-12, A/B 151): the early alpha test skipped (constant 976, 1 by default in the GLSL; render/draw.cpp
+  // SasrtSpecWordsOf sets [7] bit 9 when vivapinata_shader_noearly is on, but in its off half).
+  if (key.pixel_shader && (key.sasrt_words[7] & 0x200u))
+    spec[spec_count++] = plume::RenderSpecConstant(976, 0);
+  // vivapinata-nx (2026-11-12, A/B 152): the alpha test moved up (constant 977, 0 by default in the GLSL; render/draw.cpp
+  // SasrtSpecWordsOf sets [7] bit 10 when vivapinata_shader_earlykill is on, but in its off half).
+  if (key.pixel_shader && (key.sasrt_words[7] & 0x400u))
+    spec[spec_count++] = plume::RenderSpecConstant(977, 1);
   // banjo-nx (2026-10-20, GPU A/B): the listed lit shaders' lights in branches (constant 911, pass lightbranch).
   // (key.reserved bit 0: the off half of the in-run A/B, banjo_renut_ab_target 15.)
   if (key.pixel_shader && banjo::renut_gpu::LightBranchOn() && !(key.reserved & 1u))
@@ -554,6 +566,16 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineKey &key, const Pipel
   // (key.reserved bit 2: the off half of the in-run A/B, banjo_renut_ab_target 17.)
   if (banjo::renut_gpu::SkinOnceOn() && !(key.reserved & 4u))
     spec[spec_count++] = plume::RenderSpecConstant(913, 1);
+  // dishonored-nx (2026-10-31, dishonored_renut_clamp_7e3; port 106): the colour targets that are 7e3 ones with bias 0
+  // (sasrt_words[7] bits 28-31, render/draw.cpp SasrtSpecWordsOf): their outputs clamped to the 7e3 range (constant 990,
+  // a mask of targets, 0 by default in the GLSL; tools/deko3d_glsl_opt.py clamp7e3).
+  if (key.pixel_shader && (key.sasrt_words[7] >> 28)) {
+    spec[spec_count++] = plume::RenderSpecConstant(990, key.sasrt_words[7] >> 28);
+    static std::atomic<uint32_t> logged{0};
+    if (logged.fetch_add(1, std::memory_order_relaxed) < 4)
+      RGPU_INFO("[7e3] a pipeline with the 7e3 clamp (constant 990 = {}) for its 2_10_10_10_FLOAT targets",
+                key.sasrt_words[7] >> 28);
+  }
 #if defined(PLUME_DEKO3D)
   // vivapinata-nx (2026-11-03, banjo_deko3d_vs_kill_and): the vertex kill as the GPU does it, on both stages (constant 914,
   // tools/deko3d_glsl_opt.py vskill). Without a pixel shader to discard, or under a geometry shader, the NaN position as before.
@@ -1201,6 +1223,13 @@ SpecState SpecialisedPipeline(const PipelineKey &key, uint64_t hash, const HostV
   const std::vector<char> record = EncodeRecord(key, layout);
   if (!DecodeRecord(record.data(), record.size(), *job))
     return SpecState::Failed;
+  // vivapinata-nx (2026-11-12, its console run c20; port 98): the job keeps the draw's own key and hash. DecodeRecord
+  // clears the A/B bits (reserved 0-2) and hashes the cleared key, as a listed record needs; a job made here from an
+  // A/B off half's key (A/B 15 / 16 / 17) then never matched its draw, so every draw made another job, built with the
+  // on half's constants and never taken (vivapinata-nx, A/B 16: 153 thousand jobs in 13 minutes, one bucket's linear
+  // search 670 ms of the render thread a frame, the off halves at 1.5-10 fps).
+  job->key = key;
+  job->hash = hash;
   Job *j = job.get();
   g_prebuild.jobs.push_back(std::move(job));
   jobs.push_back(j);

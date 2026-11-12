@@ -23,6 +23,31 @@
 #undef REX_CARD_RUN_DECL
 #undef REX_CARD_FLUSH
 #undef REX_GUEST_CAS_C
+#if !defined(BLUR_CARD_RUN_ALL_PAGES)
+// blur-nx (2026-11-11, CPU batch 1: docs/vector-store-ideas.md VS-11 and VS-12; the user: "do all the exact ones"). The
+// run's page is marked as before (when the run moves on, and at a flush: after its stores), but
+// - only a page whose card Renut reads: the views it checks (draw.cpp's PhysicalOf: 0xA0000000 and up, and
+//   0x7F000000-0x7FFFFFFF) and the page in front of each (Renut counts a page as written when the page before it is:
+//   an unaligned store into a view's first page marks the page in front), so 0x9FFFF-0xFFFFF and 0x7EFFF-0x7FFFF;
+//   the cards of other pages are never read (Blur's audio and object data, the heap's virtual views);
+// - the card byte only written when it is not zero yet: a zero card is the result either way, and the card lines
+//   (64 cards each) stay shared between the cores instead of moving at every page change of every thread;
+// - "no run" is 0x100000, outside the 20-bit pages: port 74's 0xFFFFF was also the top page of the 0xE0000000 view,
+//   whose run was then never marked.
+// BLUR_CARD_RUN_ALL_PAGES (compile time): port 74's macros as they were.
+[[gnu::always_inline]] static inline void rex_card_mark_(uint8_t* base, u32 page) {
+  if (page - 0x9FFFFu <= 0x60000u || page - 0x7EFFFu <= 0x1000u) {
+    u8* const card = (u8*)(base + page);
+    if (*card) *card = 0;
+  }
+}
+#define REX_CARD_RUN_DECL [[maybe_unused]] u32 rex_card_run = 0x100000u;
+#define REX_CARD(ea)                                                                                      \
+  ((void)((((u32)(ea)) >> 12) != rex_card_run                                                            \
+              ? (rex_card_mark_(base, rex_card_run), rex_card_run = ((u32)(ea)) >> 12, 0)                 \
+              : 0))
+#define REX_CARD_FLUSH() ((void)(rex_card_mark_(base, rex_card_run), rex_card_run = 0x100000u))
+#else
 #define REX_CARD_RUN_DECL [[maybe_unused]] u32 rex_card_run = 0xFFFFFu;
 #define REX_CARD(ea)                                                                                      \
   ((void)((((u32)(ea)) >> 12) != rex_card_run                                                            \
@@ -31,6 +56,7 @@
               : 0))
 #define REX_CARD_FLUSH() \
   ((void)(rex_card_run != 0xFFFFFu ? (*(u8*)(base + rex_card_run) = 0, rex_card_run = 0xFFFFFu, 0) : 0))
+#endif
 #define REX_GUEST_CAS_C(ea, p, e, d) \
   (REX_CARD_FLUSH(), (void)(*(u8*)(base + (((u32)(ea)) >> 12)) = 0), REX_GUEST_CAS(p, e, d))
 #endif

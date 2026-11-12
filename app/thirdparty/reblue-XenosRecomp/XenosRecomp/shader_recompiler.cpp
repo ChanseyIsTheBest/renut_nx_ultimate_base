@@ -1194,8 +1194,18 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
 
             default:
             {
+                // dishonored-nx (2026-10-29): a vertex shader may export to an interpolator register its table does
+                // not list (Dishonored's vs_d89d5e1d550db316 has no table at all and writes o0): the assert, and a
+                // crash in release builds, before. The register's TEXCOORD (what a pixel shader without a table of
+                // its own reads it as); past 15, a scratch output.
                 auto findResult = interpolators.find(instr.vectorDest);
-                assert(findResult != interpolators.end());
+                if (findResult == interpolators.end())
+                {
+                    fmt::println(stderr, "vertex export to interpolator register {} the shader does not list",
+                        uint32_t(instr.vectorDest));
+                    findResult = interpolators.emplace(uint32_t(instr.vectorDest), instr.vectorDest < 16
+                        ? fmt::format("oTexCoord{}", uint32_t(instr.vectorDest)) : std::string("oUnused")).first;
+                }
                 exportRegister = findResult->second;
                 break;
             }
@@ -2627,6 +2637,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     {
         // Export targets with no host output: point size and memexport address/data.
         out += "\tfloat4 oPts = 0.0;\n";
+        out += "\tfloat4 oUnused = 0.0;\n";  // dishonored-nx: exports to an unlisted interpolator
         out += "\tfloat4 eA = 0.0;\n";
         out += "\tfloat4 eM0 = 0.0;\n";
         out += "\tfloat4 eM1 = 0.0;\n";

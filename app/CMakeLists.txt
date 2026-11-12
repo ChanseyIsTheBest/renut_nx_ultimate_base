@@ -64,6 +64,14 @@ endif()
 if(SASRT_VMX_FUSED_MADD)
     add_compile_definitions(REX_VMX_FUSED_MADD)
 endif()
+# blur-nx (2026-11-12, the user: "Please do the fmadds change"): the scalar fmadds / fmsubs / fnmadds / fnmsubs rounded once
+# in single precision, as the Xenon does (tools/fma_single.py, sdk/include/rex/ppc/fma_single.h), instead of the double
+# fused multiply-add rounded again to single: one unit in the last place apart in rare cases (about one operation in a
+# few hundred million), and single-precision chains stay in float registers. OFF: the double rounding, as before.
+option(BLUR_FMADDS_SINGLE "Scalar fmadds and kin rounded once in single precision (the Xenon's rounding; not bit-exact to the double form)" ON)
+if(NOT BLUR_FMADDS_SINGLE)
+    add_compile_definitions(REX_FMADDS_DOUBLE_ROUNDING)
+endif()
 include(generated/rexglue.cmake)
 
 # banjo-nx (from sa2-nx): the optimised codegen. The build re-runs the generator by itself whenever an input in
@@ -127,6 +135,8 @@ set(RENUT_SOURCES
     # the start-up check of every instruction form that only one processor has.
     src/cpu/banjo_codegen_checks.cpp
     src/cpu/banjo_forms_selfcheck.cpp
+    # blur-nx (2026-11-11, port 90): timings of a few processor forms at boot (blur_microbench, off).
+    src/cpu/blur_microbench.cpp
     # katamari-nx (2026-11-01): diagnostic of the game state's stage fields (katamari_diag_game_state, off).
     src/cpu/katamari_stage_diag.cpp
     # katamari-nx: the native copies of hot game functions (banjo_hot_guest.cpp and its shards), from this game's PC

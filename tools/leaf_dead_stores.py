@@ -377,6 +377,7 @@ def sections(img):
 
 COPY_LISTS = {os.path.normcase(os.path.join(ROOT, 'app', 'src', 'cpu', 'hot', n))
               for n in ('localized.txt', 'localized_bulk.txt')}
+NON_HOOK_LIST = os.path.normcase(os.path.join(ROOT, 'app', 'indirect_promotions.txt'))  # blur-nx (2026-11-12): below
 # sasrt-nx (2026-11-11, port 74; its idea 37): every function's LiveOut, for tools/localize_native.py (a copy writes back
 # at a return only the volatile registers a caller can read).
 LIVE_OUT_JSON = os.path.join(ROOT, 'out', 'leaf_live_out.json')
@@ -438,6 +439,17 @@ def address_taken(gen, image, starts, bodies):
             # this function too: its analysis sees the same.)
             if (os.environ.get('SASRT_LIVE_OUT_LISTS_NAMED', '0') != '1' and
                     os.path.normcase(os.path.abspath(path)) in COPY_LISTS):
+                continue
+            # blur-nx (2026-11-12, from sasrt-nx's finding that day): two more kinds of list name functions without
+            # hooking or calling them. app/indirect_promotions.txt names each promoted site's function and its targets:
+            # the promotion is a guarded direct call in the generated code (tools/indirect_calls.py --promote), an edge
+            # this analysis reads there, and a target is taken anyway by the data word that makes it indirect. The hand
+            # natives' *.draft.txt are the candidate lists the natives were written from (a native that exists is named
+            # in hand.txt and in its header, both still read). In Blur they alone made 216 functions "taken", 133 of
+            # them in the console race (32.5 ms a frame of CPU, sub_822BEDD0 the first), so their copies wrote back
+            # every volatile register at a return. BLUR_LIVE_OUT_LISTS_NAMED=1: counted again.
+            if os.environ.get('BLUR_LIVE_OUT_LISTS_NAMED', '0') != '1' and (
+                    os.path.normcase(os.path.abspath(path)) == NON_HOOK_LIST or path.endswith('.draft.txt')):
                 continue
             try:
                 text = open(path, encoding='utf-8', errors='ignore').read()

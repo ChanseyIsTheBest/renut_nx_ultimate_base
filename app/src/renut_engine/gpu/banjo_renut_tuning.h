@@ -256,6 +256,10 @@ void CountDepthOnly();
 // banjo_renut_record_worker's half of the in-run A/B (target 14), read when a command list is opened.
 bool RecordWorkerAbOn();
 void CountDepthWords(bool viewed);
+// vivapinata-nx (2026-11-12, vivapinata_depth_resolve_skip_unread, A/B 156; port 115): left out (0), drawn late from an
+// unchanged source (1), drawn late from newer content or not at all (2).
+bool DepthResolveSkipUnreadOn();
+void CountDepthResolveSkip(int what);
 // banjo_deko3d_draw_resolves (2026-10-18): colour resolves drawn instead of copied on deko3d.
 [[gnu::always_inline]] inline bool DrawResolvesOn() { return Latch().draw_resolves; }
 // 2026-10-18, a census: binds of a depth resolve's float (R32F) target, not its words.

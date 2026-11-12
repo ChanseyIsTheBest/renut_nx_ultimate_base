@@ -315,7 +315,22 @@ inline void CompareAnyMode(CR& cr, double a, double b) noexcept {
 }
 
 /// frsp: the stfs conversion followed by the lfs one, each exact in either mode (above).
+/// blur-nx (2026-11-12, CPU batch 3; codegen-ideas-3 CG-16): one range test, not two. When the stfs half takes its fast
+/// path (|d| >= 2^-126 = FLT_MIN, or zero, infinity, NaN) the rounded single is never a denormal (rounding is monotone
+/// and FLT_MIN is a single), so the lfs half's denormal test could only pass on the slow path: only that path keeps it.
+/// The same bits as SingleToDoubleAnyMode(bit_cast(DoubleToSingleAnyMode(d))) for every d (the forms self-check).
 inline double RoundToSingleAnyMode(double d) noexcept {
+  REX_DIET_CENSUS(0);
+  REX_DIET_CENSUS(0);
+  const uint64_t a = std::bit_cast<uint64_t>(d) & 0x7FFFFFFFFFFFFFFFull;
+  if (a - 1u < 0x3810000000000000ull - 1u) [[unlikely]] {
+    REX_DIET_CENSUS(3);
+    return SingleToDoubleAnyMode(std::bit_cast<uint32_t>(detail::DoubleToSingleSlow(d)));
+  }
+  return double(float(d));
+}
+/// The two-test form above it replaced (the forms self-check's reference).
+inline double RoundToSingleAnyModeRef(double d) noexcept {
   return SingleToDoubleAnyMode(std::bit_cast<uint32_t>(DoubleToSingleAnyMode(d)));
 }
 
@@ -358,6 +373,19 @@ inline double DivSingleAnyMode(double a, double b) noexcept {
   if (d == 0.0 && a != 0.0) [[unlikely]] return detail::DivSingleSlow(a, b);
   return RoundToSingleAnyMode(d);
 }
+
+/// blur-nx (2026-11-12, CPU batch 3; codegen-ideas-3 CG-14): the same four operations when tools/single_floats.py has
+/// proven both operands single (each register last written by a single-precision instruction or a load single, on
+/// every path). A widened single is zero, infinite, NaN or at least 2^-149 in magnitude, so it is never a denormal
+/// double; and the double result of +, -, *, / of two of them is zero only when the exact result is zero (a sum or
+/// difference of multiples of 2^-149 is one; a product of two singles is exact in double; a quotient is at least
+/// 2^-277 unless the divisor is infinite, whose zero is exact too), and is never tiny in double. So the operand and the
+/// zero-result tests of the *SingleAnyMode forms can never send these to their cold path: what is left is the
+/// rounding to single (RoundToSingleAnyMode), with the same bits in either flush mode.
+inline double AddSingleKnown(double a, double b) noexcept { return RoundToSingleAnyMode(a + b); }
+inline double SubSingleKnown(double a, double b) noexcept { return RoundToSingleAnyMode(a - b); }
+inline double MulSingleKnown(double a, double b) noexcept { return RoundToSingleAnyMode(a * b); }
+inline double DivSingleKnown(double a, double b) noexcept { return RoundToSingleAnyMode(a / b); }
 
 /// fsel's test, FRA >= 0.0, on the bits: true for both zeros and every positive number and +infinity, false for every
 /// NaN and every negative number, denormals included (which the flush mode would read as -0: true). The same truth

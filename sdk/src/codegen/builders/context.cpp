@@ -696,24 +696,32 @@ FloatKind ClassifyFloat(const ppc_insn& insn) {
     return FloatKind::kOther;
   }
   switch (insn.opcode->id) {
-    case PPC_INST_VADDFP:
-    case PPC_INST_VADDFP128:
+    // blur-nx (2026-11-11, docs/vector-ideas-2.md VX-01 / VX-03): the conversions and the round to nearest / to zero
+    // need no mode (vector.cpp says why), and vcmpeqfp v, v, v (the NaN test) neither: as their builders.
     case PPC_INST_VCFPSXWS128:
     case PPC_INST_VCFPUXWS128:
     case PPC_INST_VCFSX:
     case PPC_INST_VCFUX:
-    case PPC_INST_VCMPBFP:
-    case PPC_INST_VCMPBFP128:
-    case PPC_INST_VCMPEQFP:
-    case PPC_INST_VCMPEQFP128:
-    case PPC_INST_VCMPGEFP:
-    case PPC_INST_VCMPGEFP128:
-    case PPC_INST_VCMPGTFP:
-    case PPC_INST_VCMPGTFP128:
     case PPC_INST_VCSXWFP128:
     case PPC_INST_VCTSXS:
     case PPC_INST_VCTUXS:
     case PPC_INST_VCUXWFP128:
+    case PPC_INST_VRFIN:
+    case PPC_INST_VRFIN128:
+    case PPC_INST_VRFIZ:
+    case PPC_INST_VRFIZ128:
+      return FloatKind::kOther;
+    case PPC_INST_VCMPEQFP:
+    case PPC_INST_VCMPEQFP128:
+      return insn.operands[1] == insn.operands[2] ? FloatKind::kOther : FloatKind::kVmx;
+    case PPC_INST_VADDFP:
+    case PPC_INST_VADDFP128:
+    case PPC_INST_VCMPBFP:
+    case PPC_INST_VCMPBFP128:
+    case PPC_INST_VCMPGEFP:
+    case PPC_INST_VCMPGEFP128:
+    case PPC_INST_VCMPGTFP:
+    case PPC_INST_VCMPGTFP128:
     case PPC_INST_VEXPTEFP:
     case PPC_INST_VEXPTEFP128:
     case PPC_INST_VLOGEFP:
@@ -735,12 +743,8 @@ FloatKind ClassifyFloat(const ppc_insn& insn) {
     case PPC_INST_VREFP128:
     case PPC_INST_VRFIM:
     case PPC_INST_VRFIM128:
-    case PPC_INST_VRFIN:
-    case PPC_INST_VRFIN128:
     case PPC_INST_VRFIP:
     case PPC_INST_VRFIP128:
-    case PPC_INST_VRFIZ:
-    case PPC_INST_VRFIZ128:
     case PPC_INST_VRSQRTEFP:
     case PPC_INST_VRSQRTEFP128:
     case PPC_INST_VSUBFP:

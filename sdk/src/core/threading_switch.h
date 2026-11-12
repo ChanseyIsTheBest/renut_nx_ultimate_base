@@ -250,6 +250,11 @@ uint64_t RexSwitchStacksTaken(void);
  * WakeAddress: svcSignalToAddress (wake up to count threads waiting on word). */
 bool RexSwitchWaitIfEqual(volatile uint32_t* word, uint32_t value, int64_t ns);
 void RexSwitchWakeAddress(volatile uint32_t* word, int32_t count);
+/* blur-nx (2026-11-12, CPU batch 3): switch_thread_priorities. Gives the thread 'handle' the priority of the first
+ * table entry whose prefix starts 'name'; returns that priority, or -1 (no entry, or the call failed). */
+int RexSwitchApplyNamedPriority(unsigned handle, const char* name);
+/* How many threads switch_thread_priorities has set (for the log). */
+unsigned RexSwitchNamedPrioritiesApplied(void);
 
 #ifdef __cplusplus
 }

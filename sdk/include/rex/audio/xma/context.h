@@ -195,6 +195,10 @@ struct kPacketInfo {
 
 static constexpr int kIdToSampleRate[4] = {24000, 32000, 44100, 48000};
 
+// blur-nx (2026-11-11, CPU batch 2): word w of the bitmap of enabled contexts (bit n: context 32w + n was last set
+// enabled). Only XmaContext::set_is_enabled writes it.
+uint32_t XmaEnabledWord(uint32_t word);
+
 class XmaContext {
  public:
   static const uint32_t kBytesPerPacket = 2048;
@@ -236,7 +240,9 @@ class XmaContext {
   void set_is_allocated(bool is_allocated) {
     is_allocated_.store(is_allocated, std::memory_order_release);
   }
-  void set_is_enabled(bool is_enabled) { is_enabled_.store(is_enabled, std::memory_order_release); }
+  // blur-nx (2026-11-11, CPU batch 2): also kept in a bitmap of the enabled contexts (EnabledWord), so the XMA
+  // worker's full sweep visits those only instead of loading 320 contexts' flags (xma_context.cpp).
+  void set_is_enabled(bool is_enabled);
 
   void SignalWorkDone() {
     if (work_completion_event_) {

@@ -54,6 +54,7 @@
 
 // banjo-nx (2026-10-27): the system core (core/threading_switch.cpp; its header clashes with switch.h).
 extern "C" int RexSwitchSystemCore(void);
+extern "C" int RexSwitchApplyNamedPriority(unsigned handle, const char* name);  // blur-nx: switch_thread_priorities
 extern "C" int RexSwitchSystemCoreMode(void);
 extern "C" unsigned RexSwitchAppCoreMask(void);
 extern "C" bool RexSwitchCoreIdleSample(int core, unsigned long long* idle_ticks, unsigned long long* at_ticks);
@@ -1367,6 +1368,8 @@ void RexSwitchPerfSetThreadName(u32 handle, const char* name) {
   if (!handle || !name) {
     return;
   }
+  // blur-nx (2026-11-12, CPU batch 3): a named thread's priority from switch_thread_priorities (threading_switch.cpp).
+  RexSwitchApplyNamedPriority(handle, name);
   if (RexSwitchAppThreadNamed) {
     RexSwitchAppThreadNamed(handle, name);
   }

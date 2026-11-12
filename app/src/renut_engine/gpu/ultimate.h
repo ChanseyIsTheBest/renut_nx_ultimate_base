@@ -54,4 +54,7 @@ bool Format7e3Rg11b10On();  // renut_format_7e3_rg11b10 (sasrt-nx; rows 7, 66, 7
 bool DepthFloatNoStencilOn();  // renut_depth_float_no_stencil (sasrt-nx; row 26; a speed trade, off)
 bool Float32PointFilterOn();  // renut_float32_point_filter (sasrt-nx; row 38)
 bool DiagFormatsOn();  // renut_diag_formats (sasrt-nx; the diagnostic, logging only)
+bool ZeroLevelRecheckOn();  // dishonored_renut_zero_level_recheck (dishonored-nx; port 104)
+bool VertexReadableCheckOn();  // dishonored_renut_vertex_readable_check (dishonored-nx; port 101)
+bool Clamp7e3On();  // dishonored_renut_clamp_7e3 (dishonored-nx; port 106)
 }  // namespace banjo::renut_gpu

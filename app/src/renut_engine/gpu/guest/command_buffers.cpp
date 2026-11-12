@@ -691,7 +691,14 @@ struct alignas(64) SlotRecordCache {
 };
 SlotRecordCache g_record_cache_slots[native::kTouchSlots];
 
-void SyncPendingCount() { g_pending_count.store(g_pending_vertices.size(), std::memory_order_release); }
+// sasrt-nx (2026-11-12, batch C/D, item C11; port 93): a changed count only (the sole writer holds g_record_mutex):
+// the line every op's memo check reads is not written at each op with the same value. A reader that sees the count
+// unchanged needs nothing the store would have published (0: it takes no pending data; not 0: it takes the mutex).
+void SyncPendingCount() {
+  const size_t n = g_pending_vertices.size();
+  if (g_pending_count.load(std::memory_order_relaxed) != n)
+    g_pending_count.store(n, std::memory_order_release);
+}
 
 u32 RecordingBuffer(u32 device_va) {
   const auto *word = GuestPtr<const be_u32>(device_va + d3d::kDeviceOffsetCommandBuffer);
@@ -1102,13 +1109,88 @@ size_t CopyState(HostCommandBuffer &buffer, const u8 *device, uint64_t plain_dir
 constexpr u32 kInheritTailBegin = u32(offsetof(d3d::Device, m_Constants)) + 0x2300;  // 0x2780, after both float blocks
 static_assert(kInheritTailBegin == 0x2780);
 
+// blur-nx (2026-11-11, CPU batch 2): the words that differ from the device at Begin, 128 bytes (one set_words word) at a
+// time. The console race profile of the LTO+PGO build had this scan, inlined into NewOp, at about 5 % of a core on the
+// job threads (886 four-byte compares and branches an op, every op). On the AArch64 each 16 bytes is one compare of four
+// words; a block with no difference costs eight compares and a test; a differing block's bits are the same bits the word
+// loop sets. BLUR_SET_WORDS_SCALAR (compile time): the word loop.
+#if defined(__aarch64__) && !defined(BLUR_SET_WORDS_SCALAR)
+inline u32 DifferingWordsOf128(const u8 *a, const u8 *b) {
+  u32 mask = 0;
+  for (u32 q = 0; q < 8; ++q) {
+    const uint32x4_t ne = vmvnq_u32(vceqq_u32(vreinterpretq_u32_u8(vld1q_u8(a + q * 16)),
+                                              vreinterpretq_u32_u8(vld1q_u8(b + q * 16))));
+    // Lane k (bytes 4k..4k+3 of this quarter) is word 4q + k of the block: its bit is 1 << (4q + k).
+    const uint32x4_t bits = vandq_u32(ne, uint32x4_t{1u, 2u, 4u, 8u});
+    mask |= vaddvq_u32(bits) << (4 * q);
+  }
+  return mask;
+}
+inline bool Equal128(const u8 *a, const u8 *b) {
+  uint32x4_t x = vdupq_n_u32(0);
+  for (u32 q = 0; q < 8; ++q)
+    x = vorrq_u32(x, veorq_u32(vreinterpretq_u32_u8(vld1q_u8(a + q * 16)),
+                               vreinterpretq_u32_u8(vld1q_u8(b + q * 16))));
+  return vmaxvq_u32(x) == 0;
+}
+#endif
+
+#if defined(__aarch64__) && !defined(BLUR_SET_WORDS_SCALAR)
+// The two NEON helpers against the word compare, once, on the device (the PC build has no NEON path for the guard to
+// compare): 128-byte blocks with no difference, one, several and every word different, each byte of a word in turn.
+// A failure logs an error and every op keeps the word loop.
+bool SetWordsSelfTest() {
+  alignas(16) u8 a[128], b[128];
+  uint32_t seed = 0x2545F491u;
+  bool ok = true;
+  for (u32 round = 0; round < 64 && ok; ++round) {
+    for (u32 i = 0; i < 128; ++i) {
+      seed = seed * 1664525u + 1013904223u;
+      a[i] = b[i] = u8(seed >> 24);
+    }
+    const u32 flips = round < 32 ? round : 32 + (round % 7) * 9;  // 0..31 single words, then many
+    for (u32 f = 0; f < flips; ++f) {
+      seed = seed * 1664525u + 1013904223u;
+      const u32 at = round < 32 ? round * 4 + (round & 3) : (seed >> 9) % 128;
+      b[at] ^= u8(1u + ((seed >> 3) & 0x7F));
+    }
+    u32 want = 0;
+    for (u32 w = 0; w < 32; ++w)
+      want |= u32(std::memcmp(a + w * 4, b + w * 4, 4) != 0) << w;
+    ok = DifferingWordsOf128(a, b) == want && Equal128(a, b) == (want == 0);
+  }
+  if (!ok)
+    RGPU_ERROR("NoteSetWords' NEON compare differs from the word compare: every op keeps the word loop (blur-nx self-test)");
+  return ok;
+}
+#endif
+
 inline void NoteSetWords(HostCommandBuffer &buffer, const DeviceRecording &set, const u8 *device) {
-  const auto scan = [&](u32 from, u32 to) {
+  const auto scan_words = [&](u32 from, u32 to) {
     for (u32 at = from; at < to; at += 4) {
       if (std::memcmp(device + at, set.begin_image + at, 4) != 0)
         buffer.set_words[at / 128] |= 1u << ((at / 4) & 31);
     }
   };
+#if defined(__aarch64__) && !defined(BLUR_SET_WORDS_SCALAR)
+  static const bool neon_ok = SetWordsSelfTest();
+  const auto scan = [&](u32 from, u32 to) {
+    if (!neon_ok) {
+      scan_words(from, to);
+      return;
+    }
+    u32 at = from;
+    for (; at + 128 <= to; at += 128) {  // 'from' is a multiple of 128 (static_asserts below): one set_words word a block
+      if (Equal128(device + at, set.begin_image + at))
+        continue;
+      buffer.set_words[at / 128] |= DifferingWordsOf128(device + at, set.begin_image + at);
+    }
+    scan_words(at, to);  // the tail of a range that does not end on 128 bytes
+  };
+  static_assert(kFetchBegin % 128 == 0 && kInheritTailBegin % 128 == 0, "NoteSetWords: blocks of 128 bytes");
+#else
+  const auto &scan = scan_words;
+#endif
   scan(kFetchBegin, kVertexShaderF);
   scan(kInheritTailBegin, d3d::kDeviceSnapshotSize);
 }
@@ -2694,6 +2776,12 @@ void Replay(const u8 *running, const BufferSet &buffers, u32 command_buffer_va, 
         const char *three_ahead = reinterpret_cast<const char *>(&ops[op_index + 3]);
         __builtin_prefetch(three_ahead);
         __builtin_prefetch(three_ahead + 64);
+        // sasrt-nx (2026-11-12, batch C/D, item C7; port 93): the op's other line its replay reads: 'binding'
+        // (halo3-nx's recorded binds, tested at every replayed draw). sasrt-nx's other lines (+384 .. +640: its recorded
+        // surfaces and index buffer) are not in the base's op. Prefetches only.
+        static_assert(offsetof(Op, binding) >= 192 && offsetof(Op, binding) + sizeof(u32) <= 256,
+                      "C7 prefetches the line of 'binding'");
+        __builtin_prefetch(three_ahead + 192);
       }
       // (Without the shader stages, A/B 49: the next op's sets, as c2 did.)
       const size_t sets_at = stream_shaders && op_index + 2 < op_count ? op_index + 2 : op_index + 1;
