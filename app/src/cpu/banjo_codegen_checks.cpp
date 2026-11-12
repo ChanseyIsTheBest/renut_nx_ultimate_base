@@ -61,6 +61,8 @@ volatile unsigned long long g_rex_flush_flow_checked = 0;
 // REX_LR_WRITE_SAME_CHECK).
 volatile unsigned long long g_rex_r1_checked = 0;
 volatile unsigned long long g_rex_lr_write_checked = 0;
+// sasrt-nx (2026-11-12, its idea 2; port 121): tools/stack_forward.py's REX_STACK_FWD_VERIFY (the hooked builds).
+volatile unsigned long long g_rex_stack_fwd_checked = 0;
 // rex/ppc/diet_ops.h, REX_DIET_CENSUS_ON: executions of the any-mode float helpers in the game code (conversions,
 // compares, arithmetic, cold paths, float copy loads and stores).
 volatile unsigned long long g_rex_diet_census[6] = {};
@@ -80,6 +82,7 @@ std::atomic<uint64_t> g_promoted_mismatches{0};
 std::atomic<uint64_t> g_flush_flow_mismatches{0};
 std::atomic<uint64_t> g_r1_mismatches{0};
 std::atomic<uint64_t> g_lr_write_mismatches{0};
+std::atomic<uint64_t> g_stack_fwd_mismatches{0};  // port 121
 
 // One call site: (function address << 32) | ordinal. Up to four targets are told apart; the rest is "other".
 struct Site {
@@ -124,6 +127,17 @@ extern "C" void RexLrWriteMismatch(unsigned long long held, unsigned long long w
     REXLOG_ERROR("[enhancements] DIFFERENCE: link-register write-back proven redundant: ctx.lr {:#x}, the epilogue "
                  "writes {:#x} (return address {})",
                  held, written, static_cast<const void*>(__builtin_return_address(0)));
+  }
+}
+
+// sasrt-nx (2026-11-12, its idea 2; port 121): a vector load tools/stack_forward.py forwards from four stores read
+// something else for real (REX_STACK_FWD_VERIFY: the hooked builds compare each forward with the real load).
+extern "C" void RexStackFwdMismatch(unsigned address) noexcept {
+  ::me::native::VerifyDifference();
+  if (g_stack_fwd_mismatches.fetch_add(1, std::memory_order_relaxed) < 16) {
+    REXLOG_ERROR("[enhancements] DIFFERENCE: stack forwarding: the vector load of the stack slot at {:08X} does not read "
+                 "the four words its stores wrote (tools/stack_forward.py)",
+                 address);
   }
 }
 
@@ -325,6 +339,15 @@ void CodegenChecksReport(int seconds) {
                   "0 differences", r1, lr);
     }
   }
+  if (const uint64_t fwd = g_rex_stack_fwd_checked) {  // sasrt-nx (2026-11-12, its idea 2; port 121)
+    const uint64_t wrong = g_stack_fwd_mismatches.load(std::memory_order_relaxed);
+    if (wrong)
+      REXLOG_ERROR("[enhancements] DIFFERENCE: generated-code self-checks (cumulative): stack forwards {} of {} wrong",
+                   wrong, fwd);
+    else
+      REXLOG_INFO("[verify] stack forwards (tools/stack_forward.py) checked against the real load: {}; 0 differences",
+                  fwd);
+  }
   if (!g_rex_indirect_census) return;
   // The census: the whole table, most called sites first.
   struct Row {
@@ -380,11 +403,38 @@ void CodegenChecksReport(int seconds) {
 
 }  // namespace banjo
 
-#else  // the Switch build: nothing to check, nothing to count
+#else  // the Switch build: only the hooked (guard) build's stack-forward self-check (REX_STACK_FWD_VERIFY)
+
+// sasrt-nx (2026-11-12, its idea 2; port 121): defined in the hooked builds only (app/CMakeLists.txt); the in-place
+// console builds never reference these.
+extern "C" {
+volatile unsigned long long g_rex_stack_fwd_checked = 0;
+}
+
+namespace {
+std::atomic<uint64_t> g_stack_fwd_mismatches{0};
+}
+
+extern "C" void RexStackFwdMismatch(unsigned address) noexcept {
+  if (g_stack_fwd_mismatches.fetch_add(1, std::memory_order_relaxed) < 16) {
+    REXLOG_ERROR("[enhancements] DIFFERENCE: stack forwarding: the vector load of the stack slot at {:08X} does not read "
+                 "the four words its stores wrote (tools/stack_forward.py)",
+                 address);
+  }
+}
 
 namespace banjo {
 void CodegenChecksInit() {}
-void CodegenChecksReport(int) {}
+void CodegenChecksReport(int) {
+  const uint64_t fwd = g_rex_stack_fwd_checked;
+  if (!fwd) return;
+  const uint64_t wrong = g_stack_fwd_mismatches.load(std::memory_order_relaxed);
+  if (wrong)
+    REXLOG_ERROR("[enhancements] DIFFERENCE: generated-code self-checks (cumulative): stack forwards {} of {} wrong", wrong,
+                 fwd);
+  else
+    REXLOG_INFO("[verify] stack forwards (tools/stack_forward.py) checked against the real load: {}; 0 differences", fwd);
+}
 }  // namespace banjo
 
 #endif

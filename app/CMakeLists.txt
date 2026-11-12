@@ -460,6 +460,13 @@ endif()
 if(NOT BANJO_GEN_PROMOTED_CALLS)
     list(APPEND _banjo_round_definitions REX_PROMOTED_CALLS_OFF)
 endif()
+# sasrt-nx (2026-11-12, its idea 2; port 121): the hooked builds (the guard's: the PC, Ryujinx, tools/build_switch_guard.bat)
+# check each forwarded stack load against the real one (tools/stack_forward.py, REX_STACK_FWD_VERIFY): the guard compares
+# copies with the original statements, which forward the same way, so it cannot see a wrong forward. The in-place
+# console builds forward only.
+if(NOT SASRT_HOT_IN_PLACE)
+    list(APPEND _banjo_round_definitions REX_STACK_FWD_VERIFY)
+endif()
 if(NOT BANJO_GEN_NARROW_LOOP_BARRIER)
     list(APPEND _banjo_round_definitions REX_LOOP_BARRIER_FULL)
 endif()

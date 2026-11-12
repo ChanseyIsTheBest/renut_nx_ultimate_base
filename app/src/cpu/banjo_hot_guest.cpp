@@ -120,6 +120,12 @@ REXCVAR_DEFINE_BOOL(banjo_cpu_native_bulk, true, "Banjo/Enhancements",
                     "generated code, as a localized copy (registers in C++ locals; tools/localize_native.py --bulk). "
                     "false = all of them back to the generated code (their own keys: banjo_cpu_native_sub_*)")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// sasrt-nx (2026-11-12; port 121): see BANJO_HOT_POISON (banjo_hot_guest.h).
+REXCVAR_DEFINE_BOOL(banjo_hot_poison_dead, false, "Banjo/Enhancements",
+                    "Check (hooked builds): after each unguarded run of a copy, overwrite the registers the guard does "
+                    "not compare (dead after the return by LiveOut: tools/reg_liveness.py, leaf_dead_stores.py) with "
+                    "garbage, so a wrong LiveOut shows. Diagnostic only; costs a test per call")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(banjo_hot_count, false, "Banjo/Enhancements",
                     "Measurement (PC): every native copy runs in its counting form and logs/hot_counts.txt gets how "
                     "often each block of statements ran, for tools/hot_arm_compare.py. No guard while it is on")
@@ -707,8 +713,36 @@ void StartVmxFuzzOnce() {
 #endif
 }
 }  // namespace
+// sasrt-nx (2026-11-12, banjo_hot_poison_dead; port 121).
+std::atomic<bool> g_poison_dead{false};
+
+void PoisonDead(PPCContext& ctx, const RegSkip& skip) {
+  // Cheap per call (it runs after every unguarded copy call): only the set bits are visited, and the one-time log line
+  // uses a plain flag (a shared counter bumped on every call slowed sasrt-nx's first Ryujinx run about 4x).
+  static std::atomic<bool> told{false};
+  if (!told.load(std::memory_order_relaxed)) [[unlikely]] {
+    if (!told.exchange(true, std::memory_order_relaxed))
+      REXLOG_INFO("[hot] banjo_hot_poison_dead: the copies' dead-after-return registers get garbage from now on");
+  }
+  for (uint32_t m = skip.gpr; m; m &= m - 1) {
+    const int i = __builtin_ctz(m);
+    const_cast<PPCRegister*>(Gpr(ctx, i))->u64 = 0xBAD0BAD0BAD00000ull | uint64_t(i);
+  }
+  for (uint32_t m = skip.fpr; m; m &= m - 1) {
+    const int i = __builtin_ctz(m);
+    const_cast<PPCRegister*>(Fpr(ctx, i))->u64 = 0x7FF4BAD0BAD00000ull | uint64_t(i);
+  }
+  for (int w = 0; w < 2; ++w)
+    for (uint64_t m = skip.vr[w]; m; m &= m - 1) {
+      const int i = w * 64 + __builtin_ctzll(m);
+      auto* v = const_cast<PPCVRegister*>(Vr(ctx, i));
+      for (int k = 0; k < 4; ++k) v->u32[k] = 0x7FA0BA00u | uint32_t(i);
+    }
+}
+
 uint8_t InitHook(Hook& h, uint8_t* base) {
   StartVmxFuzzOnce();
+  g_poison_dead.store(REXCVAR_GET(banjo_hot_poison_dead), std::memory_order_relaxed);  // sasrt-nx (2026-11-12; port 121)
   // May run on several threads at once for the first call: every one of them stores the same values.
   bool on = banjo::EnhancementActive(banjo::EnhancementGroup::kCpu, h.own());
   if (on && h.bulk && !REXCVAR_GET(banjo_cpu_native_bulk)) on = false;

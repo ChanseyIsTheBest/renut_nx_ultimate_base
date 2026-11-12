@@ -1,6 +1,7 @@
-# Building katamari-nx
+# Building the base
 
-You need your own copy of the game: the code generator and the shader tools read it. Nothing made from it is committed
+As checked in, the base builds Beautiful Katamari, so the file names and counts below are Katamari's; a new port's
+differ where they name the game (its own manifest, shader finder, tomls). You need your own copy of the game: the code generator and the shader tools read it. Nothing made from it is committed
 (`.gitignore`): `app/assets`, `app/generated`, `out/`, `app/out/`.
 
 ## Tools
@@ -23,6 +24,19 @@ tools\build_pc.bat
 The PC build runs the code generator (`app/renut_manifest.toml`), the post-codegen passes (`tools/post_codegen.py`) and
 Renut's XenosRecomp over `out/renut_shader_dump`. Run it with `tools/run_pc.ps1`.
 
+**Code generation again.** The PC build regenerates by itself when the generator (`sdk/out/win-amd64/rexglue.exe`)
+relinks. A change to a post-codegen tool, to a header the generated code includes, or a port that says "take it with a
+code generation" needs it by hand: `powershell -ExecutionPolicy Bypass -File tools/codegen.ps1`, then
+`python tools/post_codegen.py` in full (never one of its steps alone on a finished tree: tools/localize_native.py
+refuses copies there), then the builds. Its log names what each step did; `reg_liveness` and `localize_native` print
+what the machine copies leave out.
+
+**A new game's calling convention.** Port 121's register liveness (tools/reg_liveness.py) relies on the 360 convention
+(v1 is the first vector argument and result; v0 and v32-v63 are scratch; a function reached through a pointer returns
+to a caller that reads only results). Check it on each game before trusting it: `python tools/cc_entry_census.py` must
+end with "none", and every read `python tools/cc_exit_census.py` lists must be value-independent. If a game breaks it,
+generate with `SASRT_REG_LIVENESS_EXIT_ABI=0` (and `SASRT_REG_LIVENESS_HOOKS_ABI=0` for a vector hit).
+
 ## 3. The shaders
 
 ```bash
@@ -39,7 +53,10 @@ python tools\renut_release_shaders.py
 ```
 
 `switch_shaders.ps1` translates all 195 to GLSL and makes the everyday build's files (`app/out/renut_switch`, every
-shader built into the NRO). `renut_release_shaders.py` makes the release build's (`app/out/renut_switch_release`: the
+shader built into the NRO). A port whose notes say "take it with a shader package made again" needs this step (and the
+Switch build after it). A new package changes the shaders' text, so the device compiles their variants once: before a
+console measurement, make the DKSH cache from a pipeline list (`python tools/deko3d_variant_cache.py`, its help) so a
+first run does not compile while it draws. `renut_release_shaders.py` makes the release build's (`app/out/renut_switch_release`: the
 shader table without SPIR-V, and `sd/deko3d_glsl.bin` to put next to the NRO for tests). `BANJO_CENTROID=0` (or
 `switch_shaders.ps1 -NoCentroid`) translates without centroid sampling.
 
@@ -137,3 +154,22 @@ python tools/katamari_shader_files.py --image out/renut_image.bin --game <game f
 
 then its `test/release_node.mjs` (its README). `wasm/renut_hlsl` must be rebuilt after a change to the translator
 (`app/thirdparty/reblue-XenosRecomp`, `tools/renut_hlsl_frontend.cpp`): its `wasm/src/deko3d/build_wasm_deko3d.sh`.
+
+## 6. Tests
+
+- **PC:** `tools/run_pc.ps1 -Seconds N -Name X [-Extra "--key=value ..."]` runs the PC build with captures;
+  `tools/run_pc_verify.ps1 -Seconds 180 -Name X -Script "20:START,24:A"` runs it with the CPU verify and the guard on
+  every machine copy (the log's `[verify]` and `[hot]` lines: 0 differences). The PC build is hooked, so it also checks
+  each forwarded stack load against the real one (port 121).
+- **Ryujinx:** `tools/run_ryujinx.ps1 -Seconds N -Name X -Toml <file> -Build <folder under app/out>`, with a data folder
+  of its own. One run at a time, when no other Ryujinx runs and nothing is compiling (a starved run says nothing);
+  `-MinCommitGB` sets the free memory it waits for. It copies the toml over the emulator SD's: put it back after.
+  Frame rates and load times in the emulator are not measurements.
+- **Guard on the Switch side:** `tools/build_switch_guard.bat`, then a Ryujinx run with `banjo_cpu_verify` and the
+  `banjo_hot_guard_*` keys. The guard cannot see a wrong "dead register" claim (its skip set comes from the same
+  analysis): a run with `banjo_hot_poison_dead = true` and the guard off fills those registers with garbage after each
+  copy call, so a wrong claim shows as a crash, NaNs or a wrong picture.
+- **Shader passes:** tools/difftest (its README): each changed shader against its old form, with a deliberately broken
+  copy as a control.
+- **The console** decides performance: the same NRO both ways (an in-run A/B target, or ABBA order) with a control
+  from the same session, fps from Renut's wall-clock 10 s lines.

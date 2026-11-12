@@ -100,7 +100,7 @@ REXCVAR_DEFINE_BOOL(audio_xma_output_done_when_drained, false, "Audio",
 REXCVAR_DEFINE_INT32(banjo_xma_frame_cache_mb, 24, "Banjo/Audio",
                      "XMA frame cache: memory for the decoded frames (about 2 KB each); full, it starts again. A game "
                      "with many short repeated sounds may want more (Blur: 256, 26 -> 65 % of the frames answered)")
-    .range(1, 256);
+    .range(1, 512);  // blur-nx (2026-11-12; port 120): up to 512, was 256 (Blur filled 256 MB in about 90 s of racing)
 
 
 namespace {
@@ -628,8 +628,8 @@ void XmaContext::NoteProduction(bool produced, uint8_t reason, const XMA_CONTEXT
   }
 }
 
-// blur-nx (2026-11-11, CPU batch 2): the bitmap of the enabled contexts (context.h). The flag is stored first, with
-// release; the bit after, with release: a sweep that sees the bit sees the flag. A sweep that does not see a bit
+// blur-nx (2026-11-11, CPU batch 2): the bitmap of the enabled contexts (context.h). The flag is stored first; the bit
+// after (both seq_cst since batch 4, below): a sweep that sees the bit sees the flag. A sweep that does not see a bit
 // set during it misses that context this time, as the walk of the flags did when the flag was set behind it; the
 // kick that enabled it signals the worker, which looks again. Work() still checks both flags itself.
 namespace {
@@ -641,15 +641,27 @@ uint32_t XmaEnabledWord(uint32_t word) {
   return word < kEnabledWords ? g_enabled_bits[word].load(std::memory_order_acquire) : 0u;
 }
 
+// blur-nx (2026-11-12, CPU batch 4): Enable() no longer takes the context's lock (it waited for a whole decode), so a
+// kick can now meet a clear: the flag and its bit are written with seq_cst, and a clear looks at the flag again after
+// clearing the bit, setting the bit back when a kick set the flag in between (in seq_cst's single order: the kick's
+// bit either comes after the clear's, or before it, and then the clear's second look sees the kick's flag). The flag's
+// final value is the last write's, as before; a bit set for a flag that is false costs one early return in Work.
 void XmaContext::set_is_enabled(bool is_enabled) {
-  is_enabled_.store(is_enabled, std::memory_order_release);
-  if (id_ < kEnabledWords * 32) {
-    const uint32_t bit = 1u << (id_ & 31);
-    if (is_enabled)
-      g_enabled_bits[id_ >> 5].fetch_or(bit, std::memory_order_release);
-    else
-      g_enabled_bits[id_ >> 5].fetch_and(~bit, std::memory_order_release);
-  }
+  is_enabled_.store(is_enabled, std::memory_order_seq_cst);
+  if (is_enabled)
+    SetEnabledBit();
+  else
+    ClearEnabledBit();
+}
+
+void XmaContext::SetEnabledBit() {
+  if (id_ < kEnabledWords * 32) g_enabled_bits[id_ >> 5].fetch_or(1u << (id_ & 31), std::memory_order_seq_cst);
+}
+
+void XmaContext::ClearEnabledBit() {
+  if (id_ >= kEnabledWords * 32) return;
+  g_enabled_bits[id_ >> 5].fetch_and(~(1u << (id_ & 31)), std::memory_order_seq_cst);
+  if (is_enabled_.load(std::memory_order_seq_cst)) SetEnabledBit();  // a kick in between (see above)
 }
 
 bool XmaContext::Work() {
@@ -660,10 +672,18 @@ bool XmaContext::Work() {
   std::lock_guard<std::mutex> lock(lock_);
   // The immediate work and the XMA thread may have seen the same notification.
   // Only one must consume it; Disable/Release also use this lock.
-  if (!is_allocated() || !is_enabled()) {
+  // blur-nx (2026-11-12, CPU batch 4): the kick is taken with one exchange, not a load and a store. Enable() sets the
+  // flag without this lock now: a kick between a load and a store would be cleared unseen, and this decode, which reads
+  // the context below, would not be ordered after the game's writes before that kick. The exchange reads the latest
+  // flag: a kick before it is synchronised with (its writes are seen here), a kick after it stays set for the next
+  // pass, as a kick that waited for the lock did.
+  if (!is_allocated()) {
     return false;
   }
-  set_is_enabled(false);
+  if (!is_enabled_.exchange(false, std::memory_order_seq_cst)) {
+    return false;
+  }
+  ClearEnabledBit();
 
   auto context_ptr = memory()->TranslateVirtual(guest_ptr());
   XMA_CONTEXT_DATA data(context_ptr);
@@ -817,7 +837,25 @@ void XmaContext::NoteStored(const uint8_t* context_ptr) {
   trace_stored_known_ = true;
 }
 
+// blur-nx (2026-11-12, CPU batch 4): without the context's lock. Work holds that lock for a whole decode, so a kick from
+// the game's audio server (XmaDecoder::WriteRegister: JQ Workers 3 and 4 in Blur's console race) for a context being
+// decoded waited for the decode to end, and the decoder's unlock then had a waiter (a kernel call each time: 0.6 ms a
+// frame of mutexUnlock on the XMA thread). The flag is an atomic; Work takes it with an exchange (see there), so a kick
+// during a decode is seen by the next pass, which decodes again as it would after waiting: the same frames in the same
+// order, sooner for the game. Disable, Clear and Release keep the lock (Disable's caller then waits in Block).
+// blur-nx (2026-11-12 evening; the user: "Try turning off the lock free XMA kick ... compare perf"): a switch,
+// audio_xma_kick_without_lock, OFF by default (the kick takes the lock, as before batch 4). The first batch-4 races
+// showed ~7 % more audio-engine CPU a second than batch 3's; whether this is why is measured with one NRO, both ways.
+// Work's exchange is right either way (under the lock, as the load and store it replaced).
+REXCVAR_DEFINE_BOOL(audio_xma_kick_without_lock, false, "Audio",
+                    "XMA: a kick (XMAEnableContext) sets the context's flag without its lock, so the game's audio thread "
+                    "does not wait for a decode in progress (blur-nx batch 4). Read at the first kick");
 void XmaContext::Enable() {
+  static const bool without_lock = REXCVAR_GET(audio_xma_kick_without_lock);
+  if (without_lock) {
+    set_is_enabled(true);
+    return;
+  }
   std::lock_guard<std::mutex> lock(lock_);
   set_is_enabled(true);
 }

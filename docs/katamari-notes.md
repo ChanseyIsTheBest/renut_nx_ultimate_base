@@ -1,5 +1,10 @@
 # Beautiful Katamari port: notes
 
+> In the base: katamari-nx's notes, kept as the worked example of a port on this renderer (the base builds
+> Katamari as checked in). Its console run breakdowns and progress log stay in
+> [katamari-nx](https://github.com/ChanseyIsTheBest/katamari-nx)'s docs; what the base changed since is in
+> [ultimate-fixes.md](ultimate-fixes.md) and [changelog.md](changelog.md).
+
 This file records the port: what each step found, with its evidence. The project starts from banjo-nx (Banjo-Kazooie:
 Nuts & Bolts, `D:\Banjo kazooie port\banjo-nx`, read-only): its SDK fork, app, tools, renderer and post-codegen
 passes. banjo-nx's docs are the reference for everything taken from it; comments that say "banjo-nx", "sa2-nx",
@@ -407,7 +412,7 @@ game was not walked through with the scripted pad.
 
 The user's logs (in the rc2 folder, but written by rc3: the DLC installs are in them) and a phone video of the
 movies. Symbolised against `builds/2026-10-31_0030_rc3_dlc_full/katamari-nx.elf`; the breakdown is
-`docs/console-rc3-breakdown.md` (ReverseNX docked mode with handheld clocks: 1080p on the 460 MHz GPU, gameplay
+[katamari-nx's docs/console-rc3-breakdown.md](https://github.com/ChanseyIsTheBest/katamari-nx/blob/main/docs/console-rc3-breakdown.md) (ReverseNX docked mode with handheld clocks: 1080p on the 460 MHz GPU, gameplay
 GPU-bound at 24-40 ms a frame).
 
 **Movies decoded into green blocks (fixed).** Ryujinx shows the same (run `movie1`, captures every 3 s: the opening
@@ -490,7 +495,7 @@ played with that config checks it; `[hot] ... differences: 0`).
 ## The second console test, rc4 (2026-10-31 12:55)
 
 The user: every movie fixed; a beeping tone still heard and some sound effects in gameplay do not play. Breakdown:
-`docs/console-rc4-breakdown.md` (handheld, 720p: gameplay CPU-bound at 28-44 fps, the GPU 15-17 ms a frame; the main
+[katamari-nx's docs/console-rc4-breakdown.md](https://github.com/ChanseyIsTheBest/katamari-nx/blob/main/docs/console-rc4-breakdown.md) (handheld, 720p: gameplay CPU-bound at 28-44 fps, the GPU 15-17 ms a frame; the main
 thread 89 %, the draw thread 83 %).
 
 **Three cores.** Both console runs (rc3 and rc4) logged "Too few processor cores" and "forwarder NPDM not written:
@@ -532,7 +537,7 @@ sound ordinary.
 The user, after rc5: most effects loop endlessly; "let's just focus on 3 core performance", then the looping.
 
 **Where the three cores go (rc5 console run, handheld, 39 fps in a level).** Main thread 80 % of a core, the draw
-thread 72 %, the game's audio engine 27 %, the XMA decoder 18 % (`docs/console-rc5-breakdown.md`). What was looked at:
+thread 72 %, the game's audio engine 27 %, the XMA decoder 18 % ([katamari-nx's docs/console-rc5-breakdown.md](https://github.com/ChanseyIsTheBest/katamari-nx/blob/main/docs/console-rc5-breakdown.md)). What was looked at:
 
 | Where | Finding | Done |
 |---|---|---|
@@ -679,7 +684,7 @@ Accessory) from the game. It does this by adding their display names to the SDK'
 
 ## rc10 (2026-11-01): the rc9 console run, three hand natives, 560 more copies, the presents menu's seam
 
-**The rc9 console run** (`docs/console-rc9-breakdown.md`, handheld, three cores). The slowest place so far is the
+**The rc9 console run** ([katamari-nx's docs/console-rc9-breakdown.md](https://github.com/ChanseyIsTheBest/katamari-nx/blob/main/docs/console-rc9-breakdown.md), handheld, three cores). The slowest place so far is the
 stage with the music M71_KDXSE: 19-30 fps, the main thread at 101 % of a core (the two others half idle), 46 % of it in
 sub_82277E70 (objects' world transforms) and sub_822683D0 (the visibility manager's walk). The `rex_crash.log` that
 came with the logs was rc6's (the supermarket crash, still on the SD card).

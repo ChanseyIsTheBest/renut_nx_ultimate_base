@@ -5,7 +5,7 @@ The generator writes dcbzl (and dcbz128) as `memset((void*)REX_RAW_ADDR(ea), 0, 
 inlines that as stores of zero registers: the A57 reads each line from memory before it overwrites it (a write
 allocate), so a zeroed 128 bytes costs 128 bytes of reads too. Blur's audio jobs zero their 1 KB work blocks with runs
 of dcbzl (sub_8230AD50, the hottest function of the console race, has no hand native) and are memory-bound
-(docs/progress-log.md, 2026-11-11). DC ZVA zeroes a whole block in the cache without reading it: on the A57 the block is
+(blur-nx's docs/progress-log.md, 2026-11-11). DC ZVA zeroes a whole block in the cache without reading it: on the A57 the block is
 64 bytes (DCZID_EL0 = 4), so two of them zero the guest line. Horizon allows it at EL0 (newlib's memset uses it).
 REX_DCBZ128(ea) does that when rex_zva64_ok (set at start-up from DCZID_EL0: the block 64 bytes and ZVA permitted),
 otherwise the memset. The asm statements name the 64 bytes each writes as their output, so the compiler knows exactly

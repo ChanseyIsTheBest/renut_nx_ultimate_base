@@ -1,4 +1,8 @@
-# Code-generation crash fixes in katamari-nx
+# Code-generation crash fixes (Beautiful Katamari)
+
+> In the base: katamari-nx's record, kept as the worked example. The classes of bug (functions the analysis never
+> found, tables read as jump tables, split functions, vcall thunks) and the scans after them apply to any game; the
+> addresses are Katamari's.
 
 Every crash this port has had that came from how the Xbox 360 code was translated, from the first boot
 (2026-10-30) to the supermarket DLC crash of rc6 (2026-11-01): what happened, why, what fixed it, how it was found,

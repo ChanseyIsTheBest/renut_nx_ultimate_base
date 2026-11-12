@@ -1,5 +1,9 @@
 # Optimising game functions
 
+> In the base: written for Beautiful Katamari; the two tracks and their tools apply to any port. Read it with
+> [hand-and-machine-optimising-guide.md](hand-and-machine-optimising-guide.md) (sasrt-nx's, the later tools) and
+> [sasrt-batch-cc2.md](sasrt-batch-cc2.md) (the copies' register liveness).
+
 How this port makes Beautiful Katamari's own functions faster on the Switch. Written 2026-11-02, on the model of
 [bejeweled3-nx's document](https://github.com/ChanseyIsTheBest/bejeweled3-nx/blob/main/docs/optimising-functions.md), with
 a different policy (the user's) and this port's tools and numbers.
@@ -382,7 +386,7 @@ Whole-run frame rates depend on the scene: rc9 ranged from 19 to 60 fps with one
   the copies in place (port 81) a copy's samples are under its generated name, `sub_X` (game code there), and where LTO
   inlined it, in its callers'; `tools/switch_hot_bulk.py` tells the copies apart by their records (`g_in_place_*`), and
   `tools/profile_breakdown.py` by their object (a hot shard) in a build without LTO.
-  `docs/console-rc9-breakdown.md` is the model for the report.
+  [katamari-nx's docs/console-rc9-breakdown.md](https://github.com/ChanseyIsTheBest/katamari-nx/blob/main/docs/console-rc9-breakdown.md) is the model for the report.
 - Call counts: `banjo_hot_count` on the PC. They depend on the path taken, not the processor, so they are usable for working out
   cost a call, with the time still coming from the console.
 

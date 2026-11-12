@@ -105,6 +105,8 @@ def main():
     run(tool('inline_leaves.py'), '--gen', gen, '--restore')
     run(tool('vsel_neon.py'), '--gen', gen, '--restore')
     run(tool('hot_layout.py'), '--gen', gen, '--restore')
+    # sasrt-nx (2026-11-12, its idea 2; port 121): the forwarded stack-slot vector loads out too (put back below).
+    run(tool('stack_forward.py'), '--gen', gen, '--restore')
     run(tool('pch_no_volatile.py'), pch)
     run(tool('indirect_calls.py'), '--gen', gen, '--promote', PROMOTIONS)
     # REQUIRED with pch_no_volatile.py: without barriers GCC turns guest polling loops into infinite loops.
@@ -174,7 +176,16 @@ def main():
     # single precision, as the Xenon does (sdk/include/rex/ppc/fma_single.h; not bit-exact to the double rounding the
     # generator wrote; CMake BLUR_FMADDS_SINGLE=OFF gives it back). Before the copies, so they take the same form.
     run(tool('fma_single.py'), '--gen', gen)
+    # sasrt-nx (2026-11-12, its docs/cpu-moonshots-1112.md idea 2; port 121): a vector load of a stack slot that four
+    # 4-byte stores of the same block just wrote takes the stored values (the stores stay; REX_STACK_FWD4 checks the
+    # address, REX_STACK_FWD_VERIFY compares with the real load in the hooked builds). Before the copies, so they take
+    # the same form. REX_STACK_FWD_OFF (compile time): the original loads.
+    run(tool('stack_forward.py'), '--gen', gen)
     if not scratch:
+        # sasrt-nx (2026-11-12, its calling-convention stages 1-1d; port 121): whole-program liveness with the vector
+        # registers, right before the copies are made from this same text (localize_native.py checks the stamp):
+        # what a real call need not hand over, the vector LiveOut, the scratch vectors dead after an indirect call.
+        run(tool('reg_liveness.py'), '--gen', gen, '--image', IMAGE)
         # The localized native copies (app/generated/hot, from sa2-nx): made from the text as it stands after every
         # step above, so each copy matches the function the build compiles. The list is app/src/cpu/hot/localized.txt;
         # direct_calls.py (above) has already sent the callers of those functions through their hooks.

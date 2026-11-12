@@ -243,6 +243,9 @@ class XmaContext {
   // blur-nx (2026-11-11, CPU batch 2): also kept in a bitmap of the enabled contexts (EnabledWord), so the XMA
   // worker's full sweep visits those only instead of loading 320 contexts' flags (xma_context.cpp).
   void set_is_enabled(bool is_enabled);
+  // blur-nx (2026-11-12, CPU batch 4): the bitmap halves of set_is_enabled (Work takes the flag with an exchange).
+  void SetEnabledBit();
+  void ClearEnabledBit();
 
   void SignalWorkDone() {
     if (work_completion_event_) {
