@@ -1415,6 +1415,9 @@ void StatsGameFrame() {
               g_words_lazy[0].exchange(0, std::memory_order_relaxed),
               g_words_lazy[1].exchange(0, std::memory_order_relaxed),
               g_words_lazy[2].exchange(0, std::memory_order_relaxed));
+  // renut-ultimate (2026-11-13, sasrt-nx's resolve project R1): while sasrt_gpu_diag_depth_words is on.
+  if (const std::string words = ::renut::gpu::DepthWordsCensusReport(); !words.empty())
+    REXLOG_INFO("{}", words);
   // vivapinata-nx (2026-11-12, port 115): while vivapinata_depth_resolve_skip_unread is on.
   if (REXCVAR_GET(vivapinata_depth_resolve_skip_unread))
     REXLOG_INFO("[renut] depth resolves nothing had read (vivapinata_depth_resolve_skip_unread): {} left out; read "

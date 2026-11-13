@@ -962,8 +962,13 @@ struct TicOverlay {
 // generator's fp_moves_modeless, fp_mode_lookahead and fp_copy_pairs) hangs on that cost, which had never been
 // measured on the A57. Four loops of the same shape, the best of five runs each: empty, a read, a write of the
 // value already there, a write that toggles FZ (what a real switch does). Run once, for the report's header.
+// renut-ultimate (2026-11-13, from sasrt-nx's handoff of 2026-11-13): also FPSR's read and clear, and one exclusive
+// increment of a cache-resident word, relaxed (ldxr/stxr) and acquire/release (ldaxr/stlxr): what a guest lwarx/stwcx.
+// pair costs in each form (sasrt-nx's A57, handheld: 17.6 and 26.4 ns).
 struct FpcrCost {
   double read_ns, write_same_ns, write_toggle_ns;
+  double fpsr_read_ns = 0, fpsr_clear_ns = 0;
+  double llsc_relaxed_ns = 0, llsc_acqrel_ns = 0;
 };
 FpcrCost MeasureFpcrCost(u64 tick_freq) {
   constexpr int kCount = 200000;
@@ -982,6 +987,19 @@ FpcrCost MeasureFpcrCost(u64 tick_freq) {
         } else if (kind == 3) {
           v ^= u64(1) << 24;  // FZ
           asm volatile("msr fpcr, %0" : : "r"(v));
+        } else if (kind == 4) {
+          asm volatile("mrs %0, fpsr" : "=r"(v));
+        } else if (kind == 5) {
+          asm volatile("msr fpsr, %0" : : "r"(u64(0)));
+        } else if (kind == 6 || kind == 7) {  // an exclusive increment, as a guest lwarx/stwcx.
+          static u32 word = 0;
+          u32 t, fail;
+          if (kind == 6)
+            asm volatile("1: ldxr %w0, [%2]\n add %w0, %w0, #1\n stxr %w1, %w0, [%2]\n cbnz %w1, 1b"
+                         : "=&r"(t), "=&r"(fail) : "r"(&word) : "memory");
+          else
+            asm volatile("1: ldaxr %w0, [%2]\n add %w0, %w0, #1\n stlxr %w1, %w0, [%2]\n cbnz %w1, 1b"
+                         : "=&r"(t), "=&r"(fail) : "r"(&word) : "memory");
         } else {
           asm volatile("" : "+r"(v));
         }
@@ -993,7 +1011,15 @@ FpcrCost MeasureFpcrCost(u64 tick_freq) {
     return double(best) * 1e9 / double(tick_freq) / double(kCount);
   };
   const double empty = loop(0);
-  return {loop(1) - empty, loop(2) - empty, loop(3) - empty};
+  u64 fpsr_saved;
+  asm volatile("mrs %0, fpsr" : "=r"(fpsr_saved));
+  FpcrCost out{loop(1) - empty, loop(2) - empty, loop(3) - empty};
+  out.fpsr_read_ns = loop(4) - empty;
+  out.fpsr_clear_ns = loop(5) - empty;
+  out.llsc_relaxed_ns = loop(6) - empty;
+  out.llsc_acqrel_ns = loop(7) - empty;
+  asm volatile("msr fpsr, %0" : : "r"(fpsr_saved));
+  return out;
 }
 
 void ProfilerMain(void*) {
@@ -1040,8 +1066,11 @@ void ProfilerMain(void*) {
     const FpcrCost fpcr = MeasureFpcrCost(tick_freq);
     std::fprintf(f,
                  "FPCR on this CPU (per access, loop overhead taken off): read %.1f ns, write of the same value "
-                 "%.1f ns, write that toggles the flush mode %.1f ns (one cycle is 0.98 ns at 1020 MHz)\n",
-                 fpcr.read_ns, fpcr.write_same_ns, fpcr.write_toggle_ns);
+                 "%.1f ns, write that toggles the flush mode %.1f ns (one cycle is 0.98 ns at 1020 MHz); FPSR: read "
+                 "%.1f ns, write of zero %.1f ns; an exclusive increment: relaxed (ldxr/stxr) %.1f ns, acquire/release "
+                 "(ldaxr/stlxr) %.1f ns\n",
+                 fpcr.read_ns, fpcr.write_same_ns, fpcr.write_toggle_ns, fpcr.fpsr_read_ns, fpcr.fpsr_clear_ns,
+                 fpcr.llsc_relaxed_ns, fpcr.llsc_acqrel_ns);
     std::fclose(f);
   }
 

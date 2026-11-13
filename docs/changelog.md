@@ -191,3 +191,18 @@ Ports 1-43 are the first round: the universal fixes of the other ports' renderer
 - Port 128 (from blur-nx) lets SMAA run on RGBA16F composite targets (Blur's float composite).
 - Port 129 (sasrt-nx's finding) makes port 45's deferred depth decompress drop the bound targets' serial and mark
   its texture used, as the other decompresses do (a later bind of the same targets could be skipped).
+- Port 130 (sasrt-nx's R2) keeps a resolve destination's depth words probe when a dynamic-resolution step makes
+  it again, so words nothing reads stay unwritten.
+- Port 131 (sasrt-nx's) adds two resolve diagnostics, off by default (`sasrt_gpu_diag_depth_words`,
+  `sasrt_gpu_diag_resolve_split`), and times the exclusive pairs in the profile header.
+- Port 132 adds `tools/ult_port_sync.py` (sasrt-nx's), which takes the base's later ports into a game's port
+  (docs/building.md section 7), and sasrt-nx's notes on what base ports cost it.
+- Port 133 turns CG-13 (`BLUR_FPCR_ONE_MODE`) on in the Switch build at the user's word, and adds
+  `tools/cg13_census.ps1`, the PC check of each game, to the porting prompt.
+- Port 134 (from blur-nx) is the XMA frame cache v2: pair-keyed with clock eviction, one frame of catch-up,
+  and the codec opened only for a sound that needs it.
+- Port 135 (from blur-nx) adds the paired audio pump (off), the speaker config and channel census keys, and the
+  stereo frame gain.
+- Port 136 (from blur-nx) adds the any-mode float loads' second pass (vector forms under CG-13), the fused
+  known-single forms, prefetch rules for the copies and the hand natives' lighter card marks.
+- Port 137 (from blur-nx) makes the texture-extent memo two ways a set and names the devices that draw.

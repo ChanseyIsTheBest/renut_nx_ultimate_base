@@ -466,6 +466,48 @@ DeltaChain g_delta;
 // The render thread's side: the device the chain's draws rebuild.
 alignas(64) u8 g_delta_device[d3d::kDeviceSnapshotSize];
 std::atomic<uint64_t> g_delta_verified{0}, g_delta_differ{0};
+
+// blur-nx (2026-11-13, M-31 of docs/cpu-moonshots-50-1113.md and its audit: the census first). The devices that draw and
+// the threads they draw from, since the start (at most four of each; more counted apart): banjo_renut_deferred_chain is
+// off by default because one chain serves every device and N&B drew on two devices from two threads. A thread notes
+// itself and a device only when its device changes, so a draw pays one thread-local compare.
+std::atomic<uint64_t> g_census_devices[4]{}, g_census_threads[4]{};
+std::atomic<uint32_t> g_census_more_devices{0}, g_census_more_threads{0};
+void CensusNote(std::atomic<uint64_t> (&set)[4], std::atomic<uint32_t> &more, uint64_t value) {
+  for (auto &slot : set) {
+    uint64_t seen = slot.load(std::memory_order_relaxed);
+    if (seen == value)
+      return;
+    if (seen == 0 && (slot.compare_exchange_strong(seen, value, std::memory_order_relaxed) || seen == value))
+      return;
+  }
+  more.fetch_add(1, std::memory_order_relaxed);
+}
+void NoteDrawer(u32 device_va) {
+  thread_local u32 last_device = 0;
+  if (last_device == device_va)
+    return;
+  if (last_device == 0) {
+    static thread_local char tag;  // (its address: one per thread)
+    CensusNote(g_census_threads, g_census_more_threads, uint64_t(reinterpret_cast<uintptr_t>(&tag)));
+  }
+  last_device = device_va;
+  CensusNote(g_census_devices, g_census_more_devices, device_va);
+}
+std::string DrawerCensus() {
+  std::string devices;
+  uint32_t n_devices = 0, n_threads = 0;
+  for (auto &slot : g_census_devices)
+    if (const uint64_t v = slot.load(std::memory_order_relaxed)) {
+      devices += fmt::format("{}{:08X}", n_devices ? " " : "", uint32_t(v));
+      ++n_devices;
+    }
+  for (auto &slot : g_census_threads)
+    n_threads += slot.load(std::memory_order_relaxed) != 0;
+  return fmt::format("; drawing since the start: {} devices ({}{}), {} threads{}", n_devices, devices,
+                     g_census_more_devices.load(std::memory_order_relaxed) ? " and more" : "", n_threads,
+                     g_census_more_threads.load(std::memory_order_relaxed) ? " and more" : "");
+}
 // banjo_renut_snapshot_deltas_constants: the chain as a replay of the constant uploads' tracking (draw.h,
 // ReplayConstants): its id (a new one at each whole copy; the top bit keeps it apart from the command buffers'
 // replays, numbered from 1) and the float constant groups written since the upload last consumed them.
@@ -813,6 +855,7 @@ std::string SnapshotDeltaReport() {
       "Begin*Vertices draws as whole copies",
       draws, double(bytes) / double(draws), d3d::kDeviceSnapshotSize, double(chunks) / per_delta,
       double(groups) / per_delta, rebases, whole);
+  line += DrawerCensus();  // blur-nx (2026-11-13, M-31)
   if (DeltasVerifyOn()) {
     line += fmt::format("; verify: {} draws checked, {} differ", g_delta_verified.exchange(0, std::memory_order_relaxed),
                         g_delta_differ.exchange(0, std::memory_order_relaxed));
@@ -838,6 +881,7 @@ void PrefetchDeltaLines(u32 device_va) {
 }
 
 void QueueDraw(u32 device_va, const DrawCall &call, u32 up_vertex_bytes, u32 up_index_bytes) {
+  NoteDrawer(device_va);  // blur-nx (2026-11-13, M-31's census)
   const bool deltas = DeltasOn();  // bangaio-nx (2026-10-29, ARM): its static's guard read once, not three times
   if (deltas && DeltaPrefetchOn())
     PrefetchDeltaLines(device_va);  // bangaio-nx (2026-10-29, v6)
@@ -863,6 +907,7 @@ void QueueDraw(u32 device_va, const DrawCall &call, u32 up_vertex_bytes, u32 up_
 }
 
 void QueueDeferredDraw(u32 device_va, const DrawCall &call, const u8 *scratch, u32 bytes) {
+  NoteDrawer(device_va);  // blur-nx (2026-11-13, M-31's census)
   FlushDeferredVertices(device_va);
   RunReadyCallbacks();
   // banjo-nx (2026-10-20, from futari-nx, banjo_renut_deferred_chain): a Begin*Vertices draw of the chain too. Made under

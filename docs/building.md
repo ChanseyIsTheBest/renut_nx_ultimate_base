@@ -68,6 +68,13 @@ The everyday build (`app/out/switch`, every shader built in, no LTO):
 tools\build_switch.bat
 ```
 
+The Switch build runs all guest float code in the host's flush mode (CG-13, CMake `BLUR_FPCR_ONE_MODE`, ON on the
+Switch since port 133, OFF on the PC): no `msr fpcr` between the game's VMX and scalar code. Not exact for scalar
+denormals: check each game with `tools/cg13_census.ps1` on the PC build (section 6, off-by-default.md section 2). A
+folder configured before port 133 keeps its cached OFF: `cmake -DBLUR_FPCR_ONE_MODE=ON app\out\switch` (and
+app\out\switch-guard) once, then build; every generated file compiles again. A PGO profile is trained with the
+setting the build ships with.
+
 The everyday and released NROs carry only the running form of each machine copy (port 78, sasrt-nx's idea 27: CMake
 `SASRT_HOT_GUARD_FORMS`, OFF by default on the Switch and ON on the PC): every copy is called directly, and
 `banjo_cpu_verify` / `banjo_hot_guard_*` check none of them (the log says so). For a guard or verify run on Ryujinx or
@@ -171,10 +178,38 @@ then its `test/release_node.mjs` (its README). `wasm/renut_hlsl` must be rebuilt
   copy call, so a wrong claim shows as a crash, NaNs or a wrong picture.
 - **Shader passes:** tools/difftest (its README): each changed shader against its old form, with a deliberately broken
   copy as a control.
+- **CG-13's census** (port 133): `tools/cg13_census.ps1 [-Seconds 300] [-Script <input script>]` runs the PC build
+  with `banjo_diag_runtime_census` and adds up its "[census] CG-13" lines: how many stretches of game code met a
+  scalar denormal, which the Switch build's one flush mode turns into zero. 0 in every window (Katamari): keep it.
+  Otherwise it lists the sites by function and generated line (tools/census_sites.py --denormal) to judge. The PC
+  build must have `BLUR_FPCR_ONE_MODE` OFF (its default; the script checks). Run it in gameplay, not only menus.
 - **The console** decides performance: the same NRO both ways (an in-run A/B target, or ABBA order) with a control
-  from the same session, fps from Renut's wall-clock 10 s lines.
+  from the same session, fps from Renut's wall-clock 10 s lines. With a new shader package, measure after warm-up runs:
+  the DKSH cache built from pipeline lists lacks the specialised variants the console compiles at run time, and the
+  first races compile them (sasrt-nx: 95 compiles, +8 ms of process CPU in that race, gone after two races).
   Over the network, `tools/switch_remote.py` (sys-botbase and sys-ftpd-light; only the port's own folder on the SD
   card, nothing deleted): [porting-a-360-game-prompt.md](porting-a-360-game-prompt.md), appendix A.
 - **Picture bugs:** a RenderDoc capture first, of the PC build or of Ryujinx (`tools/run_ryujinx_rdc.ps1`, then the
   `tools/rdc_*.py` scripts through `tools/rdc_run.ps1`; `RENDERDOC_DIR` names the RenderDoc folder): the porting
   guide's appendix B.
+
+## 7. Taking the base's later ports into a port
+
+`tools/ult_port_sync.py` (sasrt-nx's, 2026-11-13) brings the base's ports into a game's port one base commit at a time:
+for each file a port commit changes, a three-way merge of the port's file with the base's file before and after that
+commit, so exactly that port's change comes in and the port's own work stays. Files the commit adds are copied; files the
+port keeps in its own form (the per-XDK files, `--hand`), files under another name and deleted files are listed for a
+hand port; the docs, Katamari's files and dist/ are skipped. Conflicts are left in place as diff3 blocks.
+
+```
+python tools/ult_port_sync.py --base <BASE_DIR> --port <PORT_DIR> --range <last port taken>..<base commit> --dry-run
+```
+
+`--range` takes the base's "Port N: ..." commits, oldest first (`--skip N` leaves out a port that is a copy of the port's
+own work); a PORTS.json of `[[port, commit], ...]` does the same by hand. Its log is `<PORT_DIR>/out/ult_port_sync.txt`.
+sasrt-nx took ports 45-129 with it: 130 files, 136 conflict blocks resolved by hand. Build and test after, as for any
+port: the merge knows the text, not the program.
+Port 134 (the XMA frame cache v2) rewrites most of `sdk/src/audio/xma_context.cpp`: a port that never took the base's
+first frame cache (ports 111 and 120) or Katamari's loop code will not merge it (sasrt-nx's file: 1,270 lines against
+the base's 1,913). Take the base's XMA files whole (`xma_context.cpp`, `xma_decoder.cpp`, `rex/audio/xma/context.h`)
+and put the port's own lines back.

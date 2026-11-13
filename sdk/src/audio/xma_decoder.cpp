@@ -25,6 +25,9 @@
 
 #include <atomic>
 #include <chrono>
+#if defined(__SWITCH__)
+#include <switch.h>  // blur-nx (2026-11-13, M-37): armGetSystemTick
+#endif
 
 extern "C" {
 #include "libavutil/cpu.h"
@@ -222,9 +225,17 @@ constexpr uint32_t kPendingWords = 10;  // 320 contexts / 32
 std::atomic<uint32_t> g_pending[kPendingWords];
 std::atomic<int64_t> g_pending_from_ns{0};
 
+// blur-nx (2026-11-13, M-37 of docs/cpu-moonshots-50-1113.md): the measurements' clock. On the Switch the system tick
+// (cntpct, 19.2 MHz; armTicksToNs is a multiply and a division by a constant), where steady_clock::now() went through
+// clock_gettime per kick, per lock and per context a pass (0.15 ms a frame of samples, all at its entry). The same
+// monotonic time base.
 int64_t NowNs() {
+#if defined(__SWITCH__)
+  return int64_t(armTicksToNs(armGetSystemTick()));
+#else
   using namespace std::chrono;
   return duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
+#endif
 }
 
 void MarkPending(uint32_t context_id) {
@@ -242,9 +253,8 @@ int64_t NowMsXma() {
   return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
 }
 
-uint64_t FromNs(const std::chrono::steady_clock::time_point& before) {
-  using namespace std::chrono;
-  return uint64_t(duration_cast<nanoseconds>(steady_clock::now() - before).count());
+uint64_t FromNs(int64_t before) {  // blur-nx (2026-11-13, M-37): from NowNs()
+  return uint64_t(NowNs() - before);
 }
 
 void MaxXma(std::atomic<uint64_t>& max, uint64_t value) {
@@ -310,7 +320,7 @@ void XmaDecoder::WorkerThreadMain() {
           continue;  // the kick thread took it (mode 2)
         }
         pending_was = true;
-        const auto before = std::chrono::steady_clock::now();
+        const int64_t before = NowNs();
         XmaContext& context = contexts_[n];
         const bool worked = context.Work();
         const uint64_t ns = FromNs(before);
@@ -518,7 +528,7 @@ void XmaDecoder::WriteRegister(uint32_t addr, uint32_t value) {
      * notifications but polls the context sleeping 50 us per iteration, finds the data already written.
      */
     const int32_t worker_mode = REXCVAR_GET(audio_xma_in_worker);
-    const auto kick_before = std::chrono::steady_clock::now();
+    const int64_t kick_before = NowNs();
     uint64_t kick_contexts = 0;
     if (worker_mode != 0) {
       uint32_t marked = kicked_value;
@@ -569,7 +579,7 @@ void XmaDecoder::WriteRegister(uint32_t addr, uint32_t value) {
     // This requests a lock by flagging the context.
     // XMADisableContext
     uint32_t base_context_id = (r - XmaRegister::Context0Lock) * 32;
-    const auto lock_before = std::chrono::steady_clock::now();
+    const int64_t lock_before = NowNs();
     uint64_t lock_contexts = 0;
     for (int i = 0; value && i < 32; ++i, value >>= 1) {
       if (value & 1) {

@@ -8,9 +8,19 @@
  * @license     BSD 3-Clause License
  *              See LICENSE file in the project root for full license text.
  */
+#include <cstdint>
+#include <cstring>
 #include <mutex>
+#include <rex/cvar.h>
 
 #include <rex/audio/downmix.h>
+
+// blur-nx (2026-11-13): StereoFrameGain (downmix.h).
+REXCVAR_DEFINE_DOUBLE(audio_stereo_frame_gain, 1.0, "Audio",
+                      "Gain of the stereo fold for a frame whose channels 2-5 are silent (a title mixing stereo into "
+                      "the 5.1 frame: Blur with audio_stereo_mix, whose own dynamics leave the folded pair ~2.8 dB "
+                      "below the 5.1 mix); 1 = none; read once")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 namespace rex::audio {
 namespace {
@@ -53,6 +63,20 @@ void SetOutputGain(float linear) {
 float GetOutputGain() {
   std::lock_guard<std::mutex> lock(g_mutex);
   return g_gain;
+}
+
+float StereoFrameGain(const float* frame_be, size_t ch_samples) {
+  static const float gain = float(REXCVAR_GET(audio_stereo_frame_gain));
+  if (gain == 1.0f) {
+    return 1.0f;
+  }
+  const auto* words = reinterpret_cast<const uint32_t*>(frame_be + 2 * ch_samples);
+  uint32_t any = 0;
+  for (size_t i = 0; i < 4 * ch_samples; ++i) {
+    any |= words[i];
+  }
+  // (big-endian floats read as host words: the sign of +-0 is bit 7)
+  return (any & 0xFFFFFF7Fu) ? 1.0f : gain;
 }
 
 }  // namespace rex::audio

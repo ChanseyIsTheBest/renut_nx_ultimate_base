@@ -78,7 +78,18 @@ endif()
 # keeps denormals (values below FLT_MIN / DBL_MIN), which this flushes to zero as its VMX unit does. The PC census
 # (banjo_diag_runtime_census: "[census] CG-13" lines, tools/census_sites.py --denormal) counts the results it changes.
 # A compile-time switch: every generated file, the copies and the SDK runtime change with it (retrain the PGO profile).
-option(BLUR_FPCR_ONE_MODE "All guest float code in the flush mode (no FPCR switches; not bit-exact for scalar denormals)" OFF)
+# renut-ultimate (2026-11-13, port 133; the user: "turn it on by default in the base ... because it's universal big CPU
+# benefit"): ON by default in the Switch build (each switch is an `msr fpcr` on the console: Katamari's game code does
+# about 1.2 million a second on the PC; blur-nx's console +4.6 % fps). OFF by default in the PC build, which stays
+# exact: the census counts what the Switch build changes only where the mode still switches
+# (tools/cg13_census.ps1). An existing build folder keeps its cached value: -DBLUR_FPCR_ONE_MODE=ON / OFF changes it.
+if(REXGLUE_PLATFORM_SWITCH)
+    set(_blur_fpcr_one_mode_default ON)
+else()
+    set(_blur_fpcr_one_mode_default OFF)
+endif()
+option(BLUR_FPCR_ONE_MODE "All guest float code in the flush mode (no FPCR switches; not bit-exact for scalar denormals)"
+       ${_blur_fpcr_one_mode_default})
 if(BLUR_FPCR_ONE_MODE)
     add_compile_definitions(REX_FPCR_ONE_MODE)
 endif()

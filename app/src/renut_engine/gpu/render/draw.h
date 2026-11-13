@@ -368,6 +368,9 @@ struct HostTexture;
 // banjo-nx (2026-10-19, banjo_renut_depth_words_lazy): 'dest' (a depth resolve destination) is read through its words:
 // writes them now if its last resolve did not (from the unchanged source), and from now on at every resolve.
 void EnsureDepthWordsLocked(HostTexture &dest);
+// renut-ultimate (2026-11-13, sasrt-nx's resolve project R1, sasrt_gpu_diag_depth_words): the 10 s line's text (empty
+// with the key off); it starts the counts again.
+std::string DepthWordsCensusReport();
 // vivapinata-nx (2026-11-12, vivapinata_depth_resolve_skip_unread): a depth resolve destination is read (sampled, or
 // its words): its resolves are drawn from now on, and a resolve left out is drawn now.
 void DepthResolveReadLocked(HostTexture &dest, int path = 0);  // path: 0 slot, 1 alias, 2 words (the log)

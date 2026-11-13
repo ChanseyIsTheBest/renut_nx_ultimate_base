@@ -34,8 +34,10 @@ import re
 import sys
 
 R1 = re.compile(r'(?<![\w.])(?:ctx\.r1|r1l|l_r1|ll_r1|r1)\.[us](?:32|64)\b')
+# blur-nx (2026-11-13, M-23): and tools/float_loads.py's single stores from the vector unit (REX_STORE_(D_)F32ANY).
 STORE = re.compile(r'\b(REX_STORE_D_U(?:8|16|32|64)|REX_STORE_U(?:8|16|32|64)|REX_STVLX|REX_STVRX|'
-                   r'REX_MM_STORE_U(?:8|16|32|64)|BANJO_HOT_STORE_(?:D_)?U(?:8|16|32|64))\(')
+                   r'REX_MM_STORE_U(?:8|16|32|64)|BANJO_HOT_STORE_(?:D_)?U(?:8|16|32|64)|'
+                   r'REX_STORE_(?:D_)?F32ANY|BANJO_HOT_STORE_(?:D_)?F32ANY)\(')
 VEC = 'simde_mm_store_si128((simde__m128i*)REX_RAW_ADDR(ea),'
 DCBZ = re.compile(r'(?<![\w,] )\bmemset\(\(void\*\)REX_RAW_ADDR\(ea\), 0, (?:32|128)\);')
 CAS = 'REX_GUEST_CAS(reinterpret_cast<'
@@ -161,7 +163,9 @@ def apply_line(lines, k, counts):
         out.append(line[pos:m.start()])
         out.append(name + '_C(')
         pos = m.end()
-        key = 'BANJO_HOT' if name.startswith('BANJO_HOT') else (name.split('_U')[0] if '_U' in name else name)
+        key = ('BANJO_HOT' if name.startswith('BANJO_HOT') else
+               'REX_STORE_D' if name == 'REX_STORE_D_F32ANY' else 'REX_STORE' if name == 'REX_STORE_F32ANY' else
+               (name.split('_U')[0] if '_U' in name else name))
         counts[key] += 1
     out.append(line[pos:])
     line = ''.join(out)
@@ -189,7 +193,8 @@ def apply_line(lines, k, counts):
 
 UNDO = [
     (re.compile(r'\b(REX_STORE_D_U(?:8|16|32|64)|REX_STORE_U(?:8|16|32|64)|REX_STVLX|REX_STVRX|'
-                r'REX_MM_STORE_U(?:8|16|32|64)|BANJO_HOT_STORE_(?:D_)?U(?:8|16|32|64))_C\('), r'\1('),
+                r'REX_MM_STORE_U(?:8|16|32|64)|BANJO_HOT_STORE_(?:D_)?U(?:8|16|32|64)|'
+                r'REX_STORE_(?:D_)?F32ANY|BANJO_HOT_STORE_(?:D_)?F32ANY)_C\('), r'\1('),
     (re.compile(r'REX_CARD\(ea\), (?=simde_mm_store_si128|memset\()'), ''),
     (re.compile(r'REX_GUEST_CAS_C\(ea, '), 'REX_GUEST_CAS('),
 ]

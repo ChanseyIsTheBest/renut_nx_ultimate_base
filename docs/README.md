@@ -14,8 +14,10 @@ says otherwise. A new port's differ wherever they name the game: its manifest, i
 | Build the base | [building.md](building.md): the game files, code generation, the shaders, the Switch builds, PGO, the installer, tests |
 | See what the base changed from katamari-nx 1.0.1 | [changelog.md](changelog.md), a line per port, then the port's full row in [ultimate-fixes.md](ultimate-fixes.md) |
 | Find out why a switch is off, or turn one on for a game | [off-by-default.md](off-by-default.md) |
+| Check that the Switch build's one flush mode (CG-13, on) suits a game | `tools/cg13_census.ps1` on the PC build: [building.md](building.md) section 6, [off-by-default.md](off-by-default.md) section 2 |
 | Fix a picture bug | A RenderDoc capture first: [porting-a-360-game-prompt.md](porting-a-360-game-prompt.md), appendix B, with Katamari's depth-of-field blur in [katamari-notes.md](katamari-notes.md) as the worked example |
 | Run a build on the console | [porting-a-360-game-prompt.md](porting-a-360-game-prompt.md), appendix A (sys-botbase, sys-ftpd-light, `tools/switch_remote.py`); [building.md](building.md) section 6 on measuring |
+| Take the base's later ports into a port | [building.md](building.md) section 7 (`tools/ult_port_sync.py`), then each port's row in [ultimate-fixes.md](ultimate-fixes.md) |
 | Make the game's CPU side faster | [hand-and-machine-optimising-guide.md](hand-and-machine-optimising-guide.md) (sasrt-nx's, with the later tools), then [optimising-functions.md](optimising-functions.md) (the method in full) and [sasrt-batch-cc2.md](sasrt-batch-cc2.md) (register liveness, stack forwarding, the calling-convention traps) |
 | Fix a crash the code generation caused | [codegen-crash-fixes.md](codegen-crash-fixes.md): the kinds of bug, and the scans that find more of each |
 | Port a game built with a later XDK | [xdk-notes.md](xdk-notes.md) |
@@ -29,7 +31,7 @@ what in it still applies.
 
 | Page | Kind | What is in it |
 | --- | --- | --- |
-| [building.md](building.md) | Guide | The tools, the game files, code generation and the shader translator, the shaders, the Switch builds (LTO, PGO, the shader package), the installer, tests (PC verify, Ryujinx, the guard, the difftests, the console, RenderDoc) |
+| [building.md](building.md) | Guide | The tools, the game files, code generation and the shader translator, the shaders, the Switch builds (LTO, PGO, the shader package), the installer, tests (PC verify, Ryujinx, the guard, the difftests, the console, RenderDoc), taking the base's later ports |
 | [porting-a-360-game-prompt.md](porting-a-360-game-prompt.md) | Guide | A fill-in prompt for a new port's session: the placeholders, the rules, the order of work. Appendix A: the console over the network. Appendix B: RenderDoc |
 | [ultimate-fixes.md](ultimate-fixes.md) | Reference | Every port by number: its source and commit, the evidence, what was run here, its switch. Also the test runs of 2026-11-07/08, the hooks that need a game's own function address, what sasrt-nx reported, what was left out and why, and what is not done yet |
 | [changelog.md](changelog.md) | Reference | One line per port from port 44 on (ports 1-43 are the first round, in the README's "What's in it") |

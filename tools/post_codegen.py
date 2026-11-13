@@ -181,6 +181,13 @@ def main():
     # address, REX_STACK_FWD_VERIFY compares with the real load in the hooked builds). Before the copies, so they take
     # the same form. REX_STACK_FWD_OFF (compile time): the original loads.
     run(tool('stack_forward.py'), '--gen', gen)
+    # blur-nx (2026-11-13, M-23 of docs/cpu-moonshots-50-1113.md): float_loads.py again, now with the any-mode pairs
+    # (CG-13: the helpers are the plain conversions, so their loads and stores go through the vector unit too), and the
+    # plain single loads the steps above made after its first run (single_floats.py turns proven any-mode loads into
+    # plain ones: 10,239 sites were left in the integer form). After ro_constants_cfg.py and dead_ctx_defs.py, before
+    # the copies (so they take the same forms) and store_cards.py (which marks the new stores' cards). renut-ultimate
+    # (2026-11-13): after port 121's stack_forward.py, which then sees the stores as port 121 measured them.
+    run(tool('float_loads.py'), '--gen', gen, '--any-mode')
     if not scratch:
         # sasrt-nx (2026-11-12, its calling-convention stages 1-1d; port 121): whole-program liveness with the vector
         # registers, right before the copies are made from this same text (localize_native.py checks the stamp):
