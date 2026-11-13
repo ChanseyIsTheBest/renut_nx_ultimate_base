@@ -110,6 +110,14 @@ REXCVAR_DEFINE_BOOL(audio_xma_output_done_when_drained, false, "Audio",
 // verify). It is heap: the heap's room at the race's end was 834 MB with 24 and about 600 MB with 256 (Blur's texture
 // reserve is 384 MB). The default stays 24: a game with many short repeated sounds sets more in its toml, carefully
 // when it is near its texture limit.
+// blur-nx (2026-11-13, #12 of Blur's docs/cpu-near-exact-50-1113.md, the user's choice of near-exact ideas): a node
+// matches on its 64-bit key (two CRC32C streams of the packet with the previous packet's mixed in), the format and the
+// sizes, without comparing the two packets' bytes. NOT exact: a key collision (about 2^-64 a lookup for compressed
+// audio) would answer another frame's samples. The cache's report counts the collisions the byte compare finds.
+REXCVAR_DEFINE_BOOL(banjo_xma_frame_cache_hash_only, false, "Banjo/Audio",
+                    "XMA frame cache: match nodes on the 64-bit key, format and sizes without comparing the packets' "
+                    "bytes (near-exact #12; a key collision would answer another frame's samples)");
+
 REXCVAR_DEFINE_INT32(banjo_xma_frame_cache_mb, 24, "Banjo/Audio",
                      "XMA frame cache: memory for the decoded frames (about 2 KB each); full, the frames least "
                      "answered make room (a clock). A game with many short repeated sounds may want more (Blur's "
@@ -423,6 +431,7 @@ struct FrameCache {
   uint64_t fresh = 0;
   std::atomic<uint64_t> opens{0};
   uint64_t chain_verified = 0, chain_differ = 0;  // blur-nx (2026-11-13): banjo_xma_frame_cache_chain_verify
+  uint64_t collisions = 0;  // blur-nx (2026-11-13, #12's census): key, format and sizes equal, bytes not
 };
 FrameCache& Cache() {
   static FrameCache c;
@@ -518,9 +527,10 @@ FrameNode* FindNode(FrameCache& c, uint64_t key, uint64_t format, const uint8_t*
   for (size_t i = SlotOf(c, key); c.table[i].index_plus1; i = (i + 1) & (c.table.size() - 1)) {
     if (c.table[i].key != key) continue;
     FrameNode& n = c.nodes[c.table[i].index_plus1 - 1];
-    if (n.format == format && n.prev_size == prev_size && n.packet_size == size && n.pcm_bytes == pcm_bytes &&
-        std::memcmp(n.packet(), data, size) == 0 && std::memcmp(n.prev(), prev, prev_size) == 0)
-      return &n;
+    if (n.format != format || n.prev_size != prev_size || n.packet_size != size || n.pcm_bytes != pcm_bytes) continue;
+    if (REXCVAR_GET(banjo_xma_frame_cache_hash_only)) return &n;  // blur-nx (2026-11-13, #12)
+    if (std::memcmp(n.packet(), data, size) == 0 && std::memcmp(n.prev(), prev, prev_size) == 0) return &n;
+    ++c.collisions;  // (#12's census)
   }
   return nullptr;
 }
@@ -594,10 +604,12 @@ static std::string XmaFrameCacheReport() {
   std::string out = fmt::format(
       "XMA frame cache (banjo_xma_frame_cache): {} frames answered, {} decoded ({:.1f} % answered), {} decoded again "
       "to catch the codec up (one a run), {} decoded unkeyed (after an error); verify {} checked, {} differ; chain "
-      "verify {} checked, {} differ; {} nodes, {:.1f} MB, {} evicted; {} new sounds, {} codecs opened",
+      "verify {} checked, {} differ; {} nodes, {:.1f} MB, {} evicted; {} new sounds, {} codecs opened; key collisions "
+      "{} (cumulative{})",
       c.answered, c.decoded, 100.0 * double(c.answered) / double(c.answered + c.decoded), c.caught_up, c.unkeyed,
       c.verified, c.differ, c.chain_verified, c.chain_differ, c.live, double(c.bytes) / 1048576.0, c.evicted,
-      c.fresh, c.opens.exchange(0, std::memory_order_relaxed));
+      c.fresh, c.opens.exchange(0, std::memory_order_relaxed), c.collisions,
+      REXCVAR_GET(banjo_xma_frame_cache_hash_only) ? "; hash only: not compared" : "");
   c.answered = c.decoded = c.caught_up = c.unkeyed = c.verified = c.differ = c.chain_verified = c.chain_differ = 0;
   c.evicted = c.fresh = 0;
   return out;

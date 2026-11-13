@@ -54,6 +54,20 @@ MACROS = MARKER + '''
 #ifndef REX_CARD
 #if defined(REX_STORE_CARDS_OFF)
 #define REX_CARD(ea) ((void)0)
+#elif defined(REX_NX_CENSUS_ON)  // blur-nx (2026-11-13, near-exact #38's census: card marks of the generated tree)
+#define REX_CARD(ea) ((void)(REX_NX_CENSUS(25), *(u8*)(base + ((u32)(ea) >> 12)) = 0))
+#elif defined(REX_CARD_VIEWS_ONLY)
+// blur-nx (2026-11-13, with near-exact #38; exact): the copies' rule (cpu/banjo_hot_prelude.h, VS-11 / VS-12 of
+// 2026-11-11) for the generated tree too: only the pages whose cards Renut reads (its views 0xA0000000 and up and
+// 0x7F000000-0x7FFFFFFF, and the page in front of each), and the card byte written only when it is not zero yet (a
+// zero card is the result either way; the card lines stay shared between the cores).
+[[gnu::always_inline]] static inline void rex_card_gen_(uint8_t* base_, u32 page) {
+  if (page - 0x9FFFFu <= 0x60000u || page - 0x7EFFFu <= 0x1000u) {
+    u8* const card = (u8*)(base_ + page);
+    if (*card) *card = 0;
+  }
+}
+#define REX_CARD(ea) rex_card_gen_(base, ((u32)(ea)) >> 12)
 #else
 #define REX_CARD(ea) ((void)(*(u8*)(base + ((u32)(ea) >> 12)) = 0))
 #endif

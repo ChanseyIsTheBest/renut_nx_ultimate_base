@@ -69,6 +69,6 @@ float GetOutputGain();
 /// by channel) whose channels 2-5 are all silent: audio_stereo_frame_gain (1 = none, then nothing is scanned). For a
 /// title whose own mixer was made stereo (Blur's audio_stereo_mix): its dynamics see the folded pair and leave it a few
 /// dB quieter than the 5.1 mix the port folded; frames that still carry 5.1 (menus, movies) keep the plain fold.
-float StereoFrameGain(const float* frame_be, size_t ch_samples);
+float StereoFrameGain(const float* frame_be, size_t ch_samples, bool* rest_silent = nullptr);
 
 }  // namespace rex::audio

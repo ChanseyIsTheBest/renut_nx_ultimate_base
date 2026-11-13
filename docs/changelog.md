@@ -206,3 +206,10 @@ Ports 1-43 are the first round: the universal fixes of the other ports' renderer
 - Port 136 (from blur-nx) adds the any-mode float loads' second pass (vector forms under CG-13), the fused
   known-single forms, prefetch rules for the copies and the hand natives' lighter card marks.
 - Port 137 (from blur-nx) makes the texture-extent memo two ways a set and names the devices that draw.
+- Port 138 (from blur-nx) narrows the Begin*Vertices captures to the constants their shaders read, keeps the
+  deferred chain ordered across devices, and queues resolves and clears with only their own state.
+- Port 139 (from blur-nx) takes handle lookups off the global lock, starts the timestamp timer only for a game
+  that imports it, and adds the direct stereo path and finer XMA and profiler counters.
+- Port 140 (from blur-nx) adds the near-exact switches (off) with their censuses, store cards by the copies'
+  rule, and leaves out FPSCR writes that change nothing.
+- Port 141 (from blur-nx) makes the guard take a NaN that differs only in its sign as the same.

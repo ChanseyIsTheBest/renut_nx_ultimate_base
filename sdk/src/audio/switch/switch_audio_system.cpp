@@ -131,8 +131,13 @@ bool SwitchAudioDriver::MixFrameInto(float* stereo_out, const StereoFold& fold, 
     frames_queued_.pop();
   }
   std::array<float, kChannelSamples * 2> folded;
-  conversion::sequential_6_BE_to_interleaved_2_LE(folded.data(), frame, kChannelSamples, fold,
-                                                  gain * StereoFrameGain(frame, kChannelSamples));
+  bool rest_silent = false;  // blur-nx (2026-11-13, #62)
+  const float frame_gain = gain * StereoFrameGain(frame, kChannelSamples, &rest_silent);
+  if (rest_silent) {
+    conversion::front_2_of_6_BE_to_interleaved_2_LE(folded.data(), frame, kChannelSamples, fold.scale * frame_gain);
+  } else {
+    conversion::sequential_6_BE_to_interleaved_2_LE(folded.data(), frame, kChannelSamples, fold, frame_gain);
+  }
   for (size_t i = 0; i < folded.size(); ++i) {
     stereo_out[i] += folded[i];
   }
