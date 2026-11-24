@@ -410,3 +410,6 @@ Ports 1-43 are the first round: the universal fixes of the other ports' renderer
 - Port 276 (banjo-nx's): a 60 cap never holds a frame past its time to rejoin the refresh grid.
 - Port 277 (banjo-nx's): deko3d_variant_cache --runtime-log alone, switch_remote.py append. Its EndTiling
   resolve-once is not taken (the base's EndTiling is Katamari's form).
+- Port 278 (vivapinata-nx's): an XMA sound at 22,050 Hz is taken from 24 kHz Opus.
+- Port 279 (sa2-nx's): the colour and depth hand-over draw a target's other destinations before the last one takes
+  its image (a target resolved into two textures lost one: SA2's shadows).

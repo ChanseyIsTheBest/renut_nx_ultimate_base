@@ -96,6 +96,10 @@ Values written into shared files for Katamari's XDK 2.0.5632, which a port at an
 the other offsets in d3d.h / d3d_native.h one day):
 
 - `render/draw.cpp` `kDeviceDeclarationOffset` (the device's own declaration, port 213): Katamari 0x2F98, N&B 0x2FA8.
+  `render/draw.h`'s `kDeviceOwnDeclarationBegin` / `End` follow it (draw.cpp's static asserts stop the build when they
+  disagree), so both are per XDK like d3d.h's offsets. Viva Pinata's XDK 2.0.3529 (vivapinata-nx, 2026-11-24): at
+  +0x2E90 (sub_8246B428, `stw r?,11920(r31)`), up to 0x2F78, before the index buffer at 0x2F84; Katamari's 0x2F98 falls
+  in that XDK's render targets.
 - `d3d/hooks/device.cpp`, port 169's scaler copy: `device_va + 0x3584`; N&B 0x359C.
 - `guest/command_buffers.cpp` `kLastChunkBytes` (port 196's `TakeLastChunk`): 32 at 2.0.5632, 48 at N&B's update.
 - d3d.h `kDeviceOffsetViewport` (port 138): Katamari 0x3160, N&B 0x3170.

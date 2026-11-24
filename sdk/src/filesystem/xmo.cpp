@@ -151,8 +151,11 @@ bool ParsePackSound(const uint8_t* e, PackSound* out) {
   out->headers = Le64(e + 32);
   out->frame_table = Le64(e + 40);
   out->opus_table = Le64(e + 48);
+  // vivapinata-nx (2026-11-22; port 278): and a 22,050 Hz sound from 24 kHz Opus (Opus has no 22.05 kHz; Viva Pinata's
+  // voices and effects): 24000 / 22050 is 48000 / 44100, the same 160/147 resampler (xma_context.cpp DecodeXmoFrame
+  // resamples whenever the sound's rate is not its Opus rate).
   const bool rates = (out->rate == 48000 && out->opus_rate == 48000) || (out->rate == 24000 && out->opus_rate == 24000) ||
-                     (out->rate == 44100 && out->opus_rate == 48000);
+                     (out->rate == 44100 && out->opus_rate == 48000) || (out->rate == 22050 && out->opus_rate == 24000);
   return rates && out->channels >= 1 && out->channels <= 2 && out->packets >= 1 && out->packets < (1u << 24) &&
          out->frames >= 1;
 }
