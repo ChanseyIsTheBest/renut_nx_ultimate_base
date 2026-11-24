@@ -414,3 +414,5 @@ Ports 1-43 are the first round: the universal fixes of the other ports' renderer
 - Port 279 (sa2-nx's): the colour and depth hand-over draw a target's other destinations before the last one takes
   its image (a target resolved into two textures lost one: SA2's shadows).
 - Port 280 (vivapinata-nx's): port 275's tile-twin compare takes the device snapshot's end and m_Constants from d3d.h.
+- Port 281 (banjo-nx's): a resolve left in the UI target's image is settled before the UI scale pass writes the
+  target (N&B's front buffer lost one a frame).
