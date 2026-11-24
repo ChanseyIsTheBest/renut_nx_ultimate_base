@@ -13476,7 +13476,10 @@ void NoteAnyTwin(const u8 *device_state, const DrawCall &call, const ReplayConst
       p.call.tessellation == c.call.tessellation && !call.up_vertices && !call.up_indices) {
     ++g_any_pairs[c.source][tess];
     // Compared: 0x38 up to the float constants (+0x780), after them (+0x2780) up to the predication words.
-    constexpr u32 kFloatBegin = 0x480 + 0x300, kFloatEnd = 0x480 + 0x2300;
+    // vivapinata-nx (2026-11-24, the sync to port 279): from the device's layout (Katamari's m_Constants at 0x480,
+    // XDK 2.0.3529's at 0x400: the float constants 0x700-0x2700 here).
+    constexpr u32 kFloatBegin = u32(offsetof(d3d::Device, m_Constants) + offsetof(d3d::Constants, VertexShaderF)),
+                  kFloatEnd = u32(offsetof(d3d::Device, m_Constants) + offsetof(d3d::Constants, VertexShaderB));
     const auto first_differ = [&](u32 begin, u32 end) -> u32 {
       for (u32 i = begin; i < end; ++i)
         if (p.bytes[i] != c.bytes[i])
@@ -13644,7 +13647,7 @@ bool TileTwinPrepareLocked(const GuestDevice &device, const DrawCall &call, cons
   static_assert(kVsBools + 16 == kPsBools && kFloatBegin < kVsBools);
   static_assert(kPsBoolsEnd <= native::off::TilePredication && native::off::TilePredication < native::off::RunPredication &&
                 native::off::RunPredication < d3d::kDeviceOffsetPredication &&
-                d3d::kDeviceOffsetPredication + 4 == d3d::kDeviceSnapshotSize);
+                d3d::kDeviceOffsetPredication + 4 <= d3d::kDeviceSnapshotSize);
   const auto first_differ = [a, b](u32 begin, u32 end) -> u32 {
     if (begin >= end || std::memcmp(a + begin, b + begin, end - begin) == 0)
       return ~0u;
@@ -13654,13 +13657,16 @@ bool TileTwinPrepareLocked(const GuestDevice &device, const DrawCall &call, cons
     return ~0u;
   };
   // The header's end (0x38, SameButPredication's) to the float constants, the vertex shader's bools (16 bytes: the
-  // same), from the pixel shader's bools' end to the predication words, between them, and nothing after the last.
+  // same), from the pixel shader's bools' end to the predication words, between them, and what follows the last.
+  // vivapinata-nx (2026-11-24, the sync to port 279): XDK 2.0.3529's snapshot holds RunPredicationState (0x3094) after
+  // the predication word (Katamari's ends with it): those 4 bytes compared too, an empty run where nothing follows.
   constexpr u32 kHeaderEnd = 0x38;
-  const u32 runs[5][2] = {{kHeaderEnd, kFloatBegin},
+  const u32 runs[6][2] = {{kHeaderEnd, kFloatBegin},
                           {kVsBools, kPsBools},
                           {kPsBoolsEnd, native::off::TilePredication},
                           {native::off::TilePredication + 4, native::off::RunPredication},
-                          {native::off::RunPredication + 4, d3d::kDeviceOffsetPredication}};
+                          {native::off::RunPredication + 4, d3d::kDeviceOffsetPredication},
+                          {d3d::kDeviceOffsetPredication + 4, d3d::kDeviceSnapshotSize}};
   for (const auto &run : runs) {
     if (const u32 at = first_differ(run[0], run[1]); at != ~0u)
       return refuse(run[0] == kVsBools ? 3 : 2, at);

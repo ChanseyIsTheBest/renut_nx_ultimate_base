@@ -100,6 +100,10 @@ the other offsets in d3d.h / d3d_native.h one day):
   disagree), so both are per XDK like d3d.h's offsets. Viva Pinata's XDK 2.0.3529 (vivapinata-nx, 2026-11-24): at
   +0x2E90 (sub_8246B428, `stw r?,11920(r31)`), up to 0x2F78, before the index buffer at 0x2F84; Katamari's 0x2F98 falls
   in that XDK's render targets.
+- The device snapshot's end (`d3d::kDeviceSnapshotSize`) and `m_Constants` are per XDK too (port 280, vivapinata-nx):
+  Katamari's snapshot ends with the predication word, XDK 2.0.3529's holds RunPredicationState (0x3094) after it, and
+  its `m_Constants` is at 0x400, not Katamari's 0x480. Code that compares device snapshots (port 275's tile twins) takes
+  both from d3d.h, not from Katamari's numbers.
 - `d3d/hooks/device.cpp`, port 169's scaler copy: `device_va + 0x3584`; N&B 0x359C.
 - `guest/command_buffers.cpp` `kLastChunkBytes` (port 196's `TakeLastChunk`): 32 at 2.0.5632, 48 at N&B's update.
 - d3d.h `kDeviceOffsetViewport` (port 138): Katamari 0x3160, N&B 0x3170.

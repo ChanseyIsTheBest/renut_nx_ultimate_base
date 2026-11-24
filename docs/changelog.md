@@ -413,3 +413,4 @@ Ports 1-43 are the first round: the universal fixes of the other ports' renderer
 - Port 278 (vivapinata-nx's): an XMA sound at 22,050 Hz is taken from 24 kHz Opus.
 - Port 279 (sa2-nx's): the colour and depth hand-over draw a target's other destinations before the last one takes
   its image (a target resolved into two textures lost one: SA2's shadows).
+- Port 280 (vivapinata-nx's): port 275's tile-twin compare takes the device snapshot's end and m_Constants from d3d.h.
