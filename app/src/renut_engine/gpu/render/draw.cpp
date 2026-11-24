@@ -41,6 +41,7 @@ extern "C" char *fake_heap_end;  // libnx: the end of the malloc heap
 #include "renut_engine/gpu/backend/gpu_profile.h"
 #include "renut_engine/gpu/guest/command_buffers.h"
 #include "renut_engine/gpu/d3d/d3d.h"
+#include "renut_engine/gpu/d3d/d3d_native.h"  // banjo-nx (2026-11-23): the predication words (banjo_renut_diag_tile_twins)
 #include "renut_engine/gpu/render/format.h"
 #include "renut_engine/gpu/guest/guest_memory.h"
 #include "renut_engine/gpu/line_compare.h"
@@ -13323,8 +13324,519 @@ bool SasrtCarryResolveContentLocked(HostTexture *from, HostTexture *to) {
   g_bound.viewport_set = false;
   return true;
 }
+
+// banjo-nx (2026-11-23, the Nutty Acres GPU work): banjo_renut_diag_tile_twins. N&B's sea is drawn once per predicated
+// tile (sub_82386BF8: the same tessellated draw twice in a row, each cut to its tile's rect), so its vertex and
+// tessellation work runs twice. Whether one draw could do for both: for a tessellated draw that repeats the draw before
+// it (the same shaders, call and geometry) for another tile, which of what its shaders read differ: the vertex
+// shader's registers it reads, the pixel shader's, the texture and vertex fetch constants, the pipeline key. Counted,
+// and the first 16 twins logged with the first registers that differ.
+REXCVAR_DEFINE_BOOL(banjo_renut_diag_tile_twins, false, "Banjo/Diagnostics",
+                    "Diagnostic (2026-11-23): tessellated draws repeated for the next predicated tile (N&B's sea): "
+                    "what their shaders read that differs, counted in the 10 s report and the first 16 logged");
+bool TileTwinsDiagOn() {
+  static const bool on = REXCVAR_GET(banjo_renut_diag_tile_twins);
+  return on;
+}
+struct TileTwinRecord {
+  uint64_t vs = 0, ps = 0;
+  u32 primitive = 0, count = 0, index_count = 0, vertex_count = 0, instances = 0, tile = ~0u;
+  std::array<u8, 256 * 16> vs_regs{}, ps_regs{};
+  std::array<u8, 0x300> fetch{};
+  std::array<u8, sizeof(PipelineKey)> key{};
+  bool valid = false;
+};
+TileTwinRecord g_twin_prev, g_twin_cur;
+uint64_t g_twin_pairs = 0, g_twin_vs_same = 0, g_twin_ps_same = 0, g_twin_fetch_same = 0, g_twin_key_same = 0,
+         g_twin_all_same = 0;
+u32 g_twin_logged = 0;
+void NoteTileTwin(const GuestDevice &device, const DrawCall &call, const Geometry &geometry, const ShaderRecord &vs,
+                  const ShaderRecord *ps, const FloatConstants &vs_constants, const FloatConstants &ps_constants,
+                  const u32 *vs_used, const u32 *ps_used, const PipelineKey &key) {
+  ClearRect rect{};
+  u32 tile = ~0u;
+  if (PredicatedTile(device, rect))
+    tile = u32(rect.y1) << 16 | u32(rect.x1);
+  TileTwinRecord &c = g_twin_cur;
+  c.vs = vs.hash;
+  c.ps = ps ? ps->hash : 0;
+  c.primitive = call.primitive;
+  c.count = call.count;
+  c.index_count = geometry.index_count;
+  c.vertex_count = geometry.vertex_count;
+  c.instances = geometry.instance_count;
+  c.tile = tile;
+  c.vs_regs.fill(0);
+  c.ps_regs.fill(0);
+  for (u32 r = 0; r < 256; ++r) {
+    if ((vs_used[r / 32] >> (r % 32)) & 1u)
+      std::memcpy(c.vs_regs.data() + r * 16, vs_constants.Register(r), 16);
+    if ((ps_used[r / 32] >> (r % 32)) & 1u)
+      std::memcpy(c.ps_regs.data() + r * 16, ps_constants.Register(r), 16);
+  }
+  std::memcpy(c.fetch.data(), device.Bytes(u32(offsetof(d3d::Device, m_Constants))), c.fetch.size());
+  std::memcpy(c.key.data(), &key, c.key.size());
+  c.valid = true;
+  const TileTwinRecord &p = g_twin_prev;
+  if (p.valid && p.vs == c.vs && p.ps == c.ps && p.primitive == c.primitive && p.count == c.count &&
+      p.index_count == c.index_count && p.vertex_count == c.vertex_count && p.instances == c.instances &&
+      p.tile != c.tile && p.tile != ~0u && c.tile != ~0u) {
+    ++g_twin_pairs;
+    const bool vs_same = p.vs_regs == c.vs_regs, ps_same = p.ps_regs == c.ps_regs, fetch_same = p.fetch == c.fetch,
+               key_same = p.key == c.key;
+    g_twin_vs_same += vs_same;
+    g_twin_ps_same += ps_same;
+    g_twin_fetch_same += fetch_same;
+    g_twin_key_same += key_same;
+    g_twin_all_same += vs_same && ps_same && fetch_same && key_same;
+    if (g_twin_logged < 16) {
+      ++g_twin_logged;
+      std::string diff;
+      const auto regs = [&](const char *stage, const std::array<u8, 256 * 16> &a, const std::array<u8, 256 * 16> &b) {
+        u32 shown = 0;
+        for (u32 r = 0; r < 256 && shown < 6; ++r) {
+          if (std::memcmp(a.data() + r * 16, b.data() + r * 16, 16) == 0)
+            continue;
+          ++shown;
+          u32 wa[4], wb[4];
+          std::memcpy(wa, a.data() + r * 16, 16);
+          std::memcpy(wb, b.data() + r * 16, 16);
+          diff += fmt::format(" {}c{} {:08X} {:08X} {:08X} {:08X} -> {:08X} {:08X} {:08X} {:08X};", stage, r, wa[0], wa[1],
+                              wa[2], wa[3], wb[0], wb[1], wb[2], wb[3]);
+        }
+      };
+      regs("vs ", p.vs_regs, c.vs_regs);
+      regs("ps ", p.ps_regs, c.ps_regs);
+      for (u32 i = 0; i < c.fetch.size(); i += 4) {
+        if (std::memcmp(p.fetch.data() + i, c.fetch.data() + i, 4) != 0) {
+          diff += fmt::format(" fetch word at +0x{:X} differs;", i);
+          break;
+        }
+      }
+      for (u32 i = 0; i < c.key.size(); ++i) {
+        if (p.key[i] != c.key[i]) {
+          diff += fmt::format(" key byte {} differs;", i);
+          break;
+        }
+      }
+      RGPU_INFO("[renut] tile twins: vs {:016X} ps {:016X} {} instances, tiles {:08X} -> {:08X}: vs regs {}, ps regs {}, "
+                "fetch {}, key {}.{}",
+                c.vs, c.ps, c.instances, p.tile, c.tile, vs_same ? "same" : "differ", ps_same ? "same" : "differ",
+                fetch_same ? "same" : "differ", key_same ? "same" : "differ", diff);
+    }
+  }
+  std::swap(g_twin_prev, g_twin_cur);
+  static auto last = std::chrono::steady_clock::now();
+  const auto now = std::chrono::steady_clock::now();
+  if (now - last >= std::chrono::seconds(10)) {
+    last = now;
+    RGPU_INFO("[renut] tile twins (banjo_renut_diag_tile_twins), since the start: {} pairs; the same vs registers {}, "
+              "ps registers {}, fetch constants {}, pipeline key {}; all the same {}",
+              g_twin_pairs, g_twin_vs_same, g_twin_ps_same, g_twin_fetch_same, g_twin_key_same, g_twin_all_same);
+  }
+}
+
+// banjo-nx (2026-11-23, the Nutty Acres GPU work, banjo_renut_diag_tile_twins): every draw (before the fast path), with
+// the draw before it: the same call and shaders for another predicated tile, by source (the immediate captures, the
+// snapshot chain, recorded command buffers) and tessellated or not; the devices the same outside the float constants,
+// the header and the predication words, else the first offset that differs (the first 12 logged). Where a merged draw
+// for both tiles would have to be made.
+struct AnyTwinRecord {
+  DrawCall call{};
+  u32 vs = 0, ps = 0, tile = ~0u;
+  int source = 0;
+  std::array<u8, d3d::kDeviceSnapshotSize> bytes{};
+  bool valid = false;
+};
+AnyTwinRecord g_any_prev, g_any_cur;
+uint64_t g_any_pairs[3][2] = {}, g_any_same[3][2] = {}, g_any_draws[3][2] = {};
+u32 g_any_logged = 0;
+void NoteAnyTwin(const u8 *device_state, const DrawCall &call, const ReplayConstants *replay) {
+  const GuestDevice device(device_state);
+  if (!device.valid())
+    return;
+  ClearRect rect{};
+  AnyTwinRecord &c = g_any_cur;
+  c.call = call;
+  c.call.up_vertices = nullptr;
+  c.call.up_indices = nullptr;
+  c.vs = device.U32(d3d::kDeviceOffsetVertexShader);
+  c.ps = device.U32(d3d::kDeviceOffsetPixelShader);
+  c.tile = PredicatedTile(device, rect) ? (u32(rect.y1) << 16 | u32(rect.x1)) : ~0u;
+  c.source = !replay ? 0 : (!replay->running ? 1 : 2);
+  std::memcpy(c.bytes.data(), device_state, c.bytes.size());
+  c.valid = true;
+  const int tess = call.tessellation ? 1 : 0;
+  ++g_any_draws[c.source][tess];
+  const AnyTwinRecord &p = g_any_prev;
+  if (p.valid && c.tile != ~0u && p.tile != ~0u && p.tile != c.tile && p.vs == c.vs && p.ps == c.ps &&
+      p.call.primitive == c.call.primitive && p.call.indexed == c.call.indexed &&
+      p.call.start_vertex == c.call.start_vertex && p.call.count == c.call.count &&
+      p.call.base_vertex == c.call.base_vertex && p.call.start_index == c.call.start_index &&
+      p.call.tessellation == c.call.tessellation && !call.up_vertices && !call.up_indices) {
+    ++g_any_pairs[c.source][tess];
+    // Compared: 0x38 up to the float constants (+0x780), after them (+0x2780) up to the predication words.
+    constexpr u32 kFloatBegin = 0x480 + 0x300, kFloatEnd = 0x480 + 0x2300;
+    const auto first_differ = [&](u32 begin, u32 end) -> u32 {
+      for (u32 i = begin; i < end; ++i)
+        if (p.bytes[i] != c.bytes[i])
+          return i;
+      return ~0u;
+    };
+    u32 at = first_differ(0x38, kFloatBegin);
+    u32 skip[3] = {native::off::TilePredication, native::off::RunPredication, d3d::kDeviceOffsetPredication};
+    if (at == ~0u) {
+      u32 begin = kFloatEnd;
+      for (const u32 s : skip) {
+        if (s < begin)
+          continue;
+        at = first_differ(begin, s);
+        if (at != ~0u)
+          break;
+        begin = s + 4;
+      }
+      if (at == ~0u)
+        at = first_differ(begin, u32(c.bytes.size()));
+    }
+    if (at == ~0u)
+      ++g_any_same[c.source][tess];
+    if (g_any_logged < 12) {
+      ++g_any_logged;
+      RGPU_INFO("[renut] any twins: {} {} draw, vs {:08X} ps {:08X} prim {} count {}, tiles {:08X} -> {:08X}: device {}",
+                c.source == 0 ? "immediate" : (c.source == 1 ? "chain" : "replayed"), tess ? "tessellated" : "plain",
+                c.vs, c.ps, c.call.primitive, c.call.count, p.tile, c.tile,
+                at == ~0u ? std::string("the same outside the constants and predication")
+                          : fmt::format("differs at +0x{:X}", at));
+    }
+  }
+  std::swap(g_any_prev, g_any_cur);
+  static auto last = std::chrono::steady_clock::now();
+  const auto now = std::chrono::steady_clock::now();
+  if (now - last >= std::chrono::seconds(10)) {
+    last = now;
+    std::string line;
+    constexpr const char *kSource[3] = {"immediate", "chain", "replayed"};
+    for (int s = 0; s < 3; ++s)
+      for (int t = 0; t < 2; ++t)
+        line += fmt::format("{}{} {}: {} draws, {} twin pairs, {} the same device", line.empty() ? "" : "; ",
+                            kSource[s], t ? "tessellated" : "plain", g_any_draws[s][t], g_any_pairs[s][t],
+                            g_any_same[s][t]);
+    RGPU_INFO("[renut] any twins (banjo_renut_diag_tile_twins), since the start: {}", line);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// banjo-nx (2026-11-23, the Nutty Acres GPU work): banjo_renut_tile_twin_merge
+// ---------------------------------------------------------------------------
+// N&B draws Nutty Acres' sea (sub_82386BF8) once per predicated tile: each tessellated draw twice in a row, the second
+// for the lower tile, the same in everything (banjo_renut_diag_tile_twins: the vertex shader's registers, the fetch
+// constants, the pipeline key) but the predication, the pixel shader's c222 (which tile's screen remap) and its bools
+// (PixelShaderB[0]). Each draw is cut to its tile's rows, so the tessellation and the vertex work ran twice (the sea:
+// 2.7 ms of the 20.8 ms frame at the overclock, 2026-11-22). backend/queued.cpp holds such an upper-tile draw back until
+// the next draw comes and hands both to the render thread together; here the first is drawn once over both tiles' rows
+// when it can be: its pixel shader is one tools/deko3d_glsl_opt.py's twinsel pass made (the banjo-dk "twin=R"), which
+// takes that register and the pixel shader's bools from the shared block's tail (SharedConstants::pad_1512: [0] the
+// lower tile's first host row, [2-5] its register R, [6-9] its bools) for the pixels at or below that row; and the two
+// devices are the same but for the predication words (TilePredication, RunPredication, the device's predication), the
+// device header (the command writer's bookkeeping), the float constants and the pixel shader's bools, where the vertex
+// shader's registers it reads are the same, the pixel shader's the same but for R (the twin's value as its own draw
+// would have uploaded it: its bytes swapped, the NaN flush; not a literal of the shader), and each bool the pipeline
+// specialises the same (the others are what the shader takes by row); the two viewports are the same but for the
+// scissor and the pixel origin (which the pixel shader cannot read: twinsel leaves shaders with gl_FragCoord alone), the
+// scissors one above the other with the same columns. The pixels are then the same: the same vertices and primitives in
+// the same order, each pixel shaded with its own tile's constants, the tiles' pixels apart. Otherwise both are drawn
+// as before.
+REXCVAR_DEFINE_BOOL(banjo_renut_tile_twin_merge, true, "Banjo/Enhancements",
+                    "N&B's sea (2026-11-23, the Nutty Acres GPU work): a tessellated draw repeated for the next "
+                    "predicated tile, the same but for one pixel shader register and its bools, drawn once over both "
+                    "tiles (the pixel shader takes the lower tile's values below its first row: tools/deko3d_glsl_opt.py "
+                    "twinsel). The same pixels; the vertex and tessellation work once")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+TileTwin g_tile_twin;
+bool TileTwinMergeOn() {
+  static const bool on = REXCVAR_GET(banjo_renut_tile_twin_merge);
+  return on;
+}
+// banjo-nx (2026-11-23, the first console run's census): a pixel shader without twinsel's register is drawn once too
+// when everything of the two draws it reads is the same (N&B's shore twins, all the same in banjo_renut_diag_tile_twins)
+// and its text never names gl_FragCoord (the pixel position has the tile's corner taken off): no tail, the same pixels.
+constexpr u32 kTwinWhyCount = 12;
+constexpr const char *kTwinWhy[kTwinWhyCount] = {
+    "not a candidate (no twin device, no pixel shader, not tessellated, vertices of its own, exports)",
+    "another call",
+    "the devices differ",
+    "the vertex shader's bools differ",
+    "a specialised bool differs",
+    "the vertex shader's registers differ",
+    "a pixel shader register differs",
+    "the register is a literal",
+    "the viewports differ",
+    "the scissors do not join",
+    "a pixel shader without twinsel that reads the pixel position",
+    "the pixel shader's bools differ (without twinsel)"};
+uint64_t g_twin_merged = 0, g_twin_merged_plain = 0, g_twin_why[kTwinWhyCount] = {};
+u32 g_twin_merge_logged = 0;
+
+std::string TwinQueueCensus();  // backend/queued.cpp: the game thread's holds, pairs and flushes
+
+void TileTwinReport() {
+  static auto last = std::chrono::steady_clock::now();
+  const auto now = std::chrono::steady_clock::now();
+  if (now - last < std::chrono::seconds(10))
+    return;
+  last = now;
+  std::string why;
+  for (u32 i = 0; i < kTwinWhyCount; ++i)
+    if (g_twin_why[i])
+      why += fmt::format("{}{} {}", why.empty() ? "" : ", ", g_twin_why[i], kTwinWhy[i]);
+  RGPU_INFO("[renut] tile twins merged (banjo_renut_tile_twin_merge), since the start: {} drawn once for both tiles ({} "
+            "of them the same in every value, without twinsel){}{}{}",
+            g_twin_merged, g_twin_merged_plain, why.empty() ? "" : "; drawn apart: ", why, TwinQueueCensus());
+}
+
+// The twin checks (the comment above) and, when it can be one draw, its scissor over both tiles (g_tile_twin.merged) and
+// with twinsel the tail: true when a tail was set (cleared after the draw).
+bool TileTwinPrepareLocked(const GuestDevice &device, const DrawCall &call, const ShaderRecord *vs,
+                           const ShaderRecord *ps, plume::RenderShader *host_ps, const FloatConstants &vsc,
+                           const FloatConstants &psc, const u32 *vs_used, const u32 *ps_used, const Targets &targets,
+                           ViewportState &viewport, SharedConstants &sc) {
+  TileTwinReport();
+  u32 reg_plus_one = 0;
+  const auto refuse = [&](u32 why, u32 at) {
+    ++g_twin_why[why];
+    if (g_twin_merge_logged < 16) {
+      ++g_twin_merge_logged;
+      RGPU_INFO("[renut] tile twin drawn apart: {} (at 0x{:X}); vs {:016X} ps {:016X}, twinsel register + 1 = {}",
+                kTwinWhy[why], at, vs ? vs->hash : 0, ps ? ps->hash : 0, reg_plus_one);
+    }
+    return false;
+  };
+  const u8 *b = g_tile_twin.device_b;
+  if (!b || !ps || !ps->entry || !call.tessellation || call.up_vertices || call.up_indices)
+    return refuse(0, 0);
+  // A draw that exports to memory exports once per draw: two draws' exports, never one.
+  if (vs->export_only || !vs->entry) [[unlikely]]
+    return refuse(0, 0);
+  for (u32 w = 0; w < 8; ++w)
+    if (vs->entry->memExportConstants[w] || ps->entry->memExportConstants[w]) [[unlikely]]
+      return refuse(0, 0);
+#if defined(PLUME_DEKO3D)
+  reg_plus_one = plume::Deko3DShaderTwinRegPlusOne(host_ps);
+  const bool reads_position = plume::Deko3DShaderReadsFragCoord(host_ps);
+#else
+  const bool reads_position = true;
+#endif
+  const bool twinsel = reg_plus_one && reg_plus_one <= 256;
+  if (!twinsel && reads_position)
+    return refuse(10, 0);
+  const u32 reg = twinsel ? reg_plus_one - 1 : ~0u;
+  const DrawCall &cb = g_tile_twin.call_b;
+  if (cb.primitive != call.primitive || cb.indexed != call.indexed || cb.start_vertex != call.start_vertex ||
+      cb.count != call.count || cb.base_vertex != call.base_vertex || cb.start_index != call.start_index ||
+      !cb.tessellation || cb.up_vertices || cb.up_indices)
+    return refuse(1, 0);
+  const u8 *a = device.Bytes(0);
+  constexpr u32 kConstants = u32(offsetof(d3d::Device, m_Constants));
+  constexpr u32 kFloatBegin = kConstants + u32(offsetof(d3d::Constants, VertexShaderF));
+  constexpr u32 kVsBools = kConstants + u32(offsetof(d3d::Constants, VertexShaderB));
+  constexpr u32 kPsBools = kConstants + u32(offsetof(d3d::Constants, PixelShaderB));
+  constexpr u32 kPsBoolsEnd = kPsBools + 16;
+  static_assert(kVsBools + 16 == kPsBools && kFloatBegin < kVsBools);
+  static_assert(kPsBoolsEnd <= native::off::TilePredication && native::off::TilePredication < native::off::RunPredication &&
+                native::off::RunPredication < d3d::kDeviceOffsetPredication &&
+                d3d::kDeviceOffsetPredication + 4 == d3d::kDeviceSnapshotSize);
+  const auto first_differ = [a, b](u32 begin, u32 end) -> u32 {
+    if (begin >= end || std::memcmp(a + begin, b + begin, end - begin) == 0)
+      return ~0u;
+    for (u32 i = begin; i < end; ++i)
+      if (a[i] != b[i])
+        return i;
+    return ~0u;
+  };
+  // The header's end (0x38, SameButPredication's) to the float constants, the vertex shader's bools (16 bytes: the
+  // same), from the pixel shader's bools' end to the predication words, between them, and nothing after the last.
+  constexpr u32 kHeaderEnd = 0x38;
+  const u32 runs[5][2] = {{kHeaderEnd, kFloatBegin},
+                          {kVsBools, kPsBools},
+                          {kPsBoolsEnd, native::off::TilePredication},
+                          {native::off::TilePredication + 4, native::off::RunPredication},
+                          {native::off::RunPredication + 4, d3d::kDeviceOffsetPredication}};
+  for (const auto &run : runs) {
+    if (const u32 at = first_differ(run[0], run[1]); at != ~0u)
+      return refuse(run[0] == kVsBools ? 3 : 2, at);
+  }
+  // The bools as the shaders read them (SharedConstants::booleans): the pipeline's specialised ones the same.
+  u32 bools_a[8], bools_b[8];
+  for (u32 i = 0; i < 8; ++i) {
+    u32 wa, wb;
+    std::memcpy(&wa, a + kVsBools + 4 * i, 4);
+    std::memcpy(&wb, b + kVsBools + 4 * i, 4);
+    bools_a[i] = __builtin_bswap32(wa);
+    bools_b[i] = __builtin_bswap32(wb);
+  }
+  if (!twinsel) {  // the pixel shader reads its bools as they are (SharedConstants::booleans[4-7])
+    for (u32 w = 4; w < 8; ++w)
+      if (bools_a[w] != bools_b[w])
+        return refuse(11, kVsBools + 4 * w);
+  } else if (banjo::renut_gpu::BoolSpecOn()) {
+    const u32 *vm = BoolSpecMask(vs);
+    const u32 *pm = BoolSpecMask(ps);
+    for (u32 w = 0; w < 8; ++w)
+      if ((bools_a[w] ^ bools_b[w]) & (vm[w] | pm[w]))
+        return refuse(4, kVsBools + 4 * w);
+  }
+  // The float constants the shaders read (every one in the device: the queued draws' chain).
+  const FloatConstants vsb = DrawFloatConstants(b, nullptr, false), psb = DrawFloatConstants(b, nullptr, true);
+  for (u32 r = 0; r < 256; ++r) {
+    if (((vs_used[r / 32] >> (r % 32)) & 1u) && std::memcmp(vsc.Register(r), vsb.Register(r), 16) != 0)
+      return refuse(5, kFloatBegin + r * 16);
+    if (r != reg && ((ps_used[r / 32] >> (r % 32)) & 1u) && std::memcmp(psc.Register(r), psb.Register(r), 16) != 0)
+      return refuse(6, kFloatBegin + 0x1000 + r * 16);
+  }
+  for (u32 i = 0; twinsel && i < ps->entry->literalCount; ++i)
+    if (g_shaderLiterals[ps->entry->literalOffset + i].reg == reg)
+      return refuse(7, reg);
+  // The lower tile's viewport: the same but for the scissor (and the pixel origin), the scissors joined.
+  const ViewportState vb = ComputeViewport(GuestDevice(b), targets);
+  if (std::memcmp(&viewport.viewport, &vb.viewport, sizeof(vb.viewport)) != 0 ||
+      std::memcmp(viewport.guest_size, vb.guest_size, sizeof(vb.guest_size)) != 0 ||
+      viewport.screen_space != vb.screen_space ||
+      std::memcmp(viewport.screen_scale, vb.screen_scale, sizeof(vb.screen_scale)) != 0 ||
+      std::memcmp(viewport.screen_offset, vb.screen_offset, sizeof(vb.screen_offset)) != 0 ||
+      std::memcmp(viewport.depth_remap, vb.depth_remap, sizeof(vb.depth_remap)) != 0)
+    return refuse(8, 0);
+  const plume::RenderRect &sa = viewport.scissor, &sb = vb.scissor;
+  if (sa.left != sb.left || sa.right != sb.right || sa.bottom != sb.top || sa.top >= sa.bottom ||
+      sb.top >= sb.bottom || sb.top <= 0)
+    return refuse(9, u32(sb.top));
+  // One draw: both tiles' rows (without twinsel the two draws read the same values: no tail).
+  viewport.scissor.bottom = sb.bottom;
+  ++g_twin_merged;
+  g_tile_twin.merged = true;
+  if (!twinsel) {
+    ++g_twin_merged_plain;
+    return false;  // no tail to clear after the draw
+  }
+  // The lower tile's values in the tail.
+  float tail[10] = {};
+  tail[0] = float(sb.top);
+  const bool nan_flush = banjo::renut_gpu::ConstNanFlushOn();
+  const u8 *alt = psb.Register(reg);
+  for (u32 k = 0; k < 4; ++k) {
+    u32 w;
+    std::memcpy(&w, alt + 4 * k, 4);
+    w = __builtin_bswap32(w);
+    if (nan_flush && (w & 0x7F800000u) == 0x7F800000u)  // as CopyAndSwapGroup (banjo_renut_const_nan_flush)
+      w = 0;
+    std::memcpy(&tail[2 + k], &w, 4);
+    std::memcpy(&tail[6 + k], &bools_b[4 + k], 4);
+  }
+  SetShared(sc, sc.pad_1512, tail);
+  return true;
+}
+
+// banjo-nx (2026-11-23, the Nutty Acres GPU work, banjo_renut_diag_rtt_static): the draws into small targets (256x256
+// or less: N&B's 128x128 HUD render, PS 58BAC5FD, 44 draws and 0.64 ms a frame) the same as the frame before's? Each
+// such draw's inputs (its shaders, call and counts, pipeline key, fetch constants, bools, the float registers its shaders
+// read) hashed in order per frame; at the next frame the sequence compared with the previous one, part by part. Needs
+// every draw on the full path (banjo_renut_fast_draw = false). Diagnostic: nothing drawn changes.
+REXCVAR_DEFINE_BOOL(banjo_renut_diag_rtt_static, false, "Banjo/Diagnostics",
+                    "Diagnostic (2026-11-23): whether the draws into small targets (256x256 or less) read the same as the "
+                    "frame before's (the 10 s line and the first frames logged); with banjo_renut_fast_draw = false");
+bool RttStaticDiagOn() {
+  static const bool on = REXCVAR_GET(banjo_renut_diag_rtt_static);
+  return on;
+}
+struct RttDrawHash {
+  const void *target = nullptr;
+  uint64_t shaders = 0, key = 0, fetch = 0, vs_regs = 0, ps_regs = 0, call = 0;
+  bool operator==(const RttDrawHash &) const = default;
+};
+std::vector<RttDrawHash> g_rtt_now, g_rtt_prev;
+uint64_t g_rtt_frame = 0, g_rtt_same = 0, g_rtt_differ = 0;
+uint64_t g_rtt_differ_part[6] = {};
+u32 g_rtt_logged = 0;
+uint64_t Fnv64(const void *data, size_t n, uint64_t h = 0xcbf29ce484222325ull) {
+  const u8 *p = static_cast<const u8 *>(data);
+  for (size_t i = 0; i < n; ++i)
+    h = (h ^ p[i]) * 0x100000001b3ull;
+  return h;
+}
+void RttFrameEndLocked() {
+  if (!g_rtt_now.empty() || !g_rtt_prev.empty()) {
+    if (g_rtt_now.size() == g_rtt_prev.size() && g_rtt_now == g_rtt_prev) {
+      ++g_rtt_same;
+    } else {
+      ++g_rtt_differ;
+      size_t i = 0;
+      while (i < g_rtt_now.size() && i < g_rtt_prev.size() && g_rtt_now[i] == g_rtt_prev[i])
+        ++i;
+      int part = 5;  // another count of draws
+      if (i < g_rtt_now.size() && i < g_rtt_prev.size()) {
+        const RttDrawHash &a = g_rtt_prev[i], &b = g_rtt_now[i];
+        part = a.shaders != b.shaders ? 0 : a.key != b.key ? 1 : a.fetch != b.fetch ? 2 : a.vs_regs != b.vs_regs ? 3
+                                                                                           : a.ps_regs != b.ps_regs ? 4
+                                                                                                                    : 5;
+      }
+      ++g_rtt_differ_part[part];
+      if (g_rtt_logged < 8) {
+        ++g_rtt_logged;
+        constexpr const char *kPart[6] = {"shaders", "pipeline key", "fetch constants", "vertex shader registers",
+                                          "pixel shader registers", "the call, its counts or the draws' number"};
+        RGPU_INFO("[renut] small-target draws: frame {}: {} draws (before {}), the first that differs is {}: {}",
+                  g_rtt_frame, g_rtt_now.size(), g_rtt_prev.size(), i, kPart[part]);
+      }
+    }
+  }
+  std::swap(g_rtt_now, g_rtt_prev);
+  g_rtt_now.clear();
+  static auto last = std::chrono::steady_clock::now();
+  const auto now = std::chrono::steady_clock::now();
+  if (now - last >= std::chrono::seconds(10)) {
+    last = now;
+    RGPU_INFO("[renut] small-target draws (banjo_renut_diag_rtt_static), since the start: {} frames the same as the "
+              "frame before, {} not (first difference: shaders {}, key {}, fetch {}, vs registers {}, ps registers {}, "
+              "call or count {})",
+              g_rtt_same, g_rtt_differ, g_rtt_differ_part[0], g_rtt_differ_part[1], g_rtt_differ_part[2],
+              g_rtt_differ_part[3], g_rtt_differ_part[4], g_rtt_differ_part[5]);
+  }
+}
+void NoteRttDrawLocked(const GuestDevice &device, const DrawCall &call, const Geometry &geometry,
+                       const ShaderRecord *vs, const ShaderRecord *ps, const FloatConstants &vsc,
+                       const FloatConstants &psc, const u32 *vs_used, const u32 *ps_used, const PipelineKey &key,
+                       const void *target) {
+  const uint64_t frame = TextureFrameLocked();
+  if (frame != g_rtt_frame) {
+    RttFrameEndLocked();
+    g_rtt_frame = frame;
+  }
+  RttDrawHash h;
+  h.target = target;
+  const uint64_t sh[2] = {vs ? vs->hash : 0, ps ? ps->hash : 0};
+  h.shaders = Fnv64(sh, sizeof(sh));
+  h.key = Fnv64(&key, sizeof(key));
+  h.fetch = Fnv64(device.Bytes(u32(offsetof(d3d::Device, m_Constants))), 0x300);
+  h.fetch = Fnv64(device.Bytes(u32(offsetof(d3d::Device, m_Constants) + offsetof(d3d::Constants, VertexShaderB))), 32,
+                  h.fetch);
+  uint64_t vr = 0xcbf29ce484222325ull, pr = 0xcbf29ce484222325ull;
+  for (u32 r = 0; r < 256; ++r) {
+    if ((vs_used[r / 32] >> (r % 32)) & 1u)
+      vr = Fnv64(vsc.Register(r), 16, vr);
+    if ((ps_used[r / 32] >> (r % 32)) & 1u)
+      pr = Fnv64(psc.Register(r), 16, pr);
+  }
+  h.vs_regs = vr;
+  h.ps_regs = pr;
+  const u32 c[8] = {call.primitive, u32(call.indexed), call.start_vertex, call.count, u32(call.base_vertex),
+                    call.start_index, geometry.index_count, geometry.vertex_count};
+  h.call = Fnv64(c, sizeof(c));
+  g_rtt_now.push_back(h);
+}
+
 bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayConstants *replay) {
   ::renut::gpu::census::Scope census_scope(::renut::gpu::census::kDrawState);  // blur-nx (2026-11-17)
+  if (TileTwinsDiagOn()) [[unlikely]]  // banjo-nx (2026-11-23): before the fast path, every draw
+    NoteAnyTwin(device_state, call, replay);
   if (!g_ds_keys_ready) [[unlikely]]  // blur-nx (2026-11-17, audit #24)
     ReadDrawStateKeys();
   {  // sasrt-nx (2026-11-11, port 82; its GPU list's row 4; UNTESTED), sasrt_gpu_skip_cull_both: before everything else
@@ -14131,6 +14643,22 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
   static constexpr u32 kNoRegisters[8] = {};
   const u32 *vs_used = vs->entry ? vs->entry->floatConstants : kAllRegisters;
   const u32 *ps_used = !ps ? kNoRegisters : ps->entry ? ps->entry->floatConstants : kAllRegisters;
+  // banjo-nx (2026-11-23, banjo_renut_tile_twin_merge): this draw for its lower tile's twin too, when it can be (the
+  // scissor over both tiles and the tail set before the shared block is pushed below); the tail back to zeros after the
+  // draw (every other draw's: the twinsel shaders' pixels then take their own registers and bools).
+  struct TwinTailReset {
+    SharedConstants *sc = nullptr;
+    ~TwinTailReset() {
+      static constexpr float kZero10[10] = {};
+      if (sc)
+        SetShared(*sc, sc->pad_1512, kZero10);
+    }
+  } twin_tail_reset;
+  if (g_tile_twin.active) [[unlikely]] {
+    if (TileTwinPrepareLocked(device, call, vs, ps, host_ps, vs_constants, ps_constants, vs_used, ps_used, targets,
+                              viewport, sc))
+      twin_tail_reset.sc = &sc;
+  }
   // banjo-nx (2026-10-19, banjo_deko3d_push_constants): pushed, except for draws point_sprite_gs expands (it reads
   // SharedConstants through its address).
   // bangaio-nx (2026-10-29, banjo_renut_point_fast_draw / A/B 69): those too: on deko3d point_sprite_gs reads
@@ -14635,6 +15163,14 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
                                REXCVAR_GET(banjo_renut_diag_draw_log_s) > 0;
   if (draw_log)
     DrawLog(call, geometry, vs, ps, targets, key, sc, export_count);
+  // banjo-nx (2026-11-23, the Nutty Acres GPU work, banjo_renut_diag_tile_twins): N&B draws its sea once per predicated
+  // tile (sub_82386BF8), the same tessellated draw twice in a row; what the twins' shaders read that differs.
+  if (RttStaticDiagOn() && targets.color_count && targets.colors[0] && targets.colors[0]->width <= 256 &&
+      targets.colors[0]->height <= 256) [[unlikely]]  // banjo-nx (2026-11-23): banjo_renut_diag_rtt_static
+    NoteRttDrawLocked(GuestDevice(device_state), call, geometry, vs, ps, vs_constants, ps_constants, vs_used, ps_used,
+                      key, targets.colors[0]);
+  if (TileTwinsDiagOn() && call.tessellation) [[unlikely]]
+    NoteTileTwin(GuestDevice(device_state), call, geometry, *vs, ps, vs_constants, ps_constants, vs_used, ps_used, key);
   // banjo-nx (2026-10-19, banjo_renut_resolve_skip): the targets this draw can write.
   for (u32 i = 0; i < targets.color_count && i < key.color_count; ++i)
     if ((key.color_mask >> (4 * i)) & 0xF) {

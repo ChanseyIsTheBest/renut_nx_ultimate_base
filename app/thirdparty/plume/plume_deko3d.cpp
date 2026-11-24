@@ -1959,6 +1959,8 @@ namespace plume {
         usage.ssboMask = uint32_t(strtoul(field("ssbo=").c_str(), nullptr, 16));
         usage.textures = field("tex=") == "1";
         usage.txqMask = uint32_t(strtoul(field("txq=").c_str(), nullptr, 16));  // banjo-nx (2026-10-19)
+        if (const std::string twin = field("twin="); !twin.empty())  // banjo-nx (2026-11-23): one register (twinsel)
+            usage.twinRegPlusOne = uint32_t(strtoul(twin.c_str(), nullptr, 10)) + 1;
         // texb=k:textureWord:samplerWord,... in binding order
         const std::string texb = field("texb=");
         size_t q = 0;
@@ -2096,6 +2098,8 @@ namespace plume {
         // variant's defines only remove code): its draws may give their base vertex to the draw (Renut's whole-buffer
         // draws), the vertex index it does not read being the only thing that differs.
         shader->usage.readsVertexId = shader->stage != DkStage_Vertex || text.find("gl_VertexID") != std::string::npos;
+        // banjo-nx (2026-11-23, banjo_renut_tile_twin_merge): twinsel's own read of it counts (dk_twin_lower).
+        shader->usage.readsFragCoord = shader->stage != DkStage_Fragment || text.find("gl_FragCoord") != std::string::npos;
         // vivapinata-nx (2026-11-03, tools/deko3d_glsl_opt.py vskill): a vertex shader with the kill's constant 914.
         shader->usage.writesVertexKill = shader->stage == DkStage_Vertex && text.find("SPIRV_CROSS_CONSTANT_ID_914") != std::string::npos;
         // blur-nx (2026-11-12): see Deko3DShaderUsage::writesClipDistance.
@@ -2562,6 +2566,14 @@ namespace plume {
 
     bool Deko3DShaderWritesVertexKill(const RenderShader *shader) {
         return shader != nullptr && static_cast<const Deko3DShader *>(shader)->usage.writesVertexKill;
+    }
+
+    bool Deko3DShaderReadsFragCoord(const RenderShader *shader) {
+        return shader == nullptr || static_cast<const Deko3DShader *>(shader)->usage.readsFragCoord;
+    }
+
+    uint32_t Deko3DShaderTwinRegPlusOne(const RenderShader *shader) {
+        return shader != nullptr ? static_cast<const Deko3DShader *>(shader)->usage.twinRegPlusOne : 0;
     }
 
     bool Deko3DShaderReadsVertexId(const RenderShader *shader) {

@@ -1183,6 +1183,9 @@ const char *AbName(int target) {
   // banjo-nx (2026-11-21, ports 246-247): its 300 and 301, numbered below 256 here (port 188).
   case 170: return "FillTextures' skips: an unasked call's slot compare and copy, a slot answer's epoch buckets while the bind generation holds (port 246; off half: both as before)";
   case 171: return "Replay's PrefetchShaderBehind skipped for a stage whose shader is the last op's (port 247; off half: both stages prefetched)";
+  // banjo-nx (2026-11-24, ports 275-276): its 320 and 322, numbered below 256 here (port 188).
+  case 204: return "a draw repeated for the next predicated tile drawn once over both tiles' rows (banjo_renut_tile_twin_merge, port 275; off half: each tile's own draw)";
+  case 205: return "a 60 cap never holds a frame past its time to rejoin the refresh grid (banjo_display_sync_no_late_snap, port 276; off half: held to the grid)";
   // blur-nx (2026-11-10/11, port 76; its keys, the same numbers; 210 and 214 not ported).
   case 211: return "an EXPAND resolve sampled as its FLOAT twin through the resolve's texture (blur_renut_expand_alias)";
   case 212: return "a partial resolve keeps a destination of another format and converts (blur_renut_resolve_keep_dest)";

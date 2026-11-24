@@ -404,3 +404,9 @@ Ports 1-43 are the first round: the universal fixes of the other ports' renderer
   bottom), and the GPU region leaves the CPU side a reserve (sasrt_region_cpu_reserve_mb, 160).
 - Port 272 (sasrt-nx 1.0.1): sasrt_dynamic_docked_start_top, off: docked dynamic resolution may start at its top.
 - Port 273 (sasrt-nx 1.0.1): a bad_alloc crash reason gets the heap's figures.
+- Port 274 (banjo-nx's): the DKSH cache's index file: the start reads the records from it instead of walking the cache.
+- Port 275 (banjo-nx's): a draw repeated for the next predicated tile is drawn once over both tiles (tiles one above
+  the other; pass twinsel for a listed shader whose twins differ in one register).
+- Port 276 (banjo-nx's): a 60 cap never holds a frame past its time to rejoin the refresh grid.
+- Port 277 (banjo-nx's): deko3d_variant_cache --runtime-log alone, switch_remote.py append. Its EndTiling
+  resolve-once is not taken (the base's EndTiling is Katamari's form).
