@@ -24,6 +24,9 @@
 
 // blur-nx (2026-11-13): libnx's nvservices transfer memory size (weak, 8 MB by default), logged at device creation.
 extern "C" u32 __nx_nv_transfermem_size;
+// blur-nx (2026-11-23, the boot crash): switch_perf.cpp's nvMapCreate / GPU-mapping retries report through it (set at
+// device creation to this log).
+extern "C" void (*RexSwitchNvRetryLogHook)(const char *line);
 
 namespace plume {
     // ---- helpers
@@ -1226,6 +1229,7 @@ namespace plume {
                      __nx_nv_transfermem_size >> 10, used >> 10, total >> 10);
             }
         }
+        RexSwitchNvRetryLogHook = [](const char *line) { logf("%s", line); };  // blur-nx (2026-11-23)
         DkDeviceMaker dm;
         dkDeviceMakerDefaults(&dm);
         dm.cbDebug = debugCallback;

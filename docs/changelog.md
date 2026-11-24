@@ -416,3 +416,6 @@ Ports 1-43 are the first round: the universal fixes of the other ports' renderer
 - Port 280 (vivapinata-nx's): port 275's tile-twin compare takes the device snapshot's end and m_Constants from d3d.h.
 - Port 281 (banjo-nx's): a resolve left in the UI target's image is settled before the UI scale pass writes the
   target (N&B's front buffer lost one a frame).
+- Port 282 (blur-nx's): a refused GPU pin or mapping is tried again for up to 10 s, and deko3d's aborts write
+  rex_crash.log; the nv failure-injection and stress tests (off).
+- Port 283 (blur-nx's): audout's refused buffers are appended again instead of lost.

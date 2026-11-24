@@ -101,7 +101,10 @@ if(NOT TARGET rexglue_switch_startup)
         "LINKER:--wrap=armDCacheClean,--wrap=nwindowQueueBuffer,--wrap=bqDequeueBuffer"
         # renut-ultimate (2026-11-16, port 145): async present (switch_perf.cpp, banjo_async_present).
         "LINKER:--wrap=nwindowDequeueBuffer"
-        "LINKER:--wrap=svcSleepThread,--wrap=svcSetThreadCoreMask")
+        "LINKER:--wrap=svcSleepThread,--wrap=svcSetThreadCoreMask"
+        # blur-nx (2026-11-23, the boot crash): deko3d's aborts write rex_crash.log and leave a record on the stack
+        # (switch_perf.cpp, __wrap_diagAbortWithResult).
+        "LINKER:--wrap=diagAbortWithResult")
 endif()
 
 function(rexglue_switch_configure_target target_name)

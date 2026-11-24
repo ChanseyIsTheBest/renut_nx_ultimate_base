@@ -56,6 +56,12 @@ REXCVAR_DEFINE_INT32(audio_switch_frames_in_queue, 10, "Audio",
                      "(cushion; 10 = 53 ms, 6 up to build 105). A longer queue lets the game wait without cutting the "
                      "output, at the cost of latency: masseffect_audio_wait_server_ms waits up to 30 ms; read "
                      "when the audio is opened");
+// blur-nx (2026-11-23): a test of the refused appends' second tries (the boot crash of 17:32:19 had three in a row).
+REXCVAR_DEFINE_INT32(blur_audout_fail_inject, 0, "Blur/Debug",
+                     "Switch: every this many audout appends, one is refused here as audout did (0x1099) before it is "
+                     "sent, so the buffer goes the way of a refused one (0: off; a test boot only)")
+    .range(0, 100000)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 namespace rex::audio::nx {
 
@@ -197,6 +203,15 @@ struct SwitchAudioSystem::Output {
   std::array<AudioOutBuffer, kBufferCount> buffers{};
   std::array<s16*, kBufferCount> samples{};
   std::array<float, kBufferSamples * 2> mix{};
+  // blur-nx (2026-11-23, the boot crash of 17:32:19): audout refused three appends (0x1099) in a row, as nvservices
+  // refused a GPU block. A buffer that failed to append was out of the rotation for good (only released buffers are
+  // appended), so after three the output went silent for the rest of the session. The refused ones (bits by index) are
+  // appended again, as filled, every few ms until audout takes them.
+  uint32_t unappended = 0;
+  uint64_t append_failures = 0, append_retried = 0;
+  uint32_t fail_inject = 0;  // blur_audout_fail_inject, read when audio is opened
+  uint64_t appends = 0;
+  uint64_t unappended_since = 0;  // the tick of the first refusal still outstanding
 };
 
 std::unique_ptr<AudioSystem> SwitchAudioSystem::Create(
@@ -242,6 +257,7 @@ void SwitchAudioSystem::DestroyDriver(AudioDriver* driver) {
 bool SwitchAudioSystem::StartOutput() {
   auto output = std::make_unique<Output>();
   output->pump = REXCVAR_GET(audio_switch_pump);
+  output->fail_inject = static_cast<uint32_t>(std::max(REXCVAR_GET(blur_audout_fail_inject), 0));
   output->frames_per_tick = REXCVAR_GET(audio_switch_pump_pairs) ? 2 : 1;  // blur-nx (2026-11-13, M-43)
   if (const int32_t n = REXCVAR_GET(audio_switch_pump_frames); n >= 1) {  // blur-nx (2026-11-16, #196)
     output->frames_per_tick = uint32_t(n > 4 ? 4 : n);
@@ -383,7 +399,10 @@ void SwitchAudioSystem::FillAndAppend(size_t buffer_index) {
   RexSwitchPerfMax(23, static_cast<u64>(std::min(pico, 100.0f) * 10000.0f));
   output.buffers[buffer_index].data_size = kBufferBytes;
   output.buffers[buffer_index].data_offset = 0;
-  Result rc = audoutAppendAudioOutBuffer(&output.buffers[buffer_index]);
+  ++output.appends;
+  Result rc = (output.fail_inject && output.appends % output.fail_inject == 0)
+                  ? MAKERESULT(153, 8)  // blur_audout_fail_inject: as audout's refusal (0x1099)
+                  : audoutAppendAudioOutBuffer(&output.buffers[buffer_index]);
   RexSwitchPerfAdd(24, frames_mixed);
   RexSwitchPerfAdd(25, frames_missing);
   if (R_SUCCEEDED(rc)) {
@@ -406,7 +425,35 @@ void SwitchAudioSystem::FillAndAppend(size_t buffer_index) {
     }
   }
   if (R_FAILED(rc)) {
-    REXLOG_ERROR("SwitchAudioSystem: audoutAppendAudioOutBuffer failed: 0x{:08X}", rc);
+    // blur-nx (2026-11-23): kept for another try (OutputThreadMain); the first 8 and every 256th logged.
+    if (!output.unappended) output.unappended_since = armGetSystemTick();
+    output.unappended |= 1u << buffer_index;
+    const uint64_t n = ++output.append_failures;
+    if (n <= 8 || (n & 255) == 0) {
+      REXLOG_ERROR("SwitchAudioSystem: audoutAppendAudioOutBuffer failed: 0x{:08X} (failure {}; buffers waiting to be "
+                   "appended again: 0x{:X})",
+                   rc, n, output.unappended);
+    }
+  }
+}
+
+// blur-nx (2026-11-23): the buffers audout refused, appended again as they were filled.
+void SwitchAudioSystem::RetryUnappended() {
+  Output& output = *output_;
+  for (size_t i = 0; i < kBufferCount && output.unappended; ++i) {
+    if (!(output.unappended & (1u << i))) continue;
+    if (R_FAILED(audoutAppendAudioOutBuffer(&output.buffers[i]))) {
+      ++output.append_failures;
+      return;  // still refused: the next wake tries again
+    }
+    output.unappended &= ~(1u << i);
+    ++output.append_retried;
+    if (!output.unappended) {
+      REXLOG_WARN("SwitchAudioSystem: audout takes buffers again, {:.0f} ms after the first refusal ({} refusals, {} "
+                  "buffers appended on a later try so far)",
+                  double(armTicksToNs(armGetSystemTick() - output.unappended_since)) / 1e6, output.append_failures,
+                  output.append_retried);
+    }
   }
 }
 
@@ -449,7 +496,8 @@ void SwitchAudioSystem::OutputThreadMain() {
   u64 deadline = armGetSystemTick() + interval;
   while (output.running.load(std::memory_order_relaxed)) {
     if (on_system_core) RexSwitchSampleCoreIdle();  // banjo-nx (2026-10-27): at most every 100 ms
-    u64 timeout_ns = kWaitTimeoutNs;
+    if (output.unappended) RetryUnappended();      // blur-nx (2026-11-23)
+    u64 timeout_ns = output.unappended ? 5'000'000ull : kWaitTimeoutNs;
     if (output.pump) {
       const u64 now = armGetSystemTick();
       if (now >= deadline) {
@@ -460,7 +508,8 @@ void SwitchAudioSystem::OutputThreadMain() {
         }
         continue;
       }
-      timeout_ns = armTicksToNs(deadline - now);  // at most until the next deadline
+      const u64 to_deadline = armTicksToNs(deadline - now);  // at most until the next deadline
+      if (to_deadline < timeout_ns) timeout_ns = to_deadline;
     }
     AudioOutBuffer* released = nullptr;
     u32 released_count = 0;

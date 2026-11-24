@@ -78,6 +78,7 @@ class SwitchAudioSystem final : public AudioSystem {
   void StopOutput();
   void OutputThreadMain();
   void FillAndAppend(size_t buffer_index);
+  void RetryUnappended();  // blur-nx (2026-11-23): buffers audout refused, appended again
   void PumpTick();
 
   std::unique_ptr<Output> output_;

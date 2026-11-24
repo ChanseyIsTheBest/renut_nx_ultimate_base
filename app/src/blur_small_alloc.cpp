@@ -36,6 +36,46 @@ REXCVAR_DEFINE_INT32(blur_small_alloc_mb, 32, "Blur/Enhancements",
                      "free lists per thread instead of the system allocator's lock (0: off, the system allocator for all)")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
+// blur-nx (2026-11-23, the boot crash of 17:32:19: deko3d's dkMemBlockCreate aborted the process when nvservices refused
+// a block, as the title screen loaded; the 11-13 21:16 crash the same, in a race load): the SDK's wrappers of nvMapCreate
+// and the GPU mapping (sdk/src/ui/switch_perf.cpp, RexNvRetry) make a failed call again for up to this long, with waits
+// of 1 to 250 ms, and log each failure ("nv failure" in the deko3d lines). 0: no second call (the abort, as before).
+// 10 s: a game held still for seconds is better than one closed (the refusal's length is not known yet: in 19 boots of
+// 2026-11-23 it came once, and neither 13,463 pins under load nor 94 screenshots in a boot brought it on).
+REXCVAR_DEFINE_INT32(switch_nv_map_retry_ms, 10000, "Blur/Enhancements",
+                     "Switch: how long a refused nvMapCreate or GPU mapping is tried again before deko3d's abort (ms)")
+    .range(0, 60000)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_INT32(blur_nv_fail_inject, 0, "Blur/Debug",
+                     "Switch: every this many pins and GPU mappings, the first call is failed before it reaches "
+                     "nvservices, so switch_nv_map_retry_ms's second tries are seen to work (0: off; a test boot only)")
+    .range(0, 100000)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
+// blur-nx (2026-11-23, the boot crash): a load on the calls that failed, to see how often nvservices refuses them and
+// whether the tries again save it. At the start (over the boot movies and the title screen's loading), a thread of its
+// own pins a 4-8 MB piece of the heap for the GPU (nvMapCreate, as deko3d's blocks; two in three uncached) and maps it
+// in an address space of its own, then unmaps and drops it, in a loop for this many seconds; the failures left after
+// the wrappers' tries, the counts and times are logged ("[nv] stress"). 0: off. A test boot only.
+REXCVAR_DEFINE_INT32(blur_nv_stress_s, 0, "Blur/Debug",
+                     "Switch: at the start, this many seconds of GPU pins and mappings made and dropped on a thread of "
+                     "its own, the refusals counted (a test boot only)")
+    .range(0, 600)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_INT32(blur_nv_stress_live, 1, "Blur/Debug",
+                     "Switch: blur_nv_stress_s's pieces kept pinned and mapped at once (the oldest dropped for each new "
+                     "one, as deko3d's blocks live on)")
+    .range(1, 256)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// blur-nx (2026-11-23): deko3d maps every image block three times: pitch (kind 0), generic (0xFE) and compressible
+// (0xDB, C32_2CRA: nvservices gives it compression tags from one pool for the whole system). A failure of any is the
+// abort. 1: blur_nv_stress_s's pieces are mapped the same three ways (8-16 MB each); 0: pitch only.
+REXCVAR_DEFINE_INT32(blur_nv_stress_image, 0, "Blur/Debug",
+                     "Switch: blur_nv_stress_s maps its pieces as deko3d maps image blocks (pitch, generic and the "
+                     "compressible kind, which takes compression tags), 8-16 MB each (1), or pitch only (0)")
+    .range(0, 1)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
 #if defined(__SWITCH__)
 
 // sasrt-nx 1.0.1 (2026-11-24, the user: "start 1.0.1 with blur's fix"; blur-nx ae5e607a of 2026-11-23, credit
@@ -57,9 +97,12 @@ REXCVAR_DEFINE_INT32(blur_small_alloc_mb, 32, "Blur/Enhancements",
 // malloc's recursive lock, so every caller of sbrk is serialized with malloc. plume's regionMoveHeapEnd already lowers
 // fake_heap_end and reads sbrk(0) under the same lock (recursive: fine).
 #include <malloc.h>
+#include <switch.h>
 #include <sys/reent.h>
 
 #include <cerrno>
+#include <thread>  // blur-nx (2026-11-23): blur_nv_stress_s
+#include <vector>
 
 extern "C" {
 extern char *fake_heap_start, *fake_heap_end;
@@ -240,11 +283,114 @@ void* SystemNew(size_t n) {
   }
 }
 
+// --- blur_nv_stress_s (see above) ---
+struct StressPiece {
+  void* mem = nullptr;
+  NvMap map{};
+  iova_t iova[3] = {0, 0, 0};
+  bool mapped[3] = {false, false, false};
+};
+
+void DropPiece(NvAddressSpace& as, StressPiece& s) {
+  if (!s.mem) return;
+  for (int k = 0; k < 3; ++k)
+    if (s.mapped[k]) nvAddressSpaceUnmap(&as, s.iova[k]);
+  nvMapClose(&s.map);
+  free(s.mem);
+  s = StressPiece{};
+}
+
+void NvStressMain(int seconds, int live, bool image) {
+  uint64_t rounds = 0, map_fail = 0, gpu_fail = 0, no_mem = 0, live_bytes = 0, peak_bytes = 0;
+  uint64_t kind_fail[3] = {0, 0, 0};
+  Result kind_first[3] = {0, 0, 0};
+  uint64_t map_ticks = 0, gpu_ticks = 0, max_map = 0, max_gpu = 0;
+  Result first_map = 0, first_gpu = 0;
+  // deko3d's image blocks: pitch, generic, compressible (MemBlock::initialize); a buffer: pitch only.
+  const NvKind kinds[3] = {NvKind_Pitch, NvKind_Generic_16BX2, NvKind_C32_2CRA};
+  const int maps = image ? 3 : 1;
+  const Result rc_nv = nvInitialize();
+  const Result rc_map = R_SUCCEEDED(rc_nv) ? nvMapInit() : rc_nv;
+  NvAddressSpace as{};
+  const Result rc_as = R_SUCCEEDED(rc_map) ? nvAddressSpaceCreate(&as, 0x10000) : rc_map;
+  const uint64_t t0 = armGetSystemTick();
+  if (R_SUCCEEDED(rc_as)) {
+    std::vector<StressPiece> ring(size_t(std::max(live, 1)));
+    const uint64_t until = t0 + armNsToTicks(uint64_t(seconds) * 1000000000ull);
+    while (armGetSystemTick() < until) {
+      StressPiece& s = ring[rounds % ring.size()];
+      if (s.mem) live_bytes -= s.map.size;
+      DropPiece(as, s);  // the oldest goes for the new one
+      const uint32_t size = (((rounds & 1) ? (8u << 20) : (4u << 20)) << (image ? 1 : 0)) + uint32_t(rounds % 7) * 0x10000u;
+      s.mem = memalign(0x10000, size);
+      if (!s.mem) {
+        ++no_mem;
+        svcSleepThread(5000000);
+        continue;
+      }
+      uint64_t t = armGetSystemTick();
+      const Result r1 = nvMapCreate(&s.map, s.mem, size, 0x10000, NvKind_Pitch, (rounds % 3) == 0);
+      t = armGetSystemTick() - t;
+      map_ticks += t;
+      max_map = std::max(max_map, t);
+      ++rounds;
+      if (R_FAILED(r1)) {
+        if (!map_fail++) first_map = r1;
+        free(s.mem);
+        s = StressPiece{};
+        continue;
+      }
+      live_bytes += size;
+      peak_bytes = std::max(peak_bytes, live_bytes);
+      for (int k = 0; k < maps; ++k) {
+        t = armGetSystemTick();
+        const Result r2 = nvAddressSpaceMap(&as, nvMapGetHandle(&s.map), true, kinds[k], &s.iova[k]);
+        t = armGetSystemTick() - t;
+        gpu_ticks += t;
+        max_gpu = std::max(max_gpu, t);
+        s.mapped[k] = R_SUCCEEDED(r2);
+        if (!s.mapped[k]) {
+          if (!gpu_fail++) first_gpu = r2;
+          if (!kind_fail[k]++) kind_first[k] = r2;
+          break;  // as deko3d: the block is not made
+        }
+      }
+    }
+    for (StressPiece& s : ring) DropPiece(as, s);
+    nvAddressSpaceClose(&as);
+  }
+  if (R_SUCCEEDED(rc_map)) nvMapExit();
+  if (R_SUCCEEDED(rc_nv)) nvExit();
+  const auto ms = [](uint64_t ticks) { return double(armTicksToNs(ticks)) / 1e6; };
+  const uint64_t made = rounds - map_fail;
+  REXLOG_WARN("[nv] stress (blur_nv_stress_s, {} s, {:.0f} s run, {} live, {}): {} rounds of a piece pinned "
+              "(nvMapCreate) and mapped for the GPU, the oldest dropped; {} MB live at most. Refused after "
+              "switch_nv_map_retry_ms's tries: the pin {} (the first 0x{:X}), the mappings {} (the first 0x{:X}; "
+              "pitch {} 0x{:X}, generic {} 0x{:X}, compressible {} 0x{:X}); no memory {}. The pin {:.2f} ms on average "
+              "(the longest {:.1f}), a mapping {:.2f} (the longest {:.1f}). Set up: 0x{:X} 0x{:X} 0x{:X}",
+              seconds, ms(armGetSystemTick() - t0) / 1000.0, live,
+              image ? "8-16 MB mapped as deko3d's image blocks" : "4-8 MB mapped pitch", rounds, peak_bytes >> 20,
+              map_fail, first_map, gpu_fail, first_gpu, kind_fail[0], kind_first[0], kind_fail[1], kind_first[1],
+              kind_fail[2], kind_first[2], no_mem, rounds ? ms(map_ticks) / double(rounds) : 0.0, ms(max_map),
+              made ? ms(gpu_ticks) / double(made * maps) : 0.0, ms(max_gpu), rc_nv, rc_map, rc_as);
+}
+
 }  // namespace
 
 namespace blur::small_alloc {
 
 void Enable() {
+  // blur-nx (2026-11-23, port 284): blur_nv_stress_s, first (the arena below returns early when off).
+  static bool nv_stressed = false;
+  if (REXCVAR_GET(blur_nv_stress_s) > 0 && !nv_stressed) {
+    nv_stressed = true;
+    const int seconds = REXCVAR_GET(blur_nv_stress_s);
+    const int live = REXCVAR_GET(blur_nv_stress_live);
+    const bool image = REXCVAR_GET(blur_nv_stress_image) != 0;
+    // Kept, never detached or joined: devkitA64's std::thread::detach throws "Function not implemented" (pthread_detach
+    // is missing; the nvstress1 boot of 2026-11-23 ended in std::terminate there).
+    new std::thread([seconds, live, image] { NvStressMain(seconds, live, image); });
+  }
   const int mb = REXCVAR_GET(blur_small_alloc_mb);
   if (mb <= 0 || g_begin.load(std::memory_order_acquire)) return;
   const size_t bytes = std::min(size_t(mb) << 20, kMaxArena);

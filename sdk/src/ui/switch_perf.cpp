@@ -1362,11 +1362,184 @@ Result __wrap_nvGpuChannelKickoff(NvGpuChannel* c) {
   return rc;
 }
 
+/*
+ * blur-nx (2026-11-23, the boot crash of 17:32:19; the user: "fix the crash"): deko3d's dkMemBlockCreate aborts the
+ * process when nvMapCreate or the GPU mapping (nvAddressSpaceMap -> nvioctlNvhostAsGpu_MapBufferEx) fails: its
+ * MemBlock::initialize returns DkResult_Fail and dkMemBlockCreate calls RaiseError -> diagAbortWithResult (2359-0001),
+ * with no failure path for the caller. It failed as the title screen loaded, three audout appends refused as ring-full
+ * (0x1099: the audio service had stopped taking buffers) just before, as in the 11-13 21:16 crash during a race load.
+ * So a failed call is made again, after waits of 1, 2, 4 ... 250 ms, for up to switch_nv_map_retry_ms (libnx's
+ * nvMapCreate closes its handle when it fails; a GPU mapping that failed leaves nothing behind), and each failure, saved
+ * or not, is reported through RexSwitchNvRetryLogHook (plume's deko3d log) with the result codes, the time, the
+ * process's unused memory and its count of memory regions. The last one is kept for __wrap_diagAbortWithResult below.
+ */
+void (*RexSwitchNvRetryLogHook)(const char* line) = nullptr;
+
+struct RexNvFailure {
+  u32 seq, which;           // which: 1 nvMapCreate, 2 the GPU mapping (MapBufferEx)
+  u32 rc_first, rc_last;    // the first failure, the last call's result
+  u32 calls, ok, ms;        // calls made, whether the last succeeded, the time from the first failure
+  u32 flags_kind;           // nvMapCreate: kind | cacheable << 31; MapBufferEx: flags | kind << 16
+  u64 size, addr;           // nvMapCreate: the CPU address; MapBufferEx: the nvmap handle
+};
+static std::atomic<u32> g_rex_nv_fail_seq{0};
+static RexNvFailure g_rex_nv_last_fail{};
+static std::atomic<s64> g_rex_nv_retry_ms{-1};
+
+static u32 RexNvRetryBudgetMs(void) {
+  s64 v = g_rex_nv_retry_ms.load(std::memory_order_relaxed);
+  if (v < 0) {
+    const std::string s = rex::cvar::GetFlagByName("switch_nv_map_retry_ms");
+    v = s.empty() ? 10000 : std::strtol(s.c_str(), nullptr, 10);
+    if (v < 0) v = 0;
+    g_rex_nv_retry_ms.store(v, std::memory_order_relaxed);
+  }
+  return static_cast<u32>(v);
+}
+
+// blur_nv_fail_inject (Blur's cvar, a test): every this many pins and GPU mappings, the first call is failed here
+// (LibnxNvidiaError_Timeout, without reaching nvservices) so the second tries above are seen to work. Read at the first
+// call (the config is loaded before deko3d's device is made).
+static std::atomic<s64> g_rex_nv_inject{-1};
+static std::atomic<u32> g_rex_nv_inject_calls{0};
+static bool RexNvInjectFailure(void) {
+  s64 k = g_rex_nv_inject.load(std::memory_order_relaxed);
+  if (k < 0) {
+    const std::string s = rex::cvar::GetFlagByName("blur_nv_fail_inject");
+    k = s.empty() ? 0 : std::strtol(s.c_str(), nullptr, 10);
+    if (k < 0) k = 0;
+    g_rex_nv_inject.store(k, std::memory_order_relaxed);
+  }
+  return k > 0 && (g_rex_nv_inject_calls.fetch_add(1, std::memory_order_relaxed) + 1) % static_cast<u32>(k) == 0;
+}
+
+// The process's memory regions as svcQueryMemory lists them (the kernel's blocks after merging), and those with an
+// attribute set (device-shared, uncached, locked).
+static void RexCountMemoryRegions(u32& regions, u32& with_attr) {
+  regions = with_attr = 0;
+  MemoryInfo mi;
+  u32 page_info = 0;
+  u64 addr = 0;
+  while (regions < 200000) {
+    if (R_FAILED(svcQueryMemory(&mi, &page_info, addr)) || mi.size == 0) break;
+    ++regions;
+    if (mi.type != MemType_Unmapped && mi.attr != 0) ++with_attr;
+    const u64 next = mi.addr + mi.size;
+    if (next <= addr) break;
+    addr = next;
+  }
+}
+
+}  // extern "C" (a template cannot have C linkage)
+template <typename Call>
+static Result RexNvRetry(u32 which, Result rc, u64 size, u64 addr, u32 flags_kind, Call&& call) {
+  const u64 t0 = armGetSystemTick();
+  const u32 budget = RexNvRetryBudgetMs();
+  const Result first = rc;
+  u32 calls = 1;
+  u64 wait_ms = 1;
+  while (R_FAILED(rc)) {
+    const u64 spent = armTicksToNs(armGetSystemTick() - t0) / 1000000ULL;
+    if (spent >= budget) break;
+    __real_svcSleepThread(static_cast<s64>(std::min<u64>(wait_ms, budget - spent)) * 1000000LL);
+    wait_ms = std::min<u64>(wait_ms * 2, 250);
+    rc = call();
+    ++calls;
+  }
+  RexNvFailure f{};
+  f.seq = g_rex_nv_fail_seq.fetch_add(1, std::memory_order_relaxed) + 1;
+  f.which = which;
+  f.rc_first = first;
+  f.rc_last = rc;
+  f.calls = calls;
+  f.ok = R_SUCCEEDED(rc) ? 1 : 0;
+  f.ms = static_cast<u32>(armTicksToNs(armGetSystemTick() - t0) / 1000000ULL);
+  f.flags_kind = flags_kind;
+  f.size = size;
+  f.addr = addr;
+  g_rex_nv_last_fail = f;
+  if (RexSwitchNvRetryLogHook) {
+    u64 total = 0, used = 0;
+    svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0);
+    svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0);
+    u32 regions = 0, with_attr = 0;
+    RexCountMemoryRegions(regions, with_attr);
+    char line[384];
+    snprintf(line, sizeof(line),
+             "nv failure %u: %s of %" PRIu64 " KiB (%s 0x%" PRIx64 ", 0x%X) failed with 0x%X (%04u-%04u): %s after "
+             "%u calls in %u ms (the last 0x%X); process %" PRIu64 " MB unused, %u memory regions (%u with an attribute)",
+             f.seq, which == 1 ? "nvMapCreate" : "the GPU mapping", size >> 10, which == 1 ? "at" : "nvmap handle",
+             addr, flags_kind, first, 2000 + R_MODULE(first), R_DESCRIPTION(first),
+             f.ok ? "made" : "STILL FAILING", calls, f.ms, rc, total > used ? (total - used) >> 20 : 0, regions,
+             with_attr);
+    RexSwitchNvRetryLogHook(line);
+  }
+  return rc;
+}
+extern "C" {
+
 Result __wrap_nvMapCreate(NvMap* m, void* cpu_addr, u32 size, u32 align, NvKind kind, bool is_cpu_cacheable) {
   const u64 from = armGetSystemTick();
-  const Result rc = __real_nvMapCreate(m, cpu_addr, size, align, kind, is_cpu_cacheable);
+  Result rc = RexNvInjectFailure() ? MAKERESULT(Module_LibnxNvidia, LibnxNvidiaError_Timeout)
+                                   : __real_nvMapCreate(m, cpu_addr, size, align, kind, is_cpu_cacheable);
+  if (R_FAILED(rc)) {
+    rc = RexNvRetry(1, rc, size, reinterpret_cast<u64>(cpu_addr),
+                    static_cast<u32>(kind) | (is_cpu_cacheable ? 0x80000000u : 0u),
+                    [&] { return __real_nvMapCreate(m, cpu_addr, size, align, kind, is_cpu_cacheable); });
+  }
   Note(is_cpu_cacheable ? kNvMapCached : kNvMapNoCache, from, size);
   return rc;
+}
+
+/*
+ * blur-nx (2026-11-23): deko3d's errors end in diagAbortWithResult, which writes nothing: the 17:32:19 crash left an
+ * empty rex_crash.log, and Atmosphère's report dumps only the first 0x100 bytes of the thread's TLS (plume's DKBLOCK1
+ * crumb is at 0x138). Here rex_crash.log is written first (the reason with the last nv failure, the stack, the recent
+ * stderr), and a record ("RXABORT1": the result, the last nv failure, the crumb) is left in this frame, which the
+ * report's stack dump (0x100 bytes from the break's stack pointer, 32 below this frame) shows. abort() and the exit hook
+ * (Module_Libnx 101 and 103) have written rex_crash.log already.
+ */
+void __real_diagAbortWithResult(Result res) NX_NORETURN;
+void RexSwitchCrashLog(const char* reason, const ThreadExceptionDump* ctx, u64 stack, u64 pc);
+
+static __attribute__((noinline)) void RexAbortReport(Result res, u64 frame, u64 pc) {
+  if (R_MODULE(res) == Module_Libnx && (R_DESCRIPTION(res) == 101 || R_DESCRIPTION(res) == 103)) return;
+  const RexNvFailure f = g_rex_nv_last_fail;
+  char reason[320];
+  if (f.seq) {
+    snprintf(reason, sizeof(reason),
+             "diagAbortWithResult(0x%X = %04u-%04u); the last nv failure (%u): %s of %" PRIu64 " KiB, 0x%" PRIx64
+             ", 0x%X: 0x%X first, 0x%X last, %u calls, %u ms, %s",
+             res, 2000 + R_MODULE(res), R_DESCRIPTION(res), f.seq, f.which == 1 ? "nvMapCreate" : "the GPU mapping",
+             f.size >> 10, f.addr, f.flags_kind, f.rc_first, f.rc_last, f.calls, f.ms, f.ok ? "made" : "not made");
+  } else {
+    snprintf(reason, sizeof(reason), "diagAbortWithResult(0x%X = %04u-%04u); no nv failure before it", res,
+             2000 + R_MODULE(res), R_DESCRIPTION(res));
+  }
+  RexSwitchCrashLog(reason, NULL, frame, pc);
+}
+
+NX_NORETURN void __wrap_diagAbortWithResult(Result res) {
+  struct Record {
+    char magic[8];
+    u32 res;
+    RexNvFailure nv;
+    u8 crumb[0x44];
+  };
+  volatile Record r;
+  const char magic[8] = {'R', 'X', 'A', 'B', 'O', 'R', 'T', '1'};
+  for (int i = 0; i < 8; ++i) r.magic[i] = magic[i];
+  r.res = res;
+  const RexNvFailure f = g_rex_nv_last_fail;
+  const u8* fb = reinterpret_cast<const u8*>(&f);
+  volatile u8* rb = reinterpret_cast<volatile u8*>(&r.nv);
+  for (size_t i = 0; i < sizeof(f); ++i) rb[i] = fb[i];
+  const volatile u8* tls = static_cast<const volatile u8*>(armGetTls()) + 0x138;
+  for (size_t i = 0; i < sizeof(r.crumb); ++i) r.crumb[i] = tls[i];
+  RexAbortReport(res, reinterpret_cast<u64>(__builtin_frame_address(0)),
+                 reinterpret_cast<u64>(__builtin_return_address(0)));
+  __asm__ volatile("" : : "r"(&r) : "memory");
+  __real_diagAbortWithResult(res);
 }
 
 Result __wrap_nvAddressSpaceAllocFixed(NvAddressSpace* a, bool sparse, u64 size, iova_t iova) {
@@ -1379,8 +1552,16 @@ Result __wrap_nvAddressSpaceAllocFixed(NvAddressSpace* a, bool sparse, u64 size,
 Result __wrap_nvioctlNvhostAsGpu_MapBufferEx(u32 fd, u32 flags, u32 kind, u32 nvmap_handle, u32 page_size,
                                              u64 buffer_offset, u64 mapping_size, u64 input_offset, u64* offset) {
   const u64 from = armGetSystemTick();
-  const Result rc = __real_nvioctlNvhostAsGpu_MapBufferEx(fd, flags, kind, nvmap_handle, page_size, buffer_offset,
-                                                          mapping_size, input_offset, offset);
+  Result rc = RexNvInjectFailure() ? MAKERESULT(Module_LibnxNvidia, LibnxNvidiaError_Timeout)
+                                   : __real_nvioctlNvhostAsGpu_MapBufferEx(fd, flags, kind, nvmap_handle, page_size,
+                                                                           buffer_offset, mapping_size, input_offset,
+                                                                           offset);
+  if (R_FAILED(rc)) {  // blur-nx (2026-11-23): see RexNvRetry
+    rc = RexNvRetry(2, rc, mapping_size, nvmap_handle, (flags & 0xFFFF) | (kind << 16), [&] {
+      return __real_nvioctlNvhostAsGpu_MapBufferEx(fd, flags, kind, nvmap_handle, page_size, buffer_offset,
+                                                   mapping_size, input_offset, offset);
+    });
+  }
   Note(kMappingGpu, from, mapping_size);
   return rc;
 }
