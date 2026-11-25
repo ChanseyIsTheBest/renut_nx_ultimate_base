@@ -34,8 +34,9 @@ this repository (`app/`, `tools/`, `docs/`) is GPL-3.0 (`LICENSE`).
 - **Dear ImGui** (`app/thirdparty/imgui`, the PC build's overlay): MIT.
 - **The game menu's fonts** (Dear ImGui's `misc/fonts`, embedded in the build by `app/CMakeLists.txt`): ProggyTiny by
   Tristan Grimmer (free, its licence: MIT-style); Roboto by Christian Robertson (Apache License 2.0); Karla by Jonathan
-  Pinhorn (SIL Open Font License 1.1); Cousine by Steve Matteson (Apache License 2.0). The default ("System") is the
-  console's own shared font, read at run time, not shipped.
+  Pinhorn (SIL Open Font License 1.1); Cousine by Steve Matteson (SIL Open Font License 1.1, as the font file's own
+  name table and Dear ImGui's docs/FONTS.md say). The default ("System") is the console's own shared font, read at run
+  time, not shipped.
 - **deko3d** (devkitPro): zlib, linked from devkitPro's portlibs.
 
 ## Libraries
