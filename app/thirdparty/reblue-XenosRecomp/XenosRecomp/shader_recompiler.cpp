@@ -812,6 +812,22 @@ static bool AsuraLogRsqAbs() {
     return on;
 }
 
+// dmc_devil-nx (517b4928, DMC-11: "XenosRecomp omitted AluVectorOpcode::KillEq, KillGt, KillGe, KillNe, and Dst from the
+// 4-lane mask = 0b1111; path ... breaking decal/blood pixel kills during combat"). The Xenos' vector kills compare all
+// four components (kill if any src0.c op src1.c), whatever the write mask; the translator took the operands' lanes from
+// the write mask, so a kill that writes nothing (mask 0) compared only x. DST (1, src0.y * src1.y, src0.z, src1.w) needs
+// whole operands too; its result is then swizzled to the written lanes (the port assigned the whole vector, which takes
+// the wrong lanes for a mask like .yw). Off unless DMC_RECOMP_KILL_LANES=1 in the translator's environment: every
+// shader's text as before. On, only shaders with such a kill or DST change (their GLSL, hence their DKSH keys: the
+// variants are compiled again or come from a cache built from the new package).
+static bool DmcKillAllLanes() {
+    static const bool on = [] {
+        const char* v = std::getenv("DMC_RECOMP_KILL_LANES");
+        return v != nullptr && v[0] == '1';
+    }();
+    return on;
+}
+
 void ShaderRecompiler::recompile(const AluInstruction& instr)
 {
 #ifdef RENUT_RECOMP
@@ -1082,31 +1098,39 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
             return result;
         };
 
+    // dmc_devil-nx (DMC_RECOMP_KILL_LANES, DmcKillAllLanes above): a vector kill's operands with all four lanes. Off:
+    // killLanes 0, op()'s own default, so the operands follow the write mask as before.
+#ifdef RENUT_RECOMP
+    const uint32_t killLanes = DmcKillAllLanes() ? 0b1111u : 0u;
+#define DMC_KILL_OP(operand) op(operand, killLanes)
+#else
+#define DMC_KILL_OP(operand) op(operand)
+#endif
     switch (instr.vectorOpcode)
     {
     case AluVectorOpcode::KillEq:
         shaderFlags |= SHADER_FLAG_PIXEL_KILL;  // banjo-nx (banjo_gpu_depth_only): the four vector kills
         indent();
         // banjo-nx: select(), not ?: (HLSL 2021 short-circuits ?:, DXC writes a branch NAK keeps); same values.
-        println("clip(select(any({} == {}), -1.0, 1.0));", op(VECTOR_0), op(VECTOR_1));
+        println("clip(select(any({} == {}), -1.0, 1.0));", DMC_KILL_OP(VECTOR_0), DMC_KILL_OP(VECTOR_1));
         break;
     
     case AluVectorOpcode::KillGt:
         shaderFlags |= SHADER_FLAG_PIXEL_KILL;
         indent();
-        println("clip(select(any({} > {}), -1.0, 1.0));", op(VECTOR_0), op(VECTOR_1));
+        println("clip(select(any({} > {}), -1.0, 1.0));", DMC_KILL_OP(VECTOR_0), DMC_KILL_OP(VECTOR_1));
         break;
     
     case AluVectorOpcode::KillGe:
         shaderFlags |= SHADER_FLAG_PIXEL_KILL;
         indent();
-        println("clip(select(any({} >= {}), -1.0, 1.0));", op(VECTOR_0), op(VECTOR_1));
+        println("clip(select(any({} >= {}), -1.0, 1.0));", DMC_KILL_OP(VECTOR_0), DMC_KILL_OP(VECTOR_1));
         break;
     
     case AluVectorOpcode::KillNe:
         shaderFlags |= SHADER_FLAG_PIXEL_KILL;
         indent();
-        println("clip(select(any({} != {}), -1.0, 1.0));", op(VECTOR_0), op(VECTOR_1));
+        println("clip(select(any({} != {}), -1.0, 1.0));", DMC_KILL_OP(VECTOR_0), DMC_KILL_OP(VECTOR_1));
         break;
     }
 
@@ -1436,22 +1460,37 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
             break;
 
         case AluVectorOpcode::KillEq:
-            print("any({} == {})", op(VECTOR_0), op(VECTOR_1));
+            print("any({} == {})", DMC_KILL_OP(VECTOR_0), DMC_KILL_OP(VECTOR_1));
             break;
 
         case AluVectorOpcode::KillGt:
-            print("any({} > {})", op(VECTOR_0), op(VECTOR_1));
+            print("any({} > {})", DMC_KILL_OP(VECTOR_0), DMC_KILL_OP(VECTOR_1));
             break;
 
         case AluVectorOpcode::KillGe:
-            print("any({} >= {})", op(VECTOR_0), op(VECTOR_1));
+            print("any({} >= {})", DMC_KILL_OP(VECTOR_0), DMC_KILL_OP(VECTOR_1));
             break;
 
         case AluVectorOpcode::KillNe:
-            print("any({} != {})", op(VECTOR_0), op(VECTOR_1));
+            print("any({} != {})", DMC_KILL_OP(VECTOR_0), DMC_KILL_OP(VECTOR_1));
             break;
 
         case AluVectorOpcode::Dst:
+#ifdef RENUT_RECOMP
+            // dmc_devil-nx (DMC_RECOMP_KILL_LANES): whole operands, the result's written lanes taken by name (a write
+            // mask of all four is the base's text as it is).
+            if (DmcKillAllLanes() && vectorWriteMask != 0b1111)
+            {
+                std::string lanes;
+                for (size_t i = 0; i < 4; i++)
+                {
+                    if ((vectorWriteMask >> i) & 0x1)
+                        lanes += SWIZZLES[i];
+                }
+                print("dst({}, {}).{}", op(VECTOR_0, 0b1111), op(VECTOR_1, 0b1111), lanes);
+                break;
+            }
+#endif
             print("dst({}, {})", op(VECTOR_0), op(VECTOR_1));
             break;
         }
@@ -1851,6 +1890,7 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
         out += "}\n";
     }
 }
+#undef DMC_KILL_OP  // dmc_devil-nx: recompile(const AluInstruction&)'s alone
 
 #ifdef RENUT_RECOMP
 // N&B constants. Most of its shaders carry no constant table, so float constants are read by
@@ -1966,6 +2006,17 @@ void ShaderRecompiler::recompileConstants(const uint8_t* shaderData)
 }
 #endif
 
+// dmc_devil-nx (DMC-11, dmc_renut_target_wide_alpha): DMC_TARGET_WIDE_ALPHA=1 in the translator's environment defines
+// it ahead of shader_common.h in every shader, whose banjoTrim then leaves the alpha of constant 927's bits 4-7 targets
+// unclamped. Unset: every shader's text as before.
+static bool DmcTargetWideAlpha() {
+    static const bool on = [] {
+        const char* v = std::getenv("DMC_TARGET_WIDE_ALPHA");
+        return v != nullptr && v[0] == '1';
+    }();
+    return on;
+}
+
 void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_view& include)
 {
 #ifdef RENUT_RECOMP
@@ -1980,6 +2031,8 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     assert(shaderContainer->constantTableOffset != NULL);
 #endif
 
+    if (DmcTargetWideAlpha())
+        out += "#define DMC_TARGET_WIDE_ALPHA 1\n";  // dmc_devil-nx: shader_common.h's banjoTrim
     out += include;
     out += '\n';
 

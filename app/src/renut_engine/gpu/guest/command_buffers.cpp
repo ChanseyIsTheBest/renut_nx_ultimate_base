@@ -94,6 +94,15 @@ REXCVAR_DEFINE_BOOL(blur_renut_record_memo_local, true, "Banjo/Enhancements",
                     "recording thread through the record mutex (the job workers waited on it 7 % of their time). Off: "
                     "the global generation and pending count, as before")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// dmc_devil-nx (527367bb, its RecordDeferredDraw): see RecordDeferredDraw below.
+REXCVAR_DEFINE_BOOL(dmc_record_index_pending_count, true, "Banjo/Enhancements",
+                    "dmc_devil-nx (a fix of port 315): a BeginIndexedVertices draw recorded into a command buffer "
+                    "counts its index data as a pending entry of its own in the device's counts, as the flush and "
+                    "ReleaseCommandBuffer count each entry down. With one count for its two entries the counts wrapped "
+                    "at the flush, read 0 while the next Begin*Vertices draw's data waited (so the hooks' fast path did "
+                    "not copy it before the game wrote the draw after it there), and kept the record memo and the flush "
+                    "fast path off for the device. false: one count, as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(banjo_renut_set_words_changed, true, "Banjo/Enhancements",
                     "Renut's command buffer recording: an op notes the words set since Begin (halo3-nx's inherit) from "
                     "the chunks that changed since its device's previous op only (exact). false: every op scans the "
@@ -3964,6 +3973,7 @@ void RecordDraw(u32 device_va, const DrawCall &call, u32 up_vertex_bytes, u32 up
 
 void RecordDeferredDraw(u32 device_va, const DrawCall &call, const u8 *scratch, u32 bytes,
                         const u8 *index_scratch, u32 index_bytes) {
+  static const bool count_each = REXCVAR_GET(dmc_record_index_pending_count);
   HostCommandBuffer *buffer = nullptr;
   Op *op = NewOp(device_va, OpKind::Draw, &buffer);
   if (!op)
@@ -3981,6 +3991,14 @@ void RecordDeferredDraw(u32 device_va, const DrawCall &call, const u8 *scratch, 
         {device_va, RecordingBuffer(device_va), op->call.up_indices, index_scratch, index_bytes});
   g_recording_devices[device_va].pending.fetch_add(1, std::memory_order_acq_rel);  // blur-nx (2026-11-17)
   PendingOf(device_va).fetch_add(1, std::memory_order_acq_rel);
+  // dmc_devil-nx (527367bb; dmc_record_index_pending_count): the index entry pushed above is counted too. FlushPending
+  // and ReleaseCommandBuffer take one count off per entry; one count for two entries left the device's counts at ~0
+  // after the flush, then 0 with the next draw's entry still in g_pending_vertices (FlushRecordedVertices' fast path
+  // and NewOp's memo then skipped its copy until the game had written the next draw's data over the scratch).
+  if (count_each && index_scratch && index_bytes) {
+    g_recording_devices[device_va].pending.fetch_add(1, std::memory_order_acq_rel);
+    PendingOf(device_va).fetch_add(1, std::memory_order_acq_rel);
+  }
   SyncPendingCount();
 }
 

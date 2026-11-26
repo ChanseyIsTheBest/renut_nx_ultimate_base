@@ -42,20 +42,22 @@ constexpr u32 kPointSizeMin = 0x2E70;  // katamari-nx: 0x2E80->0x2E70
 constexpr u32 kPointSizeMax = 0x2E74;  // katamari-nx: 0x2E84->0x2E74
 constexpr u32 kHighPrecisionBlend = 0x2EF4;  // [4] (katamari-nx: 0x2F04->0x2EF4)
 constexpr u32 kPresentInterval = 0x3504;  // katamari-nx: 0x351C->0x3504
-constexpr u32 kBehaviorFlags2 = 0x56F8;  // katamari-nx: 0x5DAC->0x56F8
+// dmc_devil-nx (527367bb): the fields d3d.h names are taken from it (its d3d_native_state.cpp does the same), so a
+// port's remap of d3d.h moves them here too. The values are the same: 0x56F8, 0x3160, 0x2E24, 0x3190, 0x318C.
+constexpr u32 kBehaviorFlags2 = d3d::kDeviceOffsetBehaviorFlags;  // katamari-nx: 0x5DAC->0x56F8
 // Sampler state storage, a byte per sampler.
 constexpr u32 kMaxAnisotropy = 0x2E8C;  // katamari-nx: 0x2E9C->0x2E8C
 constexpr u32 kMaxMipLevel = 0x2EA6;  // katamari-nx: 0x2EB6->0x2EA6
 constexpr u32 kMinMipLevel = 0x2EC0;  // katamari-nx: 0x2ED0->0x2EC0
 constexpr u32 kZFilter = 0x2EDA;  // bit 0 mag, 1 min, 2 separate Z filtering (katamari-nx: 0x2EEA->0x2EDA)
 // Viewport (SetViewport's arguments, clamped) and the register image values.
-constexpr u32 kViewport = 0x3160;  // x, y, width, height, min z, max z, 0 (katamari-nx: 0x3170->0x3160)
+constexpr u32 kViewport = d3d::kDeviceOffsetViewport;  // x, y, width, height, min z, max z, 0 (katamari-nx: 0x3170->0x3160)
 constexpr u32 kVportXScale = 0x2908;
 constexpr u32 kVportZScale = 0x2918;
 constexpr u32 kStreamDeclStrides = 0x2E30;  // u8[16] (katamari-nx: 0x2E40->0x2E30)
-constexpr u32 kVertexDeclaration = 0x2E24;  // katamari-nx: 0x2E30->0x2E24
-constexpr u32 kVertexShader = 0x3190;  // katamari-nx: 0x31A0->0x3190
-constexpr u32 kPixelShader = 0x318C;  // katamari-nx: 0x319C->0x318C
+constexpr u32 kVertexDeclaration = d3d::kDeviceOffsetVertexDeclaration;  // katamari-nx: 0x2E30->0x2E24
+constexpr u32 kVertexShader = d3d::kDeviceOffsetVertexShader;  // katamari-nx: 0x31A0->0x3190
+constexpr u32 kPixelShader = d3d::kDeviceOffsetPixelShader;  // katamari-nx: 0x319C->0x318C
 constexpr u32 kGprAllocation = 0x2AA8;
 constexpr u32 kScreenExtentQueryMode = 0x2AA4;
 

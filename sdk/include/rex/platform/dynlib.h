@@ -59,6 +59,8 @@ inline constexpr const char* kSpirvToolsSdkPath = "Bin/SPIRV-Tools-shared.dll";
 inline constexpr const char* kVulkanLoader = "";
 inline constexpr const char* kRenderDoc = "";
 inline constexpr const char* kSpirvToolsSdkPath = "";
+// dmc_devil-nx: a game's second XEX linked into the NRO is found by its library name once the app has registered it
+// (RexSwitchRegisterStaticModule, below; sdk/src/core/dynlib_switch.cpp).
 
 #elif REX_PLATFORM_ANDROID
 
@@ -85,3 +87,11 @@ inline constexpr const char* kSpirvToolsSdkPath = "lib/libSPIRV-Tools-shared.dyl
 }  // namespace lib_names
 
 }  // namespace rex::platform
+
+#if REX_PLATFORM_SWITCH
+// dmc_devil-nx (4858b474): registers a game module linked into the NRO under its library name (KernelState's
+// shared_lib_name, "<project>_<target>", e.g. "renut_NTJobCode") with its ReXModule_Register and ReXModule_GetImageInfo.
+// Call it before the runtime loads modules (the app's OnPreSetup). A null or empty name, a name of 64 bytes or more, a
+// null function or a full table (16) is refused with a warning; dmc_static_modules = false ignores the table.
+extern "C" void RexSwitchRegisterStaticModule(const char* name, void* register_fn, void* image_info_fn);
+#endif

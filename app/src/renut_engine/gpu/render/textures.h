@@ -129,6 +129,8 @@ struct HostTexture {
   // 'resolves' counts the resolves into it.
   std::unique_ptr<HostTexture> words;  // a bare target: texture and layout
   std::unique_ptr<plume::RenderFramebuffer> depth_framebuffer;
+  // dmc_devil-nx (dmc_gpu_depth_resolve_float_only_fb): the float target alone, made at its first resolve without words.
+  std::unique_ptr<plume::RenderFramebuffer> dmc_depth_float_framebuffer;
   // banjo-nx (2026-10-18): a resolve destination as the target of DrawResolveCopy (draw.cpp), made at its first one.
   std::unique_ptr<plume::RenderFramebuffer> copy_framebuffer;
   uint64_t resolves = 0;

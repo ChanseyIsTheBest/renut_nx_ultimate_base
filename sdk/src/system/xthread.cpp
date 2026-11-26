@@ -267,6 +267,10 @@ static uint8_t GetFakeCpuNumber(uint8_t proc_mask) {
   return cpu_number;
 }
 
+// pokersmash-nx (kernel_main_thread_cpu0, kernel_state.cpp's PrepareModuleLaunch): the main thread given hardware
+// thread 0 leaves the round-robin where it would have been, so no other thread's number changes.
+void XThread::SkipFakeCpuNumber() { (void)GetFakeCpuNumber(0); }
+
 void XThread::InitializeGuestObject() {
   auto guest_thread = guest_object<X_KTHREAD>();
   uint32_t guest_ptr = guest_object();

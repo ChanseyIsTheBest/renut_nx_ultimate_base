@@ -459,6 +459,16 @@ bool BuildDepthResolvePipelines(VideoState &s) {
       }
       if (s.sasrt_depth_float_pipeline)
         s.sasrt_depth_float_pipeline->setName("sasrt depth resolve, the float alone");
+      // dmc_devil-nx (e3cbf45e, its A/B 261 "single-RT depth resolve float-only framebuffer & lazy words"): the
+      // float-only pipeline with one target. The key is the render side's, read by name: off, or not defined in a
+      // build without that patch, nothing is made.
+      if (s.sasrt_depth_float_ps && REXCVAR_QUERY(bool, dmc_gpu_depth_resolve_float_only_fb)) {
+        plume::RenderGraphicsPipelineDesc float_only = desc;
+        float_only.renderTargetCount = 1;
+        s.sasrt_depth_float_only_pipeline = s.device->createGraphicsPipeline(float_only);
+        if (s.sasrt_depth_float_only_pipeline)
+          s.sasrt_depth_float_only_pipeline->setName("dmc depth resolve, the float alone, one target");
+      }
     }
   }
   return true;

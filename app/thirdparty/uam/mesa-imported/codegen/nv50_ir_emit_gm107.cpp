@@ -24,6 +24,8 @@
 
 #include "codegen/nv50_ir_target_gm107.h"
 
+extern "C" unsigned nv50_ir_get_banjo_flags();  // banjo-nx (nv50_ir_peephole.cpp); dmc_devil-nx: flag 1048576 below
+
 //#define GM107_DEBUG_SCHED_DATA
 
 namespace nv50_ir {
@@ -4410,7 +4412,11 @@ SchedDataCalculatorGM107::insertBarriers(BasicBlock *bb)
          usei = findFirstUse(insn);
 
          // Allocate and emit a new barrier.
-         bar_id = bars.findFreeRange(1);
+         // dmc_devil-nx (e3cbf45e, its #38, banjo flag 1048576): a write with no reader in this block shares barrier 5
+         // (the fallback below: a Maxwell scoreboard counts every write on it), which the next block's entry waits on
+         // anyway (visit: all six), so 0-4 stay free for the waits inside the block. Waiting on a shared barrier only
+         // waits longer: the same results. Without the flag: the first free one, as before.
+         bar_id = (!usei && (nv50_ir_get_banjo_flags() & 1048576u)) ? 5 : bars.findFreeRange(1);
          if (bar_id == -1)
             bar_id = 5;
          bars.set(bar_id);
@@ -4429,7 +4435,8 @@ SchedDataCalculatorGM107::insertBarriers(BasicBlock *bb)
             continue;
 
          // Allocate and emit a new barrier.
-         bar_id = bars.findFreeRange(1);
+         // dmc_devil-nx (banjo flag 1048576): a read with no overwrite in this block, likewise on barrier 5.
+         bar_id = (!defi && (nv50_ir_get_banjo_flags() & 1048576u)) ? 5 : bars.findFreeRange(1);
          if (bar_id == -1)
             bar_id = 5;
          bars.set(bar_id);

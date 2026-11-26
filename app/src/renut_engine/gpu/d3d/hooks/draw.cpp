@@ -423,7 +423,7 @@ static void BeginTilingImpl(u32 device, u32 count, u32 rects_va, u32 color_va, u
     // after the clear.
     float viewport[6];
     for (u32 i = 0; i < 6; ++i)
-      viewport[i] = d.F(0x3160 + i * 4);  // katamari-nx: 0x3170->0x3160
+      viewport[i] = d.F(d3d::kDeviceOffsetViewport + i * 4);  // dmc_devil-nx: d3d.h's (katamari-nx: 0x3170->0x3160)
     i32 scissor[4];
     for (u32 i = 0; i < 4; ++i)
       scissor[i] = i32(d.W(native::off::ScissorRect + i * 4));
@@ -595,7 +595,7 @@ void D3DDevice_Present_hook(u32 device) {
   FlushDeferredVertices(device);
   float viewport[6];
   for (u32 i = 0; i < 6; ++i)
-    viewport[i] = d.F(0x3160 + i * 4);  // katamari-nx: 0x3170->0x3160
+    viewport[i] = d.F(d3d::kDeviceOffsetViewport + i * 4);  // dmc_devil-nx: d3d.h's (katamari-nx: 0x3170->0x3160)
   i32 scissor[4];
   for (u32 i = 0; i < 4; ++i)
     scissor[i] = i32(d.W(native::off::ScissorRect + i * 4));

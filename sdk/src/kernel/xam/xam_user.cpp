@@ -32,6 +32,7 @@
 #include <rex/types.h>
 #include <rex/string.h>
 #include <rex/system/kernel_state.h>
+#include <rex/system/xam/gamer_picture.h>  // pokersmash-nx (2026-11-25): XamReadTileToTexture's picture
 #include <rex/system/xam/user_profile.h>
 #include <rex/system/xenumerator.h>
 #include <rex/system/xio.h>
@@ -77,6 +78,12 @@ REXCVAR_DEFINE_BOOL(xam_own_gamer_picture, true, "Kernel",
                     "XamReadTileToTexture gives a signed-in player's own gamer picture (types 2 to 5 with tile 0) as a "
                     "blank picture. ilomilo's loader asked for it every frame when it was refused and leaked a 16 KB "
                     "texture each time (guest memory gone after two minutes with two players). Off: refused, as before");
+// pokersmash-nx (2026-11-25): see XamUserWriteProfileSettings.
+REXCVAR_DEFINE_BOOL(pokersmash_profile_binary_limit, true, "Kernel",
+                    "XamUserWriteProfileSettings leaves out (and logs) a binary or content setting larger than a "
+                    "profile setting holds (XPROFILE_SETTING_MAX_SIZE, 1,000 bytes) instead of copying that many bytes "
+                    "from guest memory. false: any size copied, as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(xam_guest_profiles, false, "Kernel",
                     "Players 2 to 4 signed in by xam_guest_signin / xam_guest_signin_on_connect are local profiles of "
                     "their own (named Player 2 to Player 4, no guest flag), for a game that takes no guest as a "
@@ -153,6 +160,17 @@ uint32_t EffectiveLanguage() {
   return language;
 }
 }  // namespace rex::system
+
+// pokersmash-nx (2026-11-25): rex/system/xam/gamer_picture.h. None set: XamReadTileToTexture as before.
+namespace rex::system::xam {
+namespace {
+std::atomic<GamerPictureProvider> g_gamer_picture_provider{nullptr};
+}  // namespace
+void SetGamerPictureProvider(GamerPictureProvider provider) {
+  g_gamer_picture_provider.store(provider, std::memory_order_release);
+}
+GamerPictureProvider GetGamerPictureProvider() { return g_gamer_picture_provider.load(std::memory_order_acquire); }
+}  // namespace rex::system::xam
 
 namespace rex {
 namespace kernel {
@@ -622,6 +640,16 @@ u32 XamUserWriteProfileSettings_entry(u32 title_id, u32 user_index, u32 setting_
       case UserProfile::Setting::Type::BINARY: {
         uint8_t* binary_ptr = REX_KERNEL_MEMORY()->TranslateVirtual(setting.data.binary.ptr);
         size_t binary_size = setting.data.binary.size;
+        // pokersmash-nx (2026-11-25, pokersmash_profile_binary_limit): a profile setting holds at most 1,000 bytes
+        // (XPROFILE_SETTING_MAX_SIZE); a larger size (a bad record) is logged and that setting left out, the others
+        // written, rather than that many bytes copied from guest memory.
+        static const bool binary_limit = REXCVAR_GET(pokersmash_profile_binary_limit);
+        if (binary_limit && binary_size > 1000) {
+          REXKRNL_ERROR("XamUserWriteProfileSettings: setting {:08X} (index {}) has {} bytes, more than a profile "
+                        "setting holds: left out",
+                        uint32_t(setting.setting_id), n, binary_size);
+          continue;
+        }
         std::vector<uint8_t> bytes;
         if (setting.data.binary.ptr) {
           // Copy provided data
@@ -1056,6 +1084,34 @@ u32 XamReadTileToTexture_entry(u32 unknown, u32 title_id, u64 tile_id, u32 user_
 
   size_t size = size_t(stride) * size_t(height);
   std::memset(buffer_ptr, 0xFF, size);
+
+  // pokersmash-nx (2026-11-25, the user: the Switch user's icon in place of the white square): a gamer-picture tile
+  // (types 2-5 and 9-12: the gamer tile, small, local, by image id, personal, by key; 0 achievement, 1 game icon, 6
+  // background and 7-8 awarded stay white) from the host's source (rex/system/xam/gamer_picture.h), when the app set
+  // one and it gives a picture. Only for player 1 or no particular player (Poker Smash asks by key with user 254):
+  // players 2-4 keep the white picture. The buffer is the game's locked linear A8R8G8B8 texture, `stride` bytes a row:
+  // each pixel a big-endian 0xAARRGGBB word, the picture stride / 4 wide (Poker Smash: type 9, 64 x 64). No provider
+  // (the base: app/src/gamer_picture.cpp's keys are off) or no picture: the white picture as before.
+  if (const auto provider = rex::system::xam::GetGamerPictureProvider()) {
+    const bool gamer_tile = (unknown >= 2 && unknown <= 5) || (unknown >= 9 && unknown <= 12);
+    const bool player_one = user_index == 0 || user_index >= 4;
+    const uint32_t width = stride / 4;
+    std::vector<uint32_t> argb;
+    if (gamer_tile && player_one && buffer_ptr.guest_address() && buffer_ptr.host_address() && width &&
+        width <= 1024 && height && height <= 1024 && provider(width, height, argb) &&
+        argb.size() == size_t(width) * height) {
+      auto* out = static_cast<uint8_t*>(buffer_ptr.host_address());
+      for (uint32_t y = 0; y < height; ++y)
+        for (uint32_t x = 0; x < width; ++x) {
+          const uint32_t c = argb[size_t(y) * width + x];
+          uint8_t* p = out + size_t(y) * stride + size_t(x) * 4;
+          p[0] = uint8_t(c >> 24);
+          p[1] = uint8_t(c >> 16);
+          p[2] = uint8_t(c >> 8);
+          p[3] = uint8_t(c);
+        }
+    }
+  }
 
   if (overlapped_ptr) {
     REX_KERNEL_STATE()->CompleteOverlappedImmediate(overlapped_ptr, X_ERROR_SUCCESS);

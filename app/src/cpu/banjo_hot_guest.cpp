@@ -796,6 +796,17 @@ uint8_t InitHook(Hook& h, uint8_t* base) {
   if (on && h.bulk && !REXCVAR_GET(banjo_cpu_native_bulk)) on = false;
   if (on && !GuestCodeMatches(h, base)) on = false;
   const bool verify = REXCVAR_GET(banjo_cpu_verify);
+  // pokersmash-nx (2026-11-25, its handoff): the poison follows only an unguarded run of a copy (the hook's direct and
+  // period paths), and banjo_cpu_verify guards every call: with both on nothing is poisoned and the run looks clean
+  // (its Ryujinx run emu5poison was such a run: no "[hot] banjo_hot_poison_dead" line). One warning says so; nothing
+  // else changes (as the "no guard forms" warning below).
+  if (verify && REXCVAR_GET(banjo_hot_poison_dead)) {
+    static std::atomic<bool> said_poison{false};
+    if (!said_poison.exchange(true, std::memory_order_relaxed))
+      REXLOG_WARN("[hot] banjo_hot_poison_dead does nothing with banjo_cpu_verify on (every call is guarded; the "
+                  "poison follows only an unguarded run): turn banjo_cpu_verify off and keep banjo_hot_guard_calls / "
+                  "banjo_hot_guard_period for a poison run");
+  }
   uint32_t period = 1;
   while (period < uint32_t(std::max(1, REXCVAR_GET(banjo_hot_guard_period))) && period < (1u << kCountdownBits))
     period <<= 1;

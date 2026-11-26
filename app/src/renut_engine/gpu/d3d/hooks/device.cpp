@@ -151,6 +151,20 @@ constexpr u32 kDeviceOffsetPerfFrequency = 21560;  // katamari-nx: 21588->21560
 constexpr u32 kDeviceOffsetTitleMinusOne = 21672;  // katamari-nx: 23380->21672
 // Import slot holding the address of the kernel's VdGlobalDevice variable.
 constexpr u32 kVdGlobalDeviceImportSlot = 0x82000750;  // katamari-nx: 0x820007F8->0x82000750
+// The device's gamma (+0x3A84 here: red, green, blue, 256 words each) for the display to pick up (StoreGamma; the
+// Swap hook hands it to Video::NoteGameGamma). dmc_devil-nx (527367bb): named once for both (its remap changed the
+// two by hand; this was defined after the Swap hook, which used the literal).
+constexpr u32 kDeviceOffsetGammaRamp = 0x3A84;  // katamari-nx: 0x3A9C->0x3A84
+// SetScalerParameters' copy of the scaler parameters (14 words; the Swap's crop reads its source rect from it when
+// the game passes none), and the word StoreGamma ORs 2 into when the ramp changes (InitializePresentationParameters
+// sets it to ~0). dmc_devil-nx (527367bb): each named once (its remap changed the Swap's and StoreGamma's by hand).
+constexpr u32 kDeviceOffsetScalerParameters = 0x3584;  // katamari-nx: 0x359C->0x3584
+constexpr u32 kDeviceOffsetGammaUpdateFlags = 0x412C;  // katamari-nx: 0x4144->0x412C
+// dmc_devil-nx: the private fields d3d_native.h names too, checked to be one place (equality, not values).
+static_assert(kDeviceOffsetFlags == native::off::Flags);
+static_assert(kDeviceOffsetFlags2 == native::off::Flags1);
+static_assert(kDeviceOffsetFenceCompletion == native::off::FenceCompletion);
+static_assert(kDeviceOffsetSideBuffer == native::off::SideBuffer);
 
 constexpr u32 kE_OUTOFMEMORY = 0x8007000Eu;
 
@@ -278,7 +292,7 @@ void SetScalerParameters(native::Device d, const be_u32 *scaler) {
     copy[i] = scaler[i];
   copy[6] = copy[10] = scaler[6] ? 3 : 0;
   for (u32 i = 0; i < 14; ++i)
-    d.SetW(0x3584 + i * 4, copy[i]);  // katamari-nx: 0x359C->0x3584
+    d.SetW(kDeviceOffsetScalerParameters + i * 4, copy[i]);  // katamari-nx: 0x359C->0x3584
   d.SetB(native::off::Flags2, d.B(native::off::Flags2) | 0x10);
 }
 
@@ -362,7 +376,7 @@ bool InitializePresentationParameters(native::Device d, u32 parameters_va) {
     }
     SetGammaRamp(d, ramp);
   }
-  d.SetW(0x412C, ~0u);  // katamari-nx: 0x4144->0x412C
+  d.SetW(kDeviceOffsetGammaUpdateFlags, ~0u);  // katamari-nx: 0x4144->0x412C
   return true;
 }
 
@@ -463,8 +477,9 @@ u32 Direct3D_CreateDevice_hook(u32 /*adapter*/, u32 device_type, u32 /*unused*/,
     if (!(behavior_flags & 0x100) && !(behavior_flags & 0x3F000000))
       behavior_flags |= 0xC000000;
     WriteU32(bytes, d3d::kDeviceOffsetBehaviorFlags, behavior_flags);
-    WriteU32(bytes, 21532, 0xFFFFFFFFu);  // katamari-nx: 21560->21532
-    WriteU32(bytes, 21536, 0xFFFFFFFFu);  // katamari-nx: 21564->21536
+    // dmc_devil-nx (527367bb): kDeviceOffsetsMinusOne's first two (21532, 21536), not copies of them.
+    WriteU32(bytes, kDeviceOffsetsMinusOne[0], 0xFFFFFFFFu);  // katamari-nx: 21560->21532
+    WriteU32(bytes, kDeviceOffsetsMinusOne[1], 0xFFFFFFFFu);  // katamari-nx: 21564->21536
   } else {
     for (u32 offset : kDeviceOffsetsMinusOne)
       WriteU32(bytes, offset, 0xFFFFFFFFu);
@@ -964,7 +979,7 @@ void D3DDevice_Swap_hook(u32 device_va, u32 front_buffer, u32 parameters) {
     banjo::renut_gpu::checks::QueueKickFlush();
     KickFence(device);
     // banjo-nx (2026-10-20, banjo_renut_game_gamma): the device's gamma ramp (StoreGamma's +0x3A9C) for the present.
-    Video::NoteGameGamma(device + 0x3A84, g_gamma_piecewise);  // katamari-nx: 0x3A9C->0x3A84; halo3-nx: the form
+    Video::NoteGameGamma(device + kDeviceOffsetGammaRamp, g_gamma_piecewise);  // katamari-nx: 0x3A9C->0x3A84; halo3-nx: the form
   }
 
   // Port 161 (from fnxf_xiii, its note of 2026-11-05; banjo_renut_bookkeeping_after_present): the frame's bookkeeping
@@ -979,7 +994,8 @@ void D3DDevice_Swap_hook(u32 device_va, u32 front_buffer, u32 parameters) {
   std::array<i32, 4> scaler{};
   if (crop) {
     const be_u32 *p = parameters ? GuestPtr<const be_u32>(parameters)
-                                 : (device_va ? GuestPtr<const be_u32>(device_va + 0x3584) : nullptr);
+                                 : (device_va ? GuestPtr<const be_u32>(device_va + kDeviceOffsetScalerParameters)
+                                              : nullptr);
     if (p)
       for (int i = 0; i < 4; ++i)
         scaler[i] = i32(u32(p[i]));
@@ -1207,9 +1223,8 @@ std::array<u16, 1024> GammaTable(bool inverse) {
   return table;
 }
 
-// The device's gamma (+0x3A9C, red, green, blue: 256 words each) for the
-// display to pick up; the renderer presents without it.
-constexpr u32 kDeviceOffsetGammaRamp = 0x3A84;  // katamari-nx: 0x3A9C->0x3A84
+// The device's gamma (kDeviceOffsetGammaRamp, with the device's other offsets above: red, green, blue, 256 words
+// each) for the display to pick up; the renderer presents without it.
 
 void StoreGamma(native::Device d, const be_u16 (&corrected)[768]) {
   if (std::memcmp(corrected, d.bytes + kDeviceOffsetGammaRamp, sizeof(corrected)) == 0)
@@ -1224,7 +1239,7 @@ void StoreGamma(native::Device d, const be_u16 (&corrected)[768]) {
     d.SetW(0x56E8, d.W(0x56E8) | 0x80000000u);  // katamari-nx: 0x5D94->0x56E8, 0x5D94->0x56E8
   }
   std::memcpy(d.bytes + kDeviceOffsetGammaRamp, corrected, sizeof(corrected));
-  d.SetW(0x412C, d.W(0x412C) | 2);  // katamari-nx: 0x4144->0x412C, 0x4144->0x412C
+  d.SetW(kDeviceOffsetGammaUpdateFlags, d.W(kDeviceOffsetGammaUpdateFlags) | 2);  // katamari-nx: 0x4144->0x412C
 }
 
 // D3DDevice_SetGammaRamp's work: the ramp (D3DGAMMARAMP, 3 x 256 words)

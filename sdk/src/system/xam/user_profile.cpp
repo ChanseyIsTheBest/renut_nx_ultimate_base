@@ -9,17 +9,49 @@
  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
 
+#include <cerrno>  // pokersmash-nx: errno in SaveSetting's log
+#include <mutex>   // pokersmash-nx: the settings lock
 #include <sstream>
+#include <system_error>
 
 #include <fmt/format.h>
 
+#include <rex/cvar.h>
+#include <rex/filesystem.h>
 #include <rex/logging.h>
 #include <rex/system/kernel_state.h>
 #include <rex/system/xam/user_profile.h>
 
+// pokersmash-nx (2026-11-25, its handoff 3: the PC profile run's fast fail in XamUserWriteProfileSettings).
+REXCVAR_DEFINE_BOOL(pokersmash_profile_save_no_throw, true, "Kernel",
+                    "A title-specific profile setting is saved without a throw and without a write through a null "
+                    "FILE: a folder that cannot be made, a file that cannot be opened or a short write is logged, and "
+                    "the setting stays in memory (the game reads it back from there this session). Poker Smash's PC "
+                    "build ended with a fast fail (C0000409) inside XamUserWriteProfileSettings 5 minutes into play. "
+                    "false: create_directories may throw and fwrite takes whatever OpenFile returned, as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(pokersmash_profile_settings_lock, true, "Kernel",
+                    "The profile's settings map and list behind one lock (AddSetting and GetSetting, the only two "
+                    "that touch them): XamUserWriteProfileSettings may run on one game thread while another reads a "
+                    "setting. false: no lock, as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
 namespace rex {
 namespace system {
 namespace xam {
+
+namespace {
+// pokersmash-nx (pokersmash_profile_settings_lock): recursive, since AddSetting saves (SaveSetting) and GetSetting
+// loads (LoadSetting) under it. The lock covers the containers only: a Setting* that GetSetting returned is still the
+// caller's to use, and a later AddSetting of the same id frees it, as before.
+std::recursive_mutex g_settings_mutex;
+std::unique_lock<std::recursive_mutex> SettingsLock() {
+  static const bool on = REXCVAR_GET(pokersmash_profile_settings_lock);
+  if (!on)
+    return std::unique_lock<std::recursive_mutex>();
+  return std::unique_lock<std::recursive_mutex>(g_settings_mutex);
+}
+}  // namespace
 
 UserProfile::UserProfile() {
   // 58410A1F checks the user XUID against a mask of 0x00C0000000000000 (3<<54),
@@ -94,6 +126,7 @@ UserProfile::UserProfile() {
 }
 
 void UserProfile::AddSetting(std::unique_ptr<Setting> setting) {
+  const auto lock = SettingsLock();  // pokersmash-nx: pokersmash_profile_settings_lock
   Setting* previous_setting = setting.get();
   std::swap(settings_[setting->setting_id], previous_setting);
 
@@ -116,6 +149,7 @@ void UserProfile::AddSetting(std::unique_ptr<Setting> setting) {
 }
 
 UserProfile::Setting* UserProfile::GetSetting(uint32_t setting_id) {
+  const auto lock = SettingsLock();  // pokersmash-nx: pokersmash_profile_settings_lock
   const auto& it = settings_.find(setting_id);
   if (it == settings_.end()) {
     return nullptr;
@@ -157,14 +191,49 @@ void UserProfile::LoadSetting(UserProfile::Setting* setting) {
 
 void UserProfile::SaveSetting(UserProfile::Setting* setting) {
   if (setting->is_title_specific()) {
+    // pokersmash-nx (2026-11-25, pokersmash_profile_save_no_throw): Poker Smash's PC profile run ended 294 s in with
+    // C0000409 (the C runtime's fast fail: an uncaught exception, or fwrite on a null FILE) inside
+    // XamUserWriteProfileSettings, right after this had written one setting. Every failure is now logged and the
+    // setting kept in memory; the key off is the code before.
+    static const bool no_throw = REXCVAR_GET(pokersmash_profile_save_no_throw);
+    if (!no_throw) {
+      auto serialized_setting = setting->Serialize();
+      auto content_dir = kernel_state_->content_manager()->ResolveGameUserContentPath();
+      std::filesystem::create_directories(content_dir);
+      auto setting_id = fmt::format("{:08X}", setting->setting_id);
+      auto file_path = content_dir / setting_id;
+      auto file = rex::filesystem::OpenFile(file_path, "wb");
+      fwrite(serialized_setting.data(), 1, serialized_setting.size(), file);
+      fclose(file);
+      return;
+    }
+    if (!kernel_state_ || !kernel_state_->content_manager()) {
+      REXSYS_WARN("Profile setting {:08X}: no content manager yet; kept in memory only", setting->setting_id);
+      return;
+    }
     auto serialized_setting = setting->Serialize();
     auto content_dir = kernel_state_->content_manager()->ResolveGameUserContentPath();
-    std::filesystem::create_directories(content_dir);
+    std::error_code ec;
+    std::filesystem::create_directories(content_dir, ec);
+    if (ec) {
+      REXSYS_WARN("Profile setting {:08X}: the folder {} could not be made ({}); kept in memory only",
+                  setting->setting_id, rex::path_to_utf8(content_dir), ec.message());
+      return;
+    }
     auto setting_id = fmt::format("{:08X}", setting->setting_id);
     auto file_path = content_dir / setting_id;
     auto file = rex::filesystem::OpenFile(file_path, "wb");
-    fwrite(serialized_setting.data(), 1, serialized_setting.size(), file);
-    fclose(file);
+    if (!file) {
+      REXSYS_WARN("Profile setting {:08X}: {} could not be opened for writing (errno {}); kept in memory only",
+                  setting->setting_id, rex::path_to_utf8(file_path), errno);
+      return;
+    }
+    const size_t wrote = fwrite(serialized_setting.data(), 1, serialized_setting.size(), file);
+    const int closed = fclose(file);
+    if (wrote != serialized_setting.size() || closed != 0) {
+      REXSYS_WARN("Profile setting {:08X}: {} written short ({} of {} bytes{}); kept in memory", setting->setting_id,
+                  rex::path_to_utf8(file_path), wrote, serialized_setting.size(), closed ? ", the close failed" : "");
+    }
   } else {
     // Unsupported for now.  Other settings aren't per-game and need to be
     // stored some other way.

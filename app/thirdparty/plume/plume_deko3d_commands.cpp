@@ -231,6 +231,7 @@ namespace plume {
         pendingBarrierInvalidate = 0;
         copyRunFenced = false;  // port 161
         sampleMaskSet = 0xFFFFFFFFu;  // port 166
+        srgbSet = 0xFFu;  // dmc_devil-nx (Deko3DOptions::srgbRegisterKept): unknown in a new list
         memoryUsed = 0;
         // banjo-nx (2026-11-21, cachedCommands): this list's kind of command memory, for all its blocks.
         memoryCachedUsed = 0;
@@ -1132,8 +1133,11 @@ namespace plume {
             if (p->blendCount && changed(4)) {
                 dkCmdBufBindBlendStates(cmd, 0, p->blend, p->blendCount);
                 // deko3d 0.5.0's FuncAlphaDst (see blendWords): the six registers of each target again.
+                // dmc_devil-nx (Deko3DOptions::blendWordsNeeded): only the targets whose FuncAlphaDst deko3d got wrong.
+                const bool needed_only = Deko3DGetOptions().blendWordsNeeded;
                 for (uint32_t i = 0; i < p->blendCount; i++)
-                    dkCmdBufReplayCmds(cmd, p->blendWords[i], 7);
+                    if (!needed_only || ((p->blendWordsMask >> i) & 1u))
+                        dkCmdBufReplayCmds(cmd, p->blendWords[i], 7);
             }
             if (changed(5))
                 dkCmdBufBindDepthStencilState(cmd, &p->depthStencil);
@@ -1592,7 +1596,15 @@ namespace plume {
             colors[i] = &f->colors[i];
         flushBarriers();
         dkCmdBufBindRenderTargets(cmd, colors, f->colorCount, f->hasDepth ? &f->depth : nullptr);
-        writeFramebufferSrgb(cmd, f->colorCount && f->srgb[0]);
+        if (!Deko3DGetOptions().srgbRegisterKept) {
+            writeFramebufferSrgb(cmd, f->colorCount && f->srgb[0]);
+        } else {  // dmc_devil-nx: written when it changes in this list
+            const uint8_t srgb = (f->colorCount && f->srgb[0]) ? 1u : 0u;
+            if (srgbSet != srgb) {
+                writeFramebufferSrgb(cmd, srgb != 0);
+                srgbSet = srgb;
+            }
+        }
         boundTargetsSerial = f->serial;
     }
 

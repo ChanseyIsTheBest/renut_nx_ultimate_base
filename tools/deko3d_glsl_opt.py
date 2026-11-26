@@ -2765,6 +2765,13 @@ def pass_fetchspec(text):
 # Same values for every word the renderer writes; deko3d only (these passes are deko3d's).
 
 _SK_DEF = re.compile(r'^\s*uint (_\d+) = (g_UboShared\.v\[(2[4-9]|3[01])u\]\.[xyzw]) \+ (\d+)u;$', re.M)
+# dmc_devil-nx (e3cbf45e, pass_samplerk: "upgraded plainfetch/fetchconv/samplerk for DmC's 3 shift/mask forms"): newer
+# SPIRV-Cross output reads the fields unmasked (`uint _b = _a >> 16u;`, the mask on a later line), which asura-nx's forms
+# of plainfetch and fetchconv know (their raw reads, with the use checks) but this pass did not, so those fetches kept
+# their blocks. The unmasked read becomes the word's own unmasked read: (word + k) >> 13 or >> 16 is word >> 13 or >> 16
+# for the same reason as above (bits 0-12 of the word 0, k < 2^13), so the same value, bits above the field included (the
+# port wrote the masked form there, which drops them). DMC_GLSL_SAMPLERK_RAW=0: the masked form alone, as before.
+SAMPLERK_RAW = os.environ.get('DMC_GLSL_SAMPLERK_RAW', '1') != '0'
 
 
 def pass_samplerk(text):
@@ -2780,6 +2787,10 @@ def pass_samplerk(text):
             text = re.sub(r'^([ \t]*)(uint _\d+ = )\(' + re.escape(name) + r' >> ' + shift + r'\) & ' + mask + ';$',
                           lambda mm: f'{mm.group(1)}{SK_MARK}\n{mm.group(1)}{mm.group(2)}({word} >> {shift}) & {mask};',
                           text, flags=re.M)
+            if SAMPLERK_RAW:  # dmc_devil-nx: the unmasked read, as the word's
+                text = re.sub(r'^([ \t]*)(uint _\d+ = )' + re.escape(name) + r' >> ' + shift + ';$',
+                              lambda mm: f'{mm.group(1)}{SK_MARK}\n{mm.group(1)}{mm.group(2)}{word} >> {shift};',
+                              text, flags=re.M)
     return text
 
 
@@ -3419,6 +3430,58 @@ def pass_rcpzero(text):
                   r'((\1.w == 0.0) ? 0.0 : clamp(1.0 / \1.w, \2, \3))', text)
 
 
+# ---------------------------------------------------------------------------------------------------------------------
+# pass: dmc_pwl_fast - dmc_devil-nx (e3cbf45e, its "Wave 2": "Replace Xbox 360 17-op branchy PWL sRGB decode blocks with a
+# branchless 4-segment convex fit"). shader_common.h's renutPWLGammaToLinear (a texture fetch's gamma sign: three compares,
+# two nested selects for the scale and the offset, a trunc) as the largest of four lines. NOT exact: at most 0.0019 from
+# the console's decode over 0..1 (0.49 of an 8-bit step; checked here at 4,081 points, at the 256 texel values 0.0019,
+# 1.9 of the decode's 1023 steps), and continuous where the console's steps. Off unless DMC_GLSL_PWL_FAST=1 when the
+# package is made: every shader's text as before (no DKSH re-key). A gamma fetch through asura_renut_hw_srgb's sRGB views
+# has no such block.
+
+_PWL_BLOCK_RE = re.compile(
+    r'float (_\d+) = clamp\((_\d+(?:\.[xyzw])?), 0\.0, 1\.0\);\s*'
+    r'bool (_\d+) = \1 >= 0\.3764705955982208251953125;\s*'
+    r'bool (_\d+) = \1 >= 0\.752941191196441650390625;\s*'
+    r'bool (_\d+) = \1 >= 0\.2509804069995880126953125;\s*'
+    r'float (_\d+) = dk_sel\(\3, \(dk_sel\(\4, 0\.0078125, 0\.00390625\)\), \(dk_sel\(\5, 0\.001953125, 0\.0009765625\)\)\);\s*'
+    r'float (_\d+) = \(\(\1 \* 261120\.0\) \* \6\) \+ \(dk_sel\(\3, \(dk_sel\(\4, \(-1024\.0\), \(-256\.0\)\)\), \(dk_sel\(\5, \(-64\.0\), 0\.0\)\)\)\);'
+)
+_PWL_FN = (
+    'float dk_pwl_srgb(float v)\n'
+    '{\n'
+    '    float x = clamp(v, 0.0, 1.0);\n'
+    '    return max(max(x * 0.24926686, fma(x, 0.49853372, -0.06256109)),\n'
+    '               max(fma(x, 1.00030547, -0.25146628), fma(x, 2.01384040, -1.01384040)));\n'
+    '}\n\n'
+)
+
+
+def pass_dmc_pwl_fast(text):
+    """Replace Xbox 360 17-op branchy PWL sRGB decode blocks with a branchless 4-segment convex fit."""
+    if os.environ.get('DMC_GLSL_PWL_FAST') != '1':  # renut-ultimate: off unless asked for (not exact)
+        return text
+    if '261120.0' not in text or 'dk_pwl_srgb' in text:
+        return text
+    original = text
+    replaced = 0
+    for m in list(_PWL_BLOCK_RE.finditer(text)):
+        v_in, v_s, v_t = m.group(2), m.group(6), m.group(7)
+        use_pat = f'(({v_t} + trunc({v_t} * {v_s})) * 0.000977517105638980865478515625)'
+        if use_pat not in text:
+            continue
+        # Only rewrite when v_s is strictly internal to the matched PWL block and its single trunc use.
+        if len(re.findall(r'\b' + re.escape(v_s) + r'\b', text)) != 3:
+            continue
+        text = text.replace(m.group(0), f'float {v_t} = dk_pwl_srgb({v_in});', 1)
+        text = text.replace(use_pat, v_t, 1)
+        replaced += 1
+    if replaced:
+        with_fn = insert_before_main(text, _PWL_FN)
+        return with_fn if with_fn != text else original
+    return text
+
+
 PASSES = [
     ('scalecodes', pass_scalecodes),
     ('scale1', pass_scale1),
@@ -3472,6 +3535,7 @@ PASSES = [
     ('fixed16bias', pass_fixed16bias),  # asura-nx: fmt 5 ColorExpBias [-32, 32] clamp when 927 == 2 (ASURA_GLSL_FIXED16_BIAS=1)
     ('rcpzero', pass_rcpzero),  # S4ep2-XBLA-nx (after its 0.5.1): S4EP2_GLSL_RCPZERO=1 only, no constant
     ('clamp7e3', pass_clamp7e3),  # dishonored-nx (2026-10-31; port 106): constant 990, the last pixel pass
+    ('dmc_pwl_fast', pass_dmc_pwl_fast),  # dmc_devil-nx: DMC_GLSL_PWL_FAST=1 only (NOT exact), no constant
     ('invariant', pass_invariant),  # dishonored-nx (2026-10-30; port 100): vertex shaders, no constant
 ]
 # banjo-nx (2026-10-21): scaled targets (648p / 900p): scale1 and fragscale (1x only) are not in the default.
@@ -3487,6 +3551,7 @@ STAGE_OF['invariant'] = 'vert'  # dishonored-nx (port 100)
 STAGE_OF['clamp7e3'] = 'frag'  # dishonored-nx (port 106)
 STAGE_OF['twinsel'] = 'frag'  # banjo-nx (2026-11-23)
 STAGE_OF['rcpzero'] = 'frag'  # S4ep2-XBLA-nx
+STAGE_OF['dmc_pwl_fast'] = 'frag'  # dmc_devil-nx
 
 
 def optimise(text, passes=DEFAULT, stage=None, name=None):
@@ -3528,6 +3593,23 @@ def check_one(item):
     return name, ''
 
 
+# dmc_devil-nx (4858b474, Phase 3: "parallel deko3d_glsl_opt.py"; its 35,734 shaders): without --check, each shader read,
+# optimised and written by a worker process (--jobs of them) instead of all of them in this one, one after another, held
+# in memory. Each shader's text depends on its own source alone (optimise), so every output file is the same.
+# DMC_GLSL_OPT_PROCESSES=0, --check or --jobs 1: as before.
+PROCESSES = os.environ.get('DMC_GLSL_OPT_PROCESSES', '1') != '0'
+
+
+def _opt_file(item):
+    src_dir, out_dir, name, passes = item
+    with open(os.path.join(src_dir, name), encoding='utf-8') as f:
+        text = f.read()
+    out = optimise(text, passes, 'frag' if name.startswith('ps_') else 'vert', name[3:19])
+    with open(os.path.join(out_dir, name), 'w', encoding='utf-8', newline='\n') as f:
+        f.write(out)
+    return 1
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--in', dest='src')
@@ -3543,6 +3625,16 @@ def main():
             print(f'{name}: {fn.__doc__.split(".")[0].strip()}')
         return 0
     os.makedirs(a.out, exist_ok=True)
+    if PROCESSES and not a.check and a.jobs > 1:  # dmc_devil-nx
+        import concurrent.futures
+        names = [n for n in sorted(os.listdir(a.src)) if re.fullmatch(r'(vs|ps)_[0-9A-F]{16}\.glsl', n)]
+        with concurrent.futures.ProcessPoolExecutor(max_workers=a.jobs) as ex:
+            done = sum(ex.map(_opt_file, ((a.src, a.out, n, a.passes) for n in names), chunksize=64))
+        if done != len(names):
+            print(f'deko3d_glsl_opt: {done} of {len(names)} shaders written')
+            return 1
+        print(f'deko3d_glsl_opt: {len(names)} shaders, passes {a.passes} -> {a.out}')
+        return 0
     sources = {}
     texts = {}
     for name in sorted(os.listdir(a.src)):

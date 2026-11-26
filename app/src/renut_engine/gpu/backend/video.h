@@ -238,6 +238,10 @@ struct VideoState {
   // shader (depth_resolve_float_ps).
   std::unique_ptr<plume::RenderShader> sasrt_depth_float_ps;
   std::unique_ptr<plume::RenderPipeline> sasrt_depth_float_pipeline;
+  // dmc_devil-nx (e3cbf45e, its A/B 261): the same with one target, the float alone (a framebuffer of the destination
+  // only, no words target bound). Made only with dmc_gpu_depth_resolve_float_only_fb on (render/draw.cpp's
+  // ResolveDepth); null otherwise, which leaves every depth resolve as before.
+  std::unique_ptr<plume::RenderPipeline> sasrt_depth_float_only_pipeline;
   // Host mip levels of scaled resolve destinations (textures.cpp); null when
   // it failed to build, which leaves them single-level.
   std::unique_ptr<plume::RenderShader> texture_mip_ps;

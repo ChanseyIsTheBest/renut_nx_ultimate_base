@@ -7,15 +7,19 @@
 #     COPY_TO_SD_ROOT/atmosphere/contents/05D6EA1333487100/exefs/main.npdm   (the four-core forwarder NPDM; only with
 #                                      -FourCore since rc6: the user runs on three cores)
 #     katamari-nx.elf                  the unstripped ELF of this NRO (profiles map to it)
+#     katamari-nx-guard.elf            with -Guard: the guard NRO's ELF (the NRO itself is
+#                                      COPY_TO_SD_switch_katamari-nx/katamari-nx-guard.nro)
 #     source_<commit>.tgz              the source snapshot (git archive of the commit; no game data, no generated code)
 #     README.txt, PACKAGE_NOTES.txt
 # Nothing of the game's data goes in by default (the NRO holds the recompiled code; the DKSH cache is compiled shader
 # code). katamari-nx (2026-10-31, the user's request, for their own SD card): -GameRoot copies the extracted disc into
 # game_root and -Dlc the DLC packages into dlc (installed at the first start). Never into git, never uploaded.
 #   powershell -File tools/package_switch.ps1 -Name pgo_lto [-Build app\out\switch-pgo-use] [-Notes <file>]
-#       [-GameRoot D:\beautifulkatamari\game] [-Dlc D:\beautifulkatamari\dlc]
+#       [-GameRoot D:\beautifulkatamari\game] [-Dlc D:\beautifulkatamari\dlc] [-Guard app\out\switch-guard]
+# -Guard (pokersmash-nx, 2026-11-25): the guard NRO of tools/build_switch_guard.bat beside the everyday one, for a
+# console guard run of the copies (the console is the only place their own ARM code is checked on hardware).
 param([string]$Name = "package", [string]$Build = "app\out\switch", [string]$Notes = "", [string]$GameRoot = "",
-      [string]$Dlc = "", [switch]$FourCore)
+      [string]$Dlc = "", [switch]$FourCore, [string]$Guard = "")
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $free = (Get-PSDrive D).Free / 1GB
@@ -37,6 +41,16 @@ Copy-Item (Join-Path $dist "renut.toml"), (Join-Path $dist "renut_play.toml"), (
 Copy-Item (Join-Path $dist "configs\*.toml") (Join-Path $sd "configs")
 $cache = Join-Path $root "out\deko3d_shaders\deko3d_shaders.bin"
 if (Test-Path $cache) { Copy-Item $cache $sd }
+if ($Guard) {
+    $g = Join-Path $root $Guard
+    if (-not (Test-Path (Join-Path $g "renut.nro"))) { throw "no guard NRO at $g" }
+    $gcache = Join-Path $g "CMakeCache.txt"
+    if ((Test-Path $gcache) -and -not (Select-String -Path $gcache -Pattern '^SASRT_HOT_GUARD_FORMS:BOOL=(ON|1|TRUE|YES|Y)$' -Quiet)) {
+        throw "$g was not built with the guard forms (SASRT_HOT_GUARD_FORMS): not a guard NRO"
+    }
+    Copy-Item (Join-Path $g "renut.nro") (Join-Path $sd "katamari-nx-guard.nro")
+    if (Test-Path (Join-Path $g "renut")) { Copy-Item (Join-Path $g "renut") (Join-Path $out "katamari-nx-guard.elf") }
+}
 if ($GameRoot) {
     $need = ((Get-ChildItem $GameRoot -Recurse -File | Measure-Object -Sum Length).Sum + 1GB) / 1GB
     if ((Get-PSDrive D).Free / 1GB -lt $need) { throw ("D: has too little space for the game files ({0:N1} GB needed)" -f $need) }

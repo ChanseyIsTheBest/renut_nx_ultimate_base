@@ -14,6 +14,7 @@
 #include <utility>
 
 #include <rex/assert.h>
+#include <rex/cvar.h>
 #include <rex/exception_handler.h>
 #include <rex/logging.h>
 #include <rex/memory.h>
@@ -23,11 +24,68 @@
 
 #if REX_PLATFORM_WIN32
 #include "../core/platform_win.h"
+#include <psapi.h>  // pokersmash-nx: K32GetModuleInformation (kernel32 since Windows 7)
+#include <string>
 #endif
+
+// pokersmash-nx (2026-11-25): see LogHostStackModuleWords.
+REXCVAR_DEFINE_BOOL(pokersmash_av_host_stack_scan, false, "Kernel",
+                    "PC diagnostic: an unhandled guest access violation's report also lists the host stack's words "
+                    "that point into the executable, as offsets for llvm-symbolizer with the PDB (the generated "
+                    "functions call each other on the host stack, so they name the guest functions that led there; "
+                    "with elide_lr_stores the guest stack holds no return addresses). A scan, not an unwind. Off: the "
+                    "report's one line, as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 using namespace rex::arch;
 
 namespace rex::runtime {
+
+#if REX_PLATFORM_WIN32
+namespace {
+// pokersmash-nx (2026-11-25, pokersmash_av_host_stack_scan): Poker Smash's first Renut boot on the PC stopped on a host
+// write in the XDK's streaming copy; this scan named its callers (memcpy <- sub_822515D0 <- sub_82181878, XDK
+// 2.0.6534's D3DPixelShader_GetFunction <- the game's sub_822D1F20). Runs on the faulting thread (the vectored
+// handler), from the faulting context's stack pointer up: at most 4,096 words and 48 hits, and only inside the
+// committed, readable region VirtualQuery reports for the word (asked again at each region's end), so the scan never
+// reads past the stack's top. A stale word can show up too: read the chain from the top.
+void LogHostStackModuleWords(HMODULE module, uint64_t stack_pointer) {
+  MODULEINFO info = {};
+  if (!module || !K32GetModuleInformation(GetCurrentProcess(), module, &info, sizeof(info)) || !info.SizeOfImage) {
+    return;  // no image size: no bound to test the words against
+  }
+  const uint64_t module_begin = uint64_t(reinterpret_cast<uintptr_t>(module));
+  const uint64_t module_end = module_begin + info.SizeOfImage;
+  constexpr DWORD kReadable = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ |
+                              PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+  std::string words;
+  int found = 0;
+  uint64_t at = stack_pointer & ~uint64_t(7);
+  uint64_t region_end = 0;
+  for (int i = 0; i < 4096 && found < 48 && at; ++i, at += 8) {
+    if (at + 8 > region_end) {
+      MEMORY_BASIC_INFORMATION mbi = {};
+      if (!VirtualQuery(reinterpret_cast<const void*>(uintptr_t(at)), &mbi, sizeof(mbi)) || mbi.State != MEM_COMMIT ||
+          (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) || !(mbi.Protect & kReadable)) {
+        break;
+      }
+      region_end = uint64_t(reinterpret_cast<uintptr_t>(mbi.BaseAddress)) + mbi.RegionSize;
+      if (at + 8 > region_end) {
+        break;
+      }
+    }
+    uint64_t w;
+    std::memcpy(&w, reinterpret_cast<const void*>(uintptr_t(at)), sizeof(w));
+    if (w > module_begin + 0x1000 && w < module_end) {
+      words += fmt::format(" 0x{:X}", w - module_begin);
+      ++found;
+    }
+  }
+  REXLOG_ERROR("Host stack words in the module (from the top; llvm-symbolizer --obj=<exe> 0x140000000+offset):{}",
+               words.empty() ? std::string(" none") : words);
+}
+}  // namespace
+#endif
 
 MMIOHandler* MMIOHandler::global_handler_ = nullptr;
 
@@ -435,6 +493,10 @@ bool MMIOHandler::ExceptionCallback(arch::Exception* ex) {
         REXLOG_ERROR("Unhandled guest access violation at host PC {:p} ({}+0x{:X})",
                      reinterpret_cast<const void*>(ex->pc()), module_name,
                      uint64_t(ex->pc()) - uint64_t(reinterpret_cast<uintptr_t>(module)));
+        static const bool stack_scan = REXCVAR_GET(pokersmash_av_host_stack_scan);
+        if (stack_scan && module && ex->thread_context()) {
+          LogHostStackModuleWords(module, ex->thread_context()->rsp);
+        }
 #else
         REXLOG_ERROR("Unhandled guest access violation at host PC {:p}",
                      reinterpret_cast<const void*>(ex->pc()));

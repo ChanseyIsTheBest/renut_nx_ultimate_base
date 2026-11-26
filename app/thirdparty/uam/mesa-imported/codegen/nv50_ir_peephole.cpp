@@ -2524,6 +2524,11 @@ LateAlgebraicOpt::visit(Instruction *i)
 // operations, 128 DomCSE keeps interpolations (equivalent, not replaced), 256 UniformJoins (no SSY / SYNC around a
 // branch on constant buffer values), 512 TexCluster (texture fetches early in their block), 1024 (2026-10-20) a uvec4 of
 // storage buffer 15 as one 128-bit load (nv50_ir_from_tgsi.cpp handleLOAD). 1471 by default (all but 64 and 512).
+// dmc_devil-nx (e3cbf45e; renut-ultimate's banjo_renut_tuning.cpp Deko3DUamFlags, every one off): 1048576 a GM107 write or
+// read with no consumer in its block on the shared barrier 5 (nv50_ir_emit_gm107.cpp insertBarriers), 2097152 PRMT's
+// latency 6 (nv50_ir_target_gm107.cpp getLatency), 4194304 a phi uniform where its block is reached only through
+// uniform branches (UniformJoins below, with 256), 8388608 the register rescue from 40 registers with DomCSE's costly-only
+// form (DekoCompiler::TryRescue, with 2048).
 static unsigned banjoFlags = 1471;
 } // namespace nv50_ir
 extern "C" void nv50_ir_set_banjo_flags(unsigned flags) { nv50_ir::banjoFlags = flags; }
@@ -4695,10 +4700,66 @@ class UniformJoins : public Pass
 private:
    virtual bool visit(BasicBlock *);
    bool uniform(Value *, int depth);
+   bool uniformPhiPaths(const Instruction *phi, int depth);  // dmc_devil-nx (banjo flag 4194304)
    std::unordered_map<Value *, bool> memo;
 public:
    unsigned removed = 0;
 };
+
+// dmc_devil-nx (e3cbf45e, its UniformJoins OP_PHI case "with strict idom() path proof"): whether every block from the
+// phi's immediate dominator to its block that has more than one successor ends in a branch on a uniform predicate, so
+// that every thread arrives by the same edge. A block with no predecessor, more than 32 blocks or a branch that is not
+// a predicated OP_BRA: false (not uniform).
+bool
+UniformJoins::uniformPhiPaths(const Instruction *phi, int depth)
+{
+   const BasicBlock *phiBB = phi->bb;
+   BasicBlock *idBB = phiBB ? phiBB->idom() : NULL;
+   if (!phiBB || !idBB)
+      return false;
+   std::vector<const BasicBlock *> work;
+   std::unordered_map<const BasicBlock *, bool> visited;
+   visited[phiBB] = true;
+   for (Graph::EdgeIterator ei = phiBB->cfg.incident(); !ei.end(); ei.next()) {
+      const BasicBlock *p = BasicBlock::get(ei.getNode());
+      if (!p)
+         return false;
+      if (p != idBB && !visited.count(p)) {
+         visited[p] = true;
+         work.push_back(p);
+      }
+   }
+   while (!work.empty()) {
+      if (visited.size() > 32)
+         return false;
+      const BasicBlock *cur = work.back();
+      work.pop_back();
+      if (cur->cfg.outgoingCount() > 1) {
+         Instruction *ex = cur->getExit();
+         if (!ex || ex->op != OP_BRA || !ex->isPredicated() || !uniform(ex->getPredicate(), depth + 1))
+            return false;
+      }
+      bool hasPred = false;
+      for (Graph::EdgeIterator pe = cur->cfg.incident(); !pe.end(); pe.next()) {
+         hasPred = true;
+         const BasicBlock *pr = BasicBlock::get(pe.getNode());
+         if (!pr)
+            return false;
+         if (pr != idBB && !visited.count(pr)) {
+            visited[pr] = true;
+            work.push_back(pr);
+         }
+      }
+      if (!hasPred)
+         return false;
+   }
+   if (idBB->cfg.outgoingCount() > 1) {
+      Instruction *ex = idBB->getExit();
+      if (!ex || ex->op != OP_BRA || !ex->isPredicated() || !uniform(ex->getPredicate(), depth + 1))
+         return false;
+   }
+   return true;
+}
 
 bool
 UniformJoins::uniform(Value *v, int depth)
@@ -4731,6 +4792,14 @@ UniformJoins::uniform(Value *v, int depth)
       case OP_PRESIN: case OP_PREEX2: case OP_SQRT: case OP_POW:
       case OP_POPCNT: case OP_INSBF: case OP_EXTBF: case OP_BFIND: case OP_PERMT:
          u = true;
+         break;
+      case OP_PHI:
+         // dmc_devil-nx (e3cbf45e, its #39, banjo flag 4194304): a phi of uniform values is uniform when every thread
+         // reaches its block by the same edge: each block between its immediate dominator and it that branches (and the
+         // dominator itself) branches on a uniform predicate (at most 32 blocks looked at); its sources are checked by
+         // the loop below as any operation's. Without the flag: not uniform, as before.
+         if (banjoFlags & 4194304u)
+            u = uniformPhiPaths(i, depth);
          break;
       default:
          break;

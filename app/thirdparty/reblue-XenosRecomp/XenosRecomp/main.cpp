@@ -240,6 +240,21 @@ int main(int argc, char** argv)
 #ifdef RENUT_RECOMP
         if (!hlslDumpDir.empty())
             std::filesystem::create_directories(hlslDumpDir);
+        // dmc_devil-nx (4858b474, Phase 3: "BANJO_DEKO3D_ONLY=1 (XenosRecomp/main.cpp)"): with BANJO_DEKO3D_SPIRV_DIR set
+        // too, only the deko3d SPIR-V the Switch package is made from (tools/deko3d_shaders.py): no DXIL, no SPIR-V for
+        // the PC's cache, no shader cache file (a Switch package build's run: one DXC compile a shader instead of two or
+        // three). The .spv / .fail files are the same as the full run's (the same compile below). Unlike the port, every
+        // shader is compiled again (it kept an existing .spv, which a changed translator would leave stale). Unset: as
+        // before.
+        const char* dekoOnlyDir = std::getenv("BANJO_DEKO3D_SPIRV_DIR");
+        const char* dekoOnlyEnv = std::getenv("BANJO_DEKO3D_ONLY");
+        const bool dekoOnly = dekoOnlyDir && *dekoOnlyDir && dekoOnlyEnv && *dekoOnlyEnv == '1';
+        if (dekoOnly)
+        {
+            std::error_code dekoEc;
+            std::filesystem::create_directories(dekoOnlyDir, dekoEc);
+            fmt::println("BANJO_DEKO3D_ONLY: {} shaders, the deko3d SPIR-V alone into {}", shaders.size(), dekoOnlyDir);
+        }
 #endif
 
         std::atomic<uint32_t> progress = 0;
@@ -359,6 +374,37 @@ int main(int argc, char** argv)
 
                 thread_local DxcCompiler dxcCompiler;
 
+#ifdef RENUT_RECOMP
+                if (dekoOnly)  // dmc_devil-nx: the deko3d SPIR-V alone, as the BANJO_DEKO3D_SPIRV_DIR block below makes it
+                {
+                    const std::string stem = fmt::format("{}_{:016X}", recompiler.isPixelShader ? "ps" : "vs", hash);
+                    IDxcBlob* deko = dxcCompiler.compile(recompiler.out, recompiler.isPixelShader, false, true, true);
+                    if (deko == nullptr && !originalHlsl.empty())
+                    {
+                        // banjo-nx: the override did not compile; the shader's own text (as the full run's fallback).
+                        recompiler.out = std::move(originalHlsl);
+                        originalHlsl.clear();
+                        banjoOverrideFallbacks.fetch_add(1, std::memory_order_relaxed);
+                        deko = dxcCompiler.compile(recompiler.out, recompiler.isPixelShader, false, true, true);
+                    }
+                    if (deko != nullptr)
+                    {
+                        const std::string path = (std::filesystem::path(dekoOnlyDir) / (stem + ".spv")).string();
+                        writeAllBytes(path.c_str(), deko->GetBufferPointer(), deko->GetBufferSize());
+                        deko->Release();
+                    }
+                    else
+                    {
+                        const std::string path = (std::filesystem::path(dekoOnlyDir) / (stem + ".fail")).string();
+                        writeAllBytes(path.c_str(), "dxc", 3);
+                    }
+                    size_t dekoProgress = ++progress;
+                    if ((dekoProgress % 500) == 0 || dekoProgress == shaders.size())
+                        fmt::println("deko3d SPIR-V... {}/{}", dekoProgress, shaders.size());
+                    return;
+                }
+#endif
+
 #ifdef XENOS_RECOMP_DXIL
                 shader.dxil = dxcCompiler.compile(recompiler.out, recompiler.isPixelShader, recompiler.specConstantsMask != 0, false);
 #ifdef RENUT_RECOMP
@@ -458,6 +504,12 @@ int main(int argc, char** argv)
         }
 
 #ifdef RENUT_RECOMP
+        if (dekoOnly)  // dmc_devil-nx: no shader cache file in this mode
+        {
+            fmt::println("BANJO_DEKO3D_ONLY done: {} shaders, {} rewritten shaders kept their own text",
+                         shaders.size(), banjoOverrideFallbacks.load());
+            return 0;
+        }
         fmt::println("banjo-nx: {} predicated blocks without a branch, {} memory fetches in them (banjo_pred_select.h)",
                      banjo_pred_select::g_blocks.load(), banjo_pred_select::g_fetches.load());
         fmt::println("banjo-nx: {} bool specialization constants in {} shaders (banjo_bool_spec.h)",

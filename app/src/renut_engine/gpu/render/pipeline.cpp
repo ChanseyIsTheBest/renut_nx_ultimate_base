@@ -449,7 +449,13 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineKey &key, const Pipel
     spec[spec_count++] = plume::RenderSpecConstant(925, key.reserved >> 8);
     // blur-nx (2026-11-17, blur_renut_target_bias_rgb): the colour scaled by the bias too (shader_common.h, constant 927).
     // One value for the whole run, so not in the key: a variant is keyed by the values of the constants it declares.
-    if (banjo::renut_gpu::TargetBiasRgbOn())
+    // dmc_devil-nx (dmc_renut_target_wide_alpha): bits 4-7, the targets whose biased alpha stays unclamped (sasrt_words[7]
+    // bits 24-27), beside bit 0; never with asura-nx's fixed16 value 2 (its GLSL pass compares 927 == 2), whose draw
+    // keeps the clamp. The key off (bits 24-27 never set): the base's value.
+    if (banjo::renut_gpu::TargetBiasRgbOn() && banjo::renut_gpu::DmcWideAlphaOn() && !(key.sasrt_words[7] & 0x10000u) &&
+        (key.sasrt_words[7] & 0x0F000000u))
+      spec[spec_count++] = plume::RenderSpecConstant(927, 1u | (((key.sasrt_words[7] >> 24) & 0xFu) << 4));
+    else if (banjo::renut_gpu::TargetBiasRgbOn())
       spec[spec_count++] = plume::RenderSpecConstant(927, (key.sasrt_words[7] & 0x10000u) ? 2u : 1u);  // asura-nx: 2
                                                     // fixed16 (bit 16 is set only with asura_renut_fixed16_bias)
   }
@@ -1292,7 +1298,10 @@ REXCVAR_DEFINE_BOOL(asura_renut_generic_keeps_clamps, true, "Banjo/Renut",
                     "fixed-point clamps (more generic variants in the DKSH cache). false: as before. Read at start")
     .lifecycle(::rex::cvar::Lifecycle::kInitOnly);
 inline uint32_t AsuraGenericKeptWord7() {
-  static const uint32_t keep = REXCVAR_GET(asura_renut_generic_keeps_clamps) ? 0xF0010000u : 0u;
+  // dmc_devil-nx (dmc_renut_target_wide_alpha): bits 24-27 kept as well, with both keys on (0xF0010000 otherwise).
+  static const uint32_t keep = REXCVAR_GET(asura_renut_generic_keeps_clamps)
+                                   ? (0xF0010000u | (banjo::renut_gpu::DmcWideAlphaOn() ? 0x0F000000u : 0u))
+                                   : 0u;
   return keep;
 }
 

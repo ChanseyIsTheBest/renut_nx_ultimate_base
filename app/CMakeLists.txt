@@ -201,11 +201,27 @@ endif()
 # port sets its own here.
 set(RENUT_GAME_NAME "Beautiful Katamari")
 
+# pokersmash-nx (2026-11-25): the number of bulk-copy shards, set here only. tools/localize_native.py reads this line
+# (one app/generated/hot/banjo_hot_bulk_<k>.inc per shard) and each shard k is compiled by src/cpu/banjo_hot_shard_<k>.cpp
+# (two lines: shard 0's, with its number). 12 here; Poker Smash's 7,110 copies took 60 (12 shards of 22 MB of C++ each,
+# one compile holding about 8 GB; 4.4 MB each at 60). A port that raises it adds the new shard files.
+set(BANJO_HOT_SHARD_COUNT 12)
+math(EXPR _banjo_hot_last_shard "${BANJO_HOT_SHARD_COUNT} - 1")
+set(BANJO_HOT_SHARD_FILES)
+foreach(_shard RANGE 0 ${_banjo_hot_last_shard})
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/cpu/banjo_hot_shard_${_shard}.cpp")
+        message(FATAL_ERROR "BANJO_HOT_SHARD_COUNT is ${BANJO_HOT_SHARD_COUNT}, but src/cpu/banjo_hot_shard_${_shard}.cpp "
+                            "is missing: add it (src/cpu/banjo_hot_shard_0.cpp with its number)")
+    endif()
+    list(APPEND BANJO_HOT_SHARD_FILES src/cpu/banjo_hot_shard_${_shard}.cpp)
+endforeach()
+
 set(RENUT_SOURCES
     src/main.cpp
     src/build_stamp.cpp  # port 193: the build stamp, the first line of every log (cmake/build_stamp.cmake)
     src/katamari_keys.cpp
     src/game_menu.cpp  # blur-nx (2026-11-18): the game menu (A+B+X+Y+L+R on the Switch, F8 on the PC)
+    src/gamer_picture.cpp  # pokersmash-nx (2026-11-25): the gamer picture from a Switch user's icon (keys off here)
     src/shader_prep_screen.cpp  # S4ep2-XBLA-nx: the "Preparing shaders" screen (s4ep2_prepare_shaders_list)
     src/blur_small_alloc.cpp  # blur-nx (2026-11-17, #220; port 151): small C++ allocations per thread (Switch; 32 MB)
     # katamari-nx (2026-10-31): DLC packages in the "dlc" folder next to the NRO installed at start (reNut upstream's).
@@ -243,18 +259,7 @@ set(RENUT_SOURCES
     # katamari-nx: the native copies of hot game functions (banjo_hot_guest.cpp and its shards), from this game's PC
     # profile (docs/katamari-notes.md, "Hot functions"): src/cpu/hot/localized.txt and hand.txt.
     src/cpu/banjo_hot_guest.cpp
-    src/cpu/banjo_hot_shard_0.cpp
-    src/cpu/banjo_hot_shard_1.cpp
-    src/cpu/banjo_hot_shard_2.cpp
-    src/cpu/banjo_hot_shard_3.cpp
-    src/cpu/banjo_hot_shard_4.cpp
-    src/cpu/banjo_hot_shard_5.cpp
-    src/cpu/banjo_hot_shard_6.cpp
-    src/cpu/banjo_hot_shard_7.cpp
-    src/cpu/banjo_hot_shard_8.cpp
-    src/cpu/banjo_hot_shard_9.cpp
-    src/cpu/banjo_hot_shard_10.cpp
-    src/cpu/banjo_hot_shard_11.cpp
+    ${BANJO_HOT_SHARD_FILES}  # BANJO_HOT_SHARD_COUNT, above
     src/profiler/banjo_pc_profiler.cpp
     # PNG captures of the presented game image (nfsmw_captura_cada_s), from nfsmw-nx: for testing.
     src/native/nfsmw_nativo_captura.cpp
@@ -320,12 +325,36 @@ if(BANJO_RENUT_RENDERER)
     include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/banjo_renut_gpu.cmake")
 endif()
 
+# dmc_devil-nx (DMC-12; its docs/dmc_devil-notes.md: "app/CMakeLists.txt omitted renut_NTJobCode from -ffp-contract=off
+# -fno-strict-aliasing -fno-math-errno, triggering strict-aliasing UB (700+ GCC 16 warnings) and FMA contraction in
+# sub_880103E0 (MorphTargetBlending) and sub_88011240 (CPUSkinningJob)"): a game's other modules (a library per
+# [[modules]] entry of the manifest, generated/dll_targets.cmake; the codegen's template lists them in the global
+# property REXGLUE_DLL_MODULE_TARGETS, and a port may name more in RENUT_MODULE_TARGETS) are game code too, and get the
+# rules renut_recomp gets below: -ffp-contract=off -fno-strict-aliasing, -fno-math-errno (BANJO_GENERATED_MATH_FLAGS),
+# -fomit-frame-pointer (BANJO_SWITCH_OMIT_FRAME_POINTER) and the round definitions. Not -fno-trapping-math: the
+# exceptions to it (tools/fp_env_files.py) list only the main tree's FPSCR writers, so a module keeps -ftrapping-math.
+# OFF: only renut and renut_recomp, as before. A game without other modules (Katamari): nothing changes either way.
+option(DMC_MODULE_TARGET_FLAGS "A game's other modules' targets get the generated-code flags too (dmc_devil-nx)" ON)
+set(RENUT_MODULE_TARGETS "" CACHE STRING "Targets of a game's other modules beyond the codegen's list (; separated)")
+set(_renut_module_targets)
+if(DMC_MODULE_TARGET_FLAGS)
+    get_property(_renut_module_targets GLOBAL PROPERTY REXGLUE_DLL_MODULE_TARGETS)
+    list(APPEND _renut_module_targets ${RENUT_MODULE_TARGETS})
+    if(_renut_module_targets)
+        list(REMOVE_DUPLICATES _renut_module_targets)
+        list(REMOVE_ITEM _renut_module_targets renut renut_recomp)
+    endif()
+    if(_renut_module_targets)
+        message(STATUS "renut: the game's other modules get the generated-code flags: ${_renut_module_targets}")
+    endif()
+endif()
+
 # The SDK compiles its own targets with these (sdk/CMakeLists.txt) but they did not reach the app's: without them GCC
 # (Switch) fuses separate guest multiplies and adds into FMAs across statements (-ffp-contract=fast is its default),
 # so the recompiled game's floating point drifted from the Xbox 360 and from the PC build (x86-64-v2 has no FMA), and
 # type-punned guest register/memory accesses relied on strict aliasing. The native game-function replacements are
 # checked against the recompiled code built this way.
-foreach(_banjo_target renut renut_recomp)
+foreach(_banjo_target renut renut_recomp ${_renut_module_targets})
     if(TARGET ${_banjo_target})
         target_compile_options(${_banjo_target} PRIVATE -ffp-contract=off -fno-strict-aliasing)
     endif()
@@ -345,6 +374,11 @@ option(BANJO_GENERATED_MATH_FLAGS "-fno-math-errno on the generated game code" O
 option(BANJO_GENERATED_NO_TRAPPING_MATH "-fno-trapping-math on the generated game code (not exact, see the comment)" OFF)
 if(BANJO_GENERATED_MATH_FLAGS AND TARGET renut_recomp AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(renut_recomp PRIVATE -fno-math-errno)
+    foreach(_renut_module ${_renut_module_targets})  # dmc_devil-nx (DMC_MODULE_TARGET_FLAGS)
+        if(TARGET ${_renut_module})
+            target_compile_options(${_renut_module} PRIVATE -fno-math-errno)
+        endif()
+    endforeach()
     # banjo-nx (2026-11-19, the rebase; blur-nx's BLUR_NO_TRAPPING_MATH form, 2026-11-16, CG-26): only with
     # BLUR_FPCR_ONE_MODE (no flush-mode switches left in game code), and the files that write the guest FPSCR keep
     # -ftrapping-math (tools/fp_env_files.py's list, below the round definitions).
@@ -363,18 +397,7 @@ endif()
 # the any-mode helper counts stay complete.
 # 2026-10-22: the bulk shards are the same kind of code (BANJO_HOT_SOURCES: every file that compiles copies).
 set(BANJO_HOT_SOURCES src/cpu/banjo_hot_guest.cpp
-    src/cpu/banjo_hot_shard_0.cpp
-    src/cpu/banjo_hot_shard_1.cpp
-    src/cpu/banjo_hot_shard_2.cpp
-    src/cpu/banjo_hot_shard_3.cpp
-    src/cpu/banjo_hot_shard_4.cpp
-    src/cpu/banjo_hot_shard_5.cpp
-    src/cpu/banjo_hot_shard_6.cpp
-    src/cpu/banjo_hot_shard_7.cpp
-    src/cpu/banjo_hot_shard_8.cpp
-    src/cpu/banjo_hot_shard_9.cpp
-    src/cpu/banjo_hot_shard_10.cpp
-    src/cpu/banjo_hot_shard_11.cpp
+    ${BANJO_HOT_SHARD_FILES}
 )
 # S4ep2-XBLA-nx (github.com/FurryLilManChild/S4ep2-XBLA-nx, GPL-3.0, 0.5.0; its ce9ec65d "Make the hot-copy sources wait
 # for the code generator on a fresh build"): these include generated/renut_pch.h and generated/hot, so on a fresh tree
@@ -416,9 +439,9 @@ option(SASRT_HOT_MERGED_STORES "Localized copies: merged unaligned vector stores
 # renut-ultimate (2026-11-11, port 84, the user's call): OFF by default. vivapinata-nx's guard found 8 differences from it
 # (the link register's save elided in one of a copy's forms and not the other: forms in different translation units,
 # only one with the define). ON in a game that has checked its copies with it (a guard run, 0 differences).
-option(SASRT_HOT_LR_ELIDE "The bulk copies (shards 0-11): the link register's dead moves left out (REX_LR_MOVES_ELIDE)" OFF)
+option(SASRT_HOT_LR_ELIDE "The bulk copies (every shard): the link register's dead moves left out (REX_LR_MOVES_ELIDE)" OFF)
 option(SASRT_HOT_PREFETCH "Localized copies: a prefetch after a loop's next-pointer load (REX_PREFETCH_GUEST)" ON)
-option(SASRT_HOT_CARD_RUNS "The bulk copies (shards 0-11): store cards marked per run of stores to a page" ON)
+option(SASRT_HOT_CARD_RUNS "The bulk copies (every shard): store cards marked per run of stores to a page" ON)
 if(NOT SASRT_HOT_MERGED_STORES)
     target_compile_definitions(renut PRIVATE SASRT_HOT_MERGED_STORES_OFF)
 endif()
@@ -426,12 +449,12 @@ if(NOT SASRT_HOT_PREFETCH)
     target_compile_definitions(renut PRIVATE SASRT_HOT_PREFETCH_OFF)
 endif()
 if(SASRT_HOT_LR_ELIDE)
-    foreach(_shard RANGE 0 11)
+    foreach(_shard RANGE 0 ${_banjo_hot_last_shard})
         set_property(SOURCE src/cpu/banjo_hot_shard_${_shard}.cpp APPEND PROPERTY COMPILE_DEFINITIONS REX_LR_MOVES_ELIDE)
     endforeach()
 endif()
 if(SASRT_HOT_CARD_RUNS)
-    foreach(_shard RANGE 0 11)
+    foreach(_shard RANGE 0 ${_banjo_hot_last_shard})
         set_property(SOURCE src/cpu/banjo_hot_shard_${_shard}.cpp APPEND PROPERTY COMPILE_DEFINITIONS SASRT_HOT_CARD_RUNS)
     endforeach()
 endif()
@@ -688,11 +711,16 @@ if(REXGLUE_PLATFORM_SWITCH)
     endif()
     if(BANJO_SWITCH_OMIT_FRAME_POINTER AND TARGET renut_recomp)
         target_compile_options(renut_recomp PRIVATE -fomit-frame-pointer)
+        foreach(_renut_module ${_renut_module_targets})  # dmc_devil-nx (DMC_MODULE_TARGET_FLAGS)
+            if(TARGET ${_renut_module})
+                target_compile_options(${_renut_module} PRIVATE -fomit-frame-pointer)
+            endif()
+        endforeach()
         # The localized copies are game code too (sa2-nx: the same rule for that file).
         set_property(SOURCE ${BANJO_HOT_SOURCES} APPEND PROPERTY COMPILE_OPTIONS -fomit-frame-pointer)
     endif()
 endif()
-foreach(_banjo_target renut_recomp renut)
+foreach(_banjo_target renut_recomp renut ${_renut_module_targets})
     if(TARGET ${_banjo_target} AND _banjo_round_definitions)
         target_compile_definitions(${_banjo_target} PRIVATE ${_banjo_round_definitions})
     endif()

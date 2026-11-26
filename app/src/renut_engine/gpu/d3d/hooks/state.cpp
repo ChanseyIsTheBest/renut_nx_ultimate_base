@@ -19,6 +19,7 @@
 #include "renut_engine/gpu/banjo_renut_tuning.h"  // blur-nx (2026-11-10, port 76; its key 213): OcclusionQueriesOn
 #include "renut_engine/gpu/log.h"
 #include "renut_engine/gpu/render/surfaces.h"  // blur-nx (2026-11-10, port 76; its key 215): NoteSurfaceHeader
+#include "renut_engine/gpu/backend/queued.h"  // dmc_devil-nx: FlushDeferredVertices (D3DDevice_EndIndexedVertices_hook)
 #include <algorithm>
 #include <bit>
 #include <chrono>
@@ -33,6 +34,15 @@ REXCVAR_DEFINE_INT32(katamari_diag_viewport_log_s, 0, "Katamari/Debug",
                      "device's viewport and window scissor after each ([vplog]; 0 = off)");
 REXCVAR_DEFINE_INT32(katamari_diag_viewport_log_count, 400, "Katamari/Debug",
                      "Diagnostic: how many calls katamari_diag_viewport_log_s logs");
+// dmc_devil-nx (527367bb, its D3DDevice_EndVertices_hook; BUGLOG DMC-02): see D3DDevice_EndIndexedVertices_hook.
+REXCVAR_DEFINE_BOOL(dmc_end_vertices_flush, true, "Banjo/Enhancements",
+                    "dmc_devil-nx: the end of a Begin*Vertices draw (EndIndexedVertices, or XDK 21119's called "
+                    "EndVertices, where a port binds the same body) queues the device's deferred draw at once, with "
+                    "its vertices and indices as the game has written them, as an ordinary draw is queued at its call "
+                    "(on the 360 the inline data is complete in the ring at End). Exact: the device's next hook "
+                    "copied the same bytes. "
+                    "Inert until a port binds the hook. false: the ring pointer restored only, as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 using namespace renut::gpu;
 
@@ -137,9 +147,9 @@ void D3DDevice_GetViewport_hook(u32 device, mapped_u32 viewport) {
   if (!d || !viewport)
     return;
   for (u32 i = 0; i < 4; ++i)  // fctidz, the low word
-    viewport[i] = u32(native::TruncateToI64(d.F(0x3160 + i * 4)));  // katamari-nx: 0x3170->0x3160
-  viewport[4] = d.W(0x3170);  // katamari-nx: 0x3180->0x3170
-  viewport[5] = d.W(0x3174);  // katamari-nx: 0x3184->0x3174
+    viewport[i] = u32(native::TruncateToI64(d.F(d3d::kDeviceOffsetViewport + i * 4)));  // dmc_devil-nx: d3d.h's (katamari-nx: 0x3170->0x3160)
+  viewport[4] = d.W(d3d::kDeviceOffsetViewport + 16);  // min z, 0x3170 (katamari-nx: 0x3180->0x3170)
+  viewport[5] = d.W(d3d::kDeviceOffsetViewport + 20);  // max z, 0x3174 (katamari-nx: 0x3184->0x3174)
 }
 
 // void D3DDevice_SetClipPlane(D3DDevice*, DWORD Index, const float *pPlane) [0x826370E8]
@@ -217,10 +227,20 @@ void D3DDevice_SetPixelShaderConstantI_hook(u32 device, u32 start, mapped_u32 da
 
 // void D3DDevice_EndIndexedVertices(D3DDevice*) [0x8263ED90]: the inline end
 // of BeginIndexedVertices, back to the ring pointer it saved.
+// dmc_devil-nx (527367bb): XDK 21119 ends both Begin*Vertices forms with a called D3DDevice_EndVertices (DmC's
+// sub_8253A390, "D3DDevice_EndVertices / EndIndexedVertices"); a port at such an XDK binds this body there:
+//   BANJO_RENUT_HOOK(sub_<its address>, D3DDevice_EndIndexedVertices_hook);
+// The saved ring pointer is d3d.h's kDeviceOffsetVerticesRingEnd (0x3474 here, the literal before), the one
+// BeginVertices / BeginIndexedVertices store, so a port's remap of d3d.h moves both.
 void D3DDevice_EndIndexedVertices_hook(u32 device) {
   native::Device d = native::DeviceAt(device);
   if (d)
-    d.SetW(native::off::Ring, d.W(0x3474));  // katamari-nx: 0x3484->0x3474
+    d.SetW(native::off::Ring, d.W(d3d::kDeviceOffsetVerticesRingEnd));  // katamari-nx: 0x3484->0x3474
+  // dmc_devil-nx (dmc_end_vertices_flush): the draw's data is complete here; queued now rather than at the device's
+  // next hook (the same bytes: the game writes a Begin*Vertices draw's data only between Begin and End).
+  static const bool flush = REXCVAR_GET(dmc_end_vertices_flush);
+  if (flush && d)
+    FlushDeferredVertices(device);
 }
 
 // void D3DDevice_SetTexture(D3DDevice*, DWORD Sampler, D3DBaseTexture*,

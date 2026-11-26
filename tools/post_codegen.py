@@ -44,6 +44,7 @@ Every step is idempotent, and so is the sequence (a second run on a processed tr
 
   python tools/post_codegen.py [--gen <generated folder>]
 """
+import glob
 import os
 import re
 import subprocess
@@ -70,6 +71,37 @@ PROMOTIONS = os.path.join(APP, 'indirect_promotions.txt')
 # function boundary of the game, which would make every function look hooked.
 HOOK_TOMLS = [APP, os.path.join(APP, 'config', 'renut_hooks.toml'), os.path.join(APP, 'config', 'renut_gpu_funcs.toml'),
               os.path.join(APP, 'config', 'renut_crt.toml')]
+
+
+def module_folders(gen, scratch):
+    """dmc_devil-nx (DMC-12, its docs/dmc_devil-notes.md: "tools/post_codegen.py omitted app/generated/ntjobcode/ (NTJobCode.xex,
+    515 functions running MorphTargetBlending / CPUSkinningJob), leaving all 4,320 non-stack guest stores without store
+    cards while Switch banjo_renut_store_cards = true skipped re-uploading mutated morph VBs"): the folders of a game's
+    other modules (a manifest's [[modules]], the codegen's dll_targets.cmake). Each has its own <project>_recomp.N.cpp
+    files and one <project>_pch.h, so store_cards.py runs on it as on the main tree. Found as gen's subfolders (the
+    codegen's usual "generated/<module>") and, on the real tree, as the manifest's out_directory_path of each [[modules]]
+    entry. DMC_MODULE_CARDS=0 in the environment: none (as before). Nothing found: nothing changes."""
+    if os.environ.get('DMC_MODULE_CARDS', '1') == '0':
+        return []
+    candidates = [os.path.join(gen, name) for name in sorted(os.listdir(gen)) if name != 'hot']
+    if not scratch:
+        try:
+            text = open(os.path.join(APP, 'renut_manifest.toml'), encoding='utf-8').read()
+        except OSError:
+            text = ''
+        for block in re.split(r'(?m)^\s*\[\[modules\]\]\s*$', text)[1:]:
+            block = re.split(r'(?m)^\s*\[', block, maxsplit=1)[0]
+            m = re.search(r'(?m)^\s*out_directory_path\s*=\s*"([^"]+)"', block)
+            if m:
+                candidates.append(os.path.join(APP, m.group(1)))
+    found = []
+    for folder in candidates:
+        folder = os.path.normpath(os.path.abspath(folder))
+        if folder in found or not os.path.isdir(folder) or folder == os.path.normpath(os.path.abspath(gen)):
+            continue
+        if glob.glob(os.path.join(folder, '*_recomp.*.cpp')) and len(glob.glob(os.path.join(folder, '*_pch.h'))) == 1:
+            found.append(folder)
+    return found
 
 
 def run(*args):
@@ -261,6 +293,11 @@ def main():
     # banjo-nx (2026-10-19, CPU proposal 1): the store cards, after everything else (the inline copies included): every
     # store outside the stack marks its page for Renut's cached vertex and index copies (REX_STORE_CARDS_OFF).
     run(tool('store_cards.py'), '--gen', gen)
+    # dmc_devil-nx (DMC-12): and in the game's other modules (module_folders; DMC_MODULE_CARDS=0 skips them). They get
+    # no other step, so their compare-and-swaps are still the generator's builtin: --raw-cas cards those too.
+    # store_cards.py takes its own cards out before it puts them in, so a second run changes nothing.
+    for folder in module_folders(gen, scratch):
+        run(tool('store_cards.py'), '--gen', folder, '--raw-cas')
     # blur-nx (2026-11-11, CPU batch 2, docs/vector-store-ideas.md VS-14): in the copies, one card check per group of
     # card stores to the same base in a straight stretch (two at its end: the lowest and highest offset's page).
     run(tool('card_groups.py'), '--gen', gen)

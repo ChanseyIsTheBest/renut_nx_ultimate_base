@@ -82,7 +82,24 @@ IMAGE = os.path.join(ROOT, 'out', 'renut_image.bin')
 INDEX = os.path.join(ROOT, 'out', 'localize_index.json')
 LIST = os.path.join(APP, 'src', 'cpu', 'hot', 'localized.txt')
 BULK = os.path.join(APP, 'src', 'cpu', 'hot', 'localized_bulk.txt')
-SHARDS = 12  # app/src/cpu/banjo_hot_shard_<k>.cpp (app/CMakeLists.txt lists them)
+
+
+def shard_count():
+    """pokersmash-nx (2026-11-25; its 60 shards): app/CMakeLists.txt's `set(BANJO_HOT_SHARD_COUNT N)`, the one place
+    the number is set (CMake compiles app/src/cpu/banjo_hot_shard_<k>.cpp for k < N); 12 without the line, the count
+    before."""
+    try:
+        text = open(os.path.join(APP, 'CMakeLists.txt'), encoding='utf-8', errors='replace').read()
+    except OSError:
+        return 12
+    m = re.search(r'^\s*set\(BANJO_HOT_SHARD_COUNT\s+(\d+)\s*\)', text, re.M)
+    n = int(m.group(1)) if m else 12
+    if not 1 <= n <= 256:
+        sys.exit(f'localize_native: app/CMakeLists.txt sets BANJO_HOT_SHARD_COUNT {n}: 1 to 256')
+    return n
+
+
+SHARDS = shard_count()  # app/src/cpu/banjo_hot_shard_<k>.cpp, k < SHARDS
 # sasrt-nx (2026-11-11, port 74; its idea 37): a copy writes back at a return only the registers a caller can read:
 # tools/leaf_dead_stores.py's LiveOut of the function (whole program, no ABI assumption: the 360 compiler allocates
 # registers across functions), plus r1, r2, r13, r3 and f1 and every non-volatile one, as leaf_dead_stores.py's own
@@ -635,6 +652,14 @@ def hand_entries(path=HAND):
                 # blur-nx (2026-11-16): an inexact native (audio) declines while the guard runs, so the guard compares
                 # the exact copy: it adds nothing to the hook's skip set.
                 entry['inexact'] = True
+            elif key == 'prefetch':
+                # pokersmash-nx (2026-11-25): a PREFETCH native: it only asks for cache lines and always declines, so
+                # the generated copy runs on every call. It adds nothing to the hook's skip set (as inexact), and the
+                # copy behind it is compiled as any copy: not out of line and cold, the form for the copy of a native
+                # that answers the calls itself (there the copy runs only when it declines). Poker Smash's 14 such
+                # natives measured nothing on its console (rc4 against rc5, per unit of work): see its notes.
+                entry['inexact'] = True
+                entry['prefetch'] = True
             elif key == 'calls':
                 # blur-nx (2026-11-16, the 15 ms batch): a native that calls guest functions (see calls_struct).
                 entry['calls'] = ['sub_' + c.upper() if re.fullmatch(r'[0-9A-Fa-f]{8}', c) else c
@@ -1373,7 +1398,7 @@ def localize(index, hooks, reach, root, what, opts, out_dir, quiet=False, hand=N
               (funcs[m]['lines'] <= inline_limit or calls_to[m] == 1) and inline_limit > 0}
     # The generated copy of a function with a hand-written native only runs when the native declines: out of line and
     # cold (inlined, it took registers away from the hand-written path: every call then saved five pairs of them).
-    forced -= set(hand)
+    forced -= {h for h in hand if not hand[h].get('prefetch')}  # pokersmash-nx: a prefetch native's copy always runs
     # sasrt-nx (2026-11-11, port 74; its idea 34): a constant argument reaches a callee only when the compiler inlines
     # it (IPA-CP cannot follow the context: sasrt-nx's batch NRO had 1 .constprop clone among the copies). The members
     # forced inline above took 5,413 of sasrt-nx's 9,412 calls between copies; of the others, those called with a literal
@@ -1388,8 +1413,8 @@ def localize(index, hooks, reach, root, what, opts, out_dir, quiet=False, hand=N
             for i, l in enumerate(ls):
                 for m in re.finditer(r'\b(?:__imp__)?(sub_[0-9A-F]{8})\(ctx, base\);', l):
                     b = m.group(1)
-                    if (b not in members[1:] or b in forced or b in hand or reaches_itself(b) or calls_to[b] > 3
-                            or funcs[b]['lines'] > 4 * inline_limit):
+                    if (b not in members[1:] or b in forced or (b in hand and not hand[b].get('prefetch'))
+                            or reaches_itself(b) or calls_to[b] > 3 or funcs[b]['lines'] > 4 * inline_limit):
                         continue
                     for k in range(i - 1, max(-1, i - 9), -1):
                         if LOOP_LABEL.match(ls[k]):
@@ -1503,7 +1528,8 @@ def localize(index, hooks, reach, root, what, opts, out_dir, quiet=False, hand=N
                         LOOP_STATS[0] += 1
             if localized:
                 how = ('[[gnu::always_inline]] static inline' if name in forced
-                       else '[[gnu::noinline, gnu::cold]] static' if name in hand else 'static')
+                       else '[[gnu::noinline, gnu::cold]] static' if name in hand and not hand[name].get('prefetch')
+                       else 'static')
                 head = (f'template <class S>\n{how} '
                         f'void f_{name}(PPCContext& __restrict ctx, uint8_t* base, [[maybe_unused]] S& s)')
                 declarations.append(head + ';')
@@ -1691,6 +1717,13 @@ def write_list(entries, out_dir, bulk=()):
             same = False
         if not same:
             open(path, 'w', encoding='utf-8', newline='\n').write(text)
+    # pokersmash-nx (2026-11-25): a shard with no source file to compile it would leave its copies out of the build.
+    missing = [k for k in range(SHARDS)
+               if not os.path.isfile(os.path.join(APP, 'src', 'cpu', f'banjo_hot_shard_{k}.cpp'))]
+    if missing:
+        print(f'localize_native: WARNING: BANJO_HOT_SHARD_COUNT is {SHARDS} but app/src/cpu/banjo_hot_shard_<k>.cpp is '
+              f'missing for k = {", ".join(map(str, missing[:12]))}{" ..." if len(missing) > 12 else ""} (CMake stops '
+              f'on it): add them (shard 0\'s file with its number)')
     # Headers of functions no longer in the lists (this tool's own output) go.
     keep = {f'n_{identifier(root)}' for root, _, _ in list(entries) + list(bulk)}
     if os.path.isdir(out_dir):
@@ -1750,7 +1783,19 @@ def main():
     index = Index(a.gen)
     hand = hand_entries()
     listed = {e[0] for e in entries}
-    bulk = [e for e in list_entries(a.bulk) if e[0] not in listed and e[0] not in hand] if a.bulk else []
+    bulk_all = list_entries(a.bulk) if a.bulk else []
+    bulk = [e for e in bulk_all if e[0] not in listed and e[0] not in hand]
+    # pokersmash-nx (2026-11-25, its post_codegen19): every hand.txt function is left out of the bulk list above, so a
+    # function that is in hand.txt and the bulk list but has no localized.txt line loses the machine copy it had and
+    # gets no hook of its own: its native is placed only inside its callers' copies (Poker Smash's 15 natives became
+    # real calls of the generated code that way, 2,269 of one of them). A native meant to run only inside its callers'
+    # copies (the base's memcpy) is in no list and is not named here.
+    lost = sorted({e[0] for e in bulk_all if e[0] in hand and e[0] not in listed})
+    if lost:
+        print(f'localize_native: WARNING: {len(lost)} hand.txt functions are on the bulk list but not in localized.txt: '
+              + ', '.join(lost[:12]) + (' ...' if len(lost) > 12 else '') + ' (the bulk list leaves hand.txt functions '
+              'out: no copy and no hook of their own, their native only inside their callers\' copies); give each a '
+              'localized.txt line')
     # A bulk function is a native too: its copy touches no more than its original (and it is not an app hook).
     hooks = Hooks([e[0] for e in entries] + [e[0] for e in bulk])
     # ilomilo-nx's trap (2026-11-25; renut-ultimate port 291): a bulk entry an app or SDK source names (a hook, most

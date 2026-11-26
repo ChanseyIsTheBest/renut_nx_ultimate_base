@@ -23,6 +23,15 @@
 #include <rex/system/xfile.h>
 #include <rex/system/xthread.h>
 
+#include "update_patch_path.h"
+
+REXCVAR_DEFINE_BOOL(dmc_update_patch_module_path, true, "Kernel",
+                    "dmc_devil-nx: a module's title-update patch is also looked for at the module's own path in the "
+                    "update partition (update:\\Binaries\\...\\NTJobCode.xexp for a game's "
+                    "Binaries\\...\\NTJobCode.xex), after the two places before (next to the module, update:\\<file>p). "
+                    "false: only those two, as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
 namespace rex::system {
 
 UserModule::UserModule(KernelState* kernel_state)
@@ -116,6 +125,14 @@ X_STATUS UserModule::LoadFromFile(const std::string_view path) {
       file = path_.substr(slash == std::string::npos ? 0 : slash + 1);
     }
     patch_entry = kernel_state_->file_system()->ResolvePath("update:\\" + file + "p");
+    // dmc_devil-nx (DMC-16): then at the module's own path in the update (update_patch_path.h).
+    static const bool at_module_path = REXCVAR_GET(dmc_update_patch_module_path);
+    if (!patch_entry && at_module_path) {
+      const std::string at_path = UpdatePatchAtModulePath(fs_entry->path(), file);
+      if (!at_path.empty()) {
+        patch_entry = kernel_state_->file_system()->ResolvePath(at_path);
+      }
+    }
   }
   if (patch_entry) {
     auto patch_path = patch_entry->absolute_path();

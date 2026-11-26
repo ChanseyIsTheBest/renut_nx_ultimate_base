@@ -10,6 +10,9 @@
 # REXGLUE_SWITCH_NVK_SDK pointing at the Mesa Horizon SDK.
 #==========================================================
 include_guard(GLOBAL)
+# dmc_devil-nx (4858b474): this folder, for patch_nacp_utf8.py (rexglue_switch_add_nro).
+set(_REXGLUE_SWITCH_CMAKE_DIR "${CMAKE_CURRENT_LIST_DIR}" CACHE INTERNAL "rexglue switch cmake dir")
+option(DMC_NACP_UTF8 "The NRO's title, author and version in UTF-8 (patch_nacp_utf8.py after nacptool)" ON)
 
 set(REXGLUE_SWITCH_NVK_SDK "" CACHE PATH
     "portlibs/switch directory of the Mesa Horizon SDK (static NVK driver)")
@@ -176,9 +179,30 @@ function(rexglue_switch_add_nro target_name)
     # Changing the icon must re-run packaging even when executable sources are unchanged.
     set_property(TARGET ${target_name} APPEND PROPERTY LINK_DEPENDS "${ARG_ICON}")
     set(_dir "$<TARGET_FILE_DIR:${target_name}>")
+    # dmc_devil-nx (4858b474): nacptool.exe gets its arguments in the Windows ANSI code page, so a title or author
+    # outside ASCII (the port's author name) reached the NACP as other bytes. The three strings go to a UTF-8 file here and
+    # patch_nacp_utf8.py writes them after nacptool; ASCII strings leave nacptool's file as it is. DMC_NACP_UTF8 OFF, or
+    # no Python: nacptool's bytes alone, as before.
+    set(_nacp_patch_cmd)
+    if(DMC_NACP_UTF8)
+        set(_nacp_meta "${CMAKE_CURRENT_BINARY_DIR}/${target_name}_nacp_meta.txt")
+        file(WRITE "${_nacp_meta}" "${ARG_NAME}\n${ARG_AUTHOR}\n${ARG_VERSION}\n")
+        set(_nacp_py "${Python3_EXECUTABLE}")
+        if(NOT _nacp_py)
+            find_package(Python3 COMPONENTS Interpreter QUIET)
+            set(_nacp_py "${Python3_EXECUTABLE}")
+        endif()
+        if(_nacp_py)
+            set(_nacp_patch_cmd COMMAND "${_nacp_py}" -I "${_REXGLUE_SWITCH_CMAKE_DIR}/patch_nacp_utf8.py"
+                "${_dir}/${target_name}.nacp" "${_nacp_meta}")
+        else()
+            message(STATUS "rexglue: no Python found: ${target_name}.nacp keeps nacptool's bytes (DMC_NACP_UTF8)")
+        endif()
+    endif()
     add_custom_command(TARGET ${target_name} POST_BUILD
         COMMAND "${REXGLUE_NACPTOOL}" --create "${ARG_NAME}" "${ARG_AUTHOR}" "${ARG_VERSION}"
             "${_dir}/${target_name}.nacp"
+        ${_nacp_patch_cmd}
         COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:${target_name}>"
             "${_dir}/${target_name}.stripped.elf"
         COMMAND "${CMAKE_STRIP}" --strip-all "${_dir}/${target_name}.stripped.elf"

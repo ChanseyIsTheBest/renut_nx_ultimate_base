@@ -85,6 +85,16 @@ REXCVAR_DEFINE_INT32(kernel_deferred_overlapped_delay_ms, 0, "Kernel",
                      "(still asynchronous), with kernel_overlapped_reset_event on. 100 is Xenia's and the value before "
                      "(a save list's load screen that opens 19 saves waited 1.9 s; each one's own work ~15 ms)");
 
+// pokersmash-nx (2026-11-25): see PrepareModuleLaunch.
+REXCVAR_DEFINE_BOOL(kernel_main_thread_cpu0, false, "Kernel",
+                    "The title's main thread starts on hardware thread 0 (processor mask 1), as on the console: its "
+                    "KeGetCurrentProcessorNumber is 0 (Poker Smash's main thread calls DbgBreakPoint otherwise). The "
+                    "round-robin number it would have taken is skipped, so every later thread keeps the number it had. "
+                    "On the PC (6 or more logical processors) the main thread's host affinity is then processor 0. "
+                    "Off (the base's default): the main thread takes the next number of the round-robin every thread "
+                    "without a mask takes, as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
 namespace rex::ppc {
 bool g_u64_args_whole = false;  // port 143: rex/ppc/function.h
 }  // namespace rex::ppc
@@ -603,8 +613,20 @@ object_ref<XThread> KernelState::PrepareModuleLaunch(object_ref<UserModule> modu
 
   // Create a thread to run in.
   // We start suspended so the caller can inspect/attach before resume.
+  // pokersmash-nx (2026-11-25, kernel_main_thread_cpu0): the title's main thread on hardware thread 0, as on the
+  // console. Created without a processor mask it takes the next number of the round-robin (GetFakeCpuNumber), so its
+  // processor depends on how many threads were made before it: Poker Smash's main thread checks
+  // KeGetCurrentProcessorNumber() == 0 and calls DbgBreakPoint otherwise (sub_821F63B0), which stopped the game 14 s in
+  // on Renut (with the emulated GPU's threads made first the number happened to come out 0). The round-robin's number
+  // is still taken (and dropped), so the threads made after this one get the numbers they had before.
+  static const bool main_cpu0 = REXCVAR_GET(kernel_main_thread_cpu0);
+  uint32_t main_flags = X_CREATE_SUSPENDED;
+  if (main_cpu0) {
+    main_flags |= 0x01000000u;  // processor mask 1 (bits 24-31 of the creation flags): hardware thread 0
+    XThread::SkipFakeCpuNumber();
+  }
   auto thread = object_ref<XThread>(new XThread(
-      this, module->stack_size(), 0, module->entry_point(), 0, X_CREATE_SUSPENDED, true, true));
+      this, module->stack_size(), 0, module->entry_point(), 0, main_flags, true, true));
 
   // We know this is the 'main thread'.
   thread->set_name("Main XThread");

@@ -310,6 +310,47 @@ ports 198-318 (the hand-over fixes of ports 279 and 281 among them), never isola
 port shows which one breaks a picture on the current renderer. Its `sasrt_renut_depth_restore` on (the sun glow hidden
 by the scene again) stays a toml setting: the base keeps it off (port 202: Sonic 4 Episode I's white sky with it on).
 
+## 11. dmc_devil-nx's fixes and options (ports 334-357), off by the same rule
+
+| Key | Port | What it does when on |
+|---|---|---|
+| `dmc_crt_cards_after_write` | 339 | the CRT memcpy / memset hooks mark the store cards after the write, behind a barrier |
+| `DMC_RECOMP_KILL_LANES` (env, XenosRecomp) | 343 | vector kills compare all four lanes, DST writes only its lanes |
+| `dmc_renut_target_wide_alpha`, `DMC_TARGET_WIDE_ALPHA` (env, package time) | 344 | 16_16_16_16 targets with an exponent bias keep their wide alpha |
+| `dmc_renut_handover_fullscreen_take` | 347 | an opaque full-viewport rectangle takes a handed target's image (corners unchecked) |
+| `dmc_deko3d_uam_shared_barrier`, `_prmt_latency`, `_uniform_phi`, `_rescue_40` | 349 | uam compiler changes (each changes the shader cache's name) |
+| `dmc_renut_hw_srgb_rgba8` | 350 | hardware sRGB views for RGBA8 / BGRA8 guest textures |
+| `DMC_GLSL_PWL_FAST` (env, package time) | 355 | a four-line fit for the PWL gamma decode (up to 0.0019 off) |
+| `dmc_renut_view_sync_write_seq` | 356 | halo3's view sync by the alias written last |
+
+On: `dmc_static_modules` (334), `DMC_MODULE_CARDS` / CMake `DMC_MODULE_TARGET_FLAGS` (335), `dmc_update_patch_module_path`
+(336), `dmc_dlc_katamari_packs_title_gate` (337), CMake `DMC_NACP_UTF8` (338), `dmc_record_index_pending_count` and
+`dmc_end_vertices_flush` (340), `dmc_renut_stencil_keep_readonly` (345), `dmc_renut_color_handover_readonly` (346),
+`dmc_gpu_depth_resolve_float_only_fb` (348), `dmc_deko3d_blend_words_needed` and `dmc_deko3d_srgb_register_kept` (351), the
+tools' `DMC_VARIANT_GENERIC_TARGETS`, `DMC_GLSL_SAMPLERK_RAW`, `DMC_GLSL_OPT_PROCESSES`, `DMC_PACKAGE_PARALLEL` (352-354).
+Not taken: its PC Vulkan SPIR-V fix-ups (800 lines naming no shader they fix), the libnx TLS slot sanitizing (it assumes
+the layout before libnx 2.2.0: 27 slots at 0x108, where the base's libnx has 12 at 0x180), its own D3D device design
+at DmC's addresses, the GLSL wave and texture-CSE passes (uam already folds them; mix(x, x, t) -> x is wrong for a NaN t),
+the DLC extract-then-delete (it deletes the player's packages, against port 265), PC D3D12 samplers at 2048 (port 310
+keeps 1024 until a runtime count). An idea only: its Wwise fix (dmc_wwise_fix.cpp, at TU1's addresses) closes a
+race on Wwise's global callback that another Wwise game may share.
+
+## 12. pokersmash-nx's fixes and options (ports 358-369), off by the same rule
+
+| Key | Port | What it does when on |
+|---|---|---|
+| `kernel_main_thread_cpu0` | 359 | the title's main thread reads guest processor 0 (Poker Smash needs it) |
+| `pokersmash_av_host_stack_scan` | 360 | the PC crash report's host stack words into the executable |
+| `gamer_picture_user`, `gamer_picture_file` | 361 | a gamer picture from a Switch user's icon (0-7) or an image file |
+
+On: `pokersmash_profile_save_no_throw`, `pokersmash_profile_settings_lock`, `pokersmash_profile_binary_limit` (358),
+CMake `BANJO_HOT_SHARD_COUNT` 12 (363). Poker Smash's own toml sets `kernel_main_thread_cpu0 = true` and
+`gamer_picture_user = 0` at its next sync. Not taken: its native D3D state-block capture and apply (its biggest console
+win, 20.45 to 9.14 us a call, 49.1 to 62.1 fps), bound to its addresses and XDK 2.0.6534's device and block layout with
+raw offsets; the two sampler-state natives (general, but nothing in the base calls them); its 16 hand-written natives,
+GetFunction bindings and per-game defaults. Ideas only: whether Katamari's draw thread uses D3D state blocks; the base's
+memcpy native fits XDK 2.0.6534's memcpy (-52 % on its console).
+
 ## Keeping this page
 
 When a port reports that a key breaks its picture (with a comparison against the reference), its default goes to false

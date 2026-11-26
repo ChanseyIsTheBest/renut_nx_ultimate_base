@@ -25,7 +25,12 @@ The inline memcpy / memset of tools/inline_memcalls.py need no cards: they never
 ranges themselves, as do the other host writers of guest memory.
 
 REX_STORE_CARDS_OFF (compile time) makes every card a no-op. Idempotent; --restore puts the plain forms back.
-  python tools/store_cards.py --gen app/generated [--restore] [--check]
+  python tools/store_cards.py --gen app/generated [--restore] [--check] [--raw-cas]
+
+--raw-cas (dmc_devil-nx, DMC-12; tools/post_codegen.py passes it for a game's other modules, which tools/guest_cas.py
+does not process): the generator's own compare-and-swap, __sync_bool_compare_and_swap(...REX_RAW_ADDR(ea)...), is carded
+the way REX_GUEST_CAS_C cards REX_GUEST_CAS (the card in front; a failed swap marks a page it did not write, which only
+costs Renut a check):  x = (REX_CARD(ea), __sync_bool_compare_and_swap(...));
 """
 import argparse
 import glob
@@ -41,6 +46,9 @@ STORE = re.compile(r'\b(REX_STORE_D_U(?:8|16|32|64)|REX_STORE_U(?:8|16|32|64)|RE
 VEC = 'simde_mm_store_si128((simde__m128i*)REX_RAW_ADDR(ea),'
 DCBZ = re.compile(r'(?<![\w,] )\bmemset\(\(void\*\)REX_RAW_ADDR\(ea\), 0, (?:32|128)\);')
 CAS = 'REX_GUEST_CAS(reinterpret_cast<'
+# dmc_devil-nx (DMC-12): the generator's builtin, in a tree tools/guest_cas.py has not rewritten (--raw-cas only).
+SYNC_CAS = '__sync_bool_compare_and_swap(reinterpret_cast<'
+RAW_CAS = False
 EA_SET = re.compile(r'^\s*ea = (.*);\s*$')
 INSN = re.compile(r'^\s*// ')
 
@@ -190,6 +198,19 @@ def stack_arg(arg, lines, k):
     return bool(R1.search(arg))
 
 
+def call_end(line, open_paren):
+    """The index just after the ')' that closes the '(' at line[open_paren]; -1 when the line does not close it."""
+    depth = 0
+    for i in range(open_paren, len(line)):
+        if line[i] == '(':
+            depth += 1
+        elif line[i] == ')':
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    return -1
+
+
 def apply_line(lines, k, counts):
     line = lines[k]
     if INSN.match(line):
@@ -230,6 +251,15 @@ def apply_line(lines, k, counts):
         else:
             line = line.replace(CAS, 'REX_GUEST_CAS_C(ea, reinterpret_cast<')
             counts['cas'] += 1
+    if RAW_CAS and line.count(SYNC_CAS) == 1 and 'REX_RAW_ADDR(ea)' in line and 'REX_CARD(' not in line:
+        start = line.index(SYNC_CAS)
+        end = call_end(line, start + len('__sync_bool_compare_and_swap'))
+        if end != -1 and line[end:].lstrip().startswith(';'):
+            if stack_ea(lines, k):
+                counts['stack'] += 1
+            else:
+                line = line[:start] + '(REX_CARD(ea), ' + line[start:end] + ')' + line[end:]
+                counts['cas'] += 1
     return line
 
 
@@ -239,6 +269,8 @@ UNDO = [
                 r'REX_STORE_(?:D_)?F32ANY|BANJO_HOT_STORE_(?:D_)?F32ANY)_C\('), r'\1('),
     (re.compile(r'REX_CARD\(ea\), (?=simde_mm_store_si128|memset\()'), ''),
     (re.compile(r'REX_GUEST_CAS_C\(ea, '), 'REX_GUEST_CAS('),
+    # dmc_devil-nx (--raw-cas): (REX_CARD(ea), __sync_bool_compare_and_swap(...)) back to the builtin alone.
+    (re.compile(r'\(REX_CARD\(ea\), (__sync_bool_compare_and_swap\([^\n;]+)\)(?=\s*;)'), r'\1'),
 ]
 
 
@@ -258,7 +290,11 @@ def main():
     ap.add_argument('--gen', required=True, help='generated folder (*_recomp.N.cpp, hot/ and *_pch.h)')
     ap.add_argument('--restore', action='store_true', help='put the plain stores back (and drop the macros)')
     ap.add_argument('--check', action='store_true', help='count only, write nothing')
+    ap.add_argument('--raw-cas', action='store_true',
+                    help='card the generator\'s own __sync_bool_compare_and_swap too (a tree guest_cas.py did not process)')
     a = ap.parse_args()
+    global RAW_CAS
+    RAW_CAS = a.raw_cas
     counts = {k: 0 for k in ('REX_STORE_D', 'REX_STORE', 'REX_STVLX', 'REX_STVRX', 'REX_MM_STORE', 'BANJO_HOT',
                              'vector', 'dcbz', 'cas', 'stack')}
     changed = 0

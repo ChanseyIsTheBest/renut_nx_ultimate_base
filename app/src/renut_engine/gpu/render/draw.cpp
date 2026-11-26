@@ -2395,18 +2395,59 @@ void DepthHandOverBeforeBindLocked(HostSurface *surface, const plume::RenderRect
 // bind for a draw writing depth or stencil, 8 a draw sampling it with its target bound, 9 other.
 int g_materialise_cause = 9;
 
+// dmc_devil-nx (e3cbf45e, its GPU batch item #41, A/B 256: "readonly stencil test does not dirty depth target"): whether a
+// draw writes its depth target's stencil. The base counted every draw with STENCIL_ENABLE and a write mask as a write;
+// RB_DEPTHCONTROL's operations (bits 11-19 the front face's fail, z-pass and z-fail, bits 23-31 the back face's, used with
+// BACKFACE_ENABLE, bit 7) all KEEP change no stencil value, which is the rule render/pipeline.cpp's early-Z test
+// (constant 909) already takes. Such a draw then leaves the target's writes and write_seq, keeps a depth resolve handed
+// over in its image (banjo_deko3d_depth_handover_readonly) and binds it without the depth-write layout. Exact: nothing
+// the GPU stores changes. false: every enabled stencil with a write mask counts, as before.
+REXCVAR_DEFINE_BOOL(dmc_renut_stencil_keep_readonly, true, "Banjo/Renut",
+                    "From dmc_devil-nx: a draw whose stencil test keeps every value (all operations KEEP) does not "
+                    "count as writing its depth target: its depth resolve stays handed over and the target is not "
+                    "marked changed. The same pixels. false: any enabled stencil with a write mask counts, as before. "
+                    "Read at start")
+    .lifecycle(::rex::cvar::Lifecycle::kInitOnly);
+[[gnu::always_inline]] inline bool DmcStencilWrites(u32 depth_control, u32 stencil_ref_mask) {
+  static const bool exact = REXCVAR_GET(dmc_renut_stencil_keep_readonly);
+  const bool enabled_with_mask = (depth_control & 1) && ((stencil_ref_mask >> 16) & 0xFF) != 0;  // the base's test
+  if (!exact || !enabled_with_mask)
+    return enabled_with_mask;
+  return ((depth_control >> 11) & 0x1FFu) != 0u || ((depth_control & 0x80u) && ((depth_control >> 23) & 0x1FFu) != 0u);
+}
+
+// dmc_devil-nx (e3cbf45e, its GPU batch item #5, A/B 258: "readonly color targets skip EDRAM handover"): a colour target
+// whose channels the draw's colour mask leaves all off keeps the resolve handed over in its image (banjo_deko3d_color_
+// handover) instead of drawing it into the destination first. The draw writes nothing there: the target's writes do not
+// move (the draws bump them only for written targets), so the destination's content stays the image's, and a draw that
+// samples the destination while the target is bound still draws it out (DepthHandOverSlotLocked's
+// HandOverSourceIsDrawTarget). The next draw that writes the target, or a whole clear (which gives the image away),
+// handles it as before. Exact; deko3d only (the hand-over is). false: every handed colour target drawn out, as before.
+REXCVAR_DEFINE_BOOL(dmc_renut_color_handover_readonly, true, "Banjo/Renut",
+                    "From dmc_devil-nx: a colour target a draw does not write (colour mask 0 for it) keeps the resolve "
+                    "left in its image instead of drawing it into its destination first. The same pixels. false: "
+                    "drawn out at every bind, as before. Read at start")
+    .lifecycle(::rex::cvar::Lifecycle::kInitOnly);
+inline bool DmcColorHandOverReadonlyOn() {
+  static const bool on = REXCVAR_GET(dmc_renut_color_handover_readonly);
+  return on;
+}
+
 // kameo-nx (2026-11-03, banjo_deko3d_color_handover, banjo_deko3d_depth_handover_sampled): before a draw looks at its
 // textures. A colour target holding a resolve left in its image, or a depth target when the draw writes depth or stencil,
 // gets that resolve drawn now, so the texture is its own by the time the draw binds it and no answer kept from an earlier
 // draw can name the image the draw is about to write. Otherwise a depth target's image can be sampled while it is only
 // tested. The same words as FastDrawLocked's and the full path's depth writes (the raw device's: a superset of the key's).
-[[gnu::always_inline]] inline void HandOverBeforeDrawLocked(const Targets &t, u32 depth_control, u32 stencil_ref_mask) {
+// dmc_devil-nx: 'color_mask', the draw's colour mask (4 bits a target; 0xFFFF: every target written, as before).
+[[gnu::always_inline]] inline void HandOverBeforeDrawLocked(const Targets &t, u32 depth_control, u32 stencil_ref_mask,
+                                                            u32 color_mask = 0xFFFFu) {
   const bool writes = ((depth_control & 2) && (depth_control & 4)) ||
-                      ((depth_control & 1) && ((stencil_ref_mask >> 16) & 0xFF) != 0);
+                      DmcStencilWrites(depth_control, stencil_ref_mask);  // dmc_devil-nx
   const bool sampled = banjo::renut_gpu::DepthHandOverSampledOn();
   g_handover_depth_readonly = sampled && !writes;
   for (uint32_t i = 0; i < t.color_count; ++i) {
-    if (t.colors[i]->handed) [[unlikely]] {
+    if (t.colors[i]->handed && (!DmcColorHandOverReadonlyOn() || ((color_mask >> (4 * i)) & 0xFu) != 0u))
+        [[unlikely]] {
       g_materialise_cause = 7;
       DepthHandOverBeforeBindLocked(t.colors[i], nullptr, 0);
       g_materialise_cause = 9;
@@ -2646,12 +2687,15 @@ uint32_t ShaderProfileLabel(const Targets &t, const ShaderRecord *ps, const Pipe
 }
 
 // banjo-nx (2026-10-28, GPU block): 'depth_writes': the draw it binds for writes depth or stencil (a clear's binds do).
-bool BindTargets(const Targets &t, bool depth_writes = true) {
+// dmc_devil-nx (dmc_renut_color_handover_readonly): 'color_write_mask', the draw's colour mask (0xFFFF: a clear's and
+// every other caller's, as before).
+bool BindTargets(const Targets &t, bool depth_writes = true, u32 color_write_mask = 0xFFFFu) {
   ::renut::gpu::census::Scope census_scope(::renut::gpu::census::kBindTargets);  // blur-nx (2026-11-17)
   // kameo-nx (2026-11-03, banjo_deko3d_color_handover): a colour target holding a resolve left in its image; a whole clear
   // has given the image to the destination by now (ClearTargets), and a draw has drawn it (HandOverBeforeDrawLocked).
   for (uint32_t i = 0; i < t.color_count; ++i) {
-    if (t.colors[i]->handed) [[unlikely]]
+    if (t.colors[i]->handed &&
+        (!DmcColorHandOverReadonlyOn() || ((color_write_mask >> (4 * i)) & 0xFu) != 0u)) [[unlikely]]
       DepthHandOverBeforeBindLocked(t.colors[i], nullptr, 0);
   }
   if (t.depth && t.depth->handed) {
@@ -3408,6 +3452,61 @@ ViewportState ComputeViewportSlow(const GuestDevice &device, const Targets &t) {
   vs.viewport.height *= scale;
   vs.scissor = ScaleRect(plume::RenderRect(sx1, sy1, sx2, sy2), t.scale);
   return vs;
+}
+
+// dmc_devil-nx (e3cbf45e, its GPU batch items #6 / #43, A/B 259: "TakeImageLocked on provably-fullscreen opaque
+// overwrite"): a colour target holding a resolve left in its image (banjo_deko3d_color_handover) that the draw is about to
+// overwrite whole gives the image to the destination (TakeImageLocked, as a whole clear does) instead of drawing the
+// resolve into it first: one full-target copy less for a post-processing pass that resolves a target and then draws over
+// all of it. The tests (the port's): a single-sampled target, all four channels written, blending off (ONE, ZERO, ADD),
+// no depth or stencil test, no alpha test or alpha to coverage, a pixel shader without a kill, one rectangle or quad
+// (at most four vertices, not indexed) and a viewport and scissor covering the target. NOT exact: the rectangle's own
+// corners (the vertex shader's) are not checked, so a smaller rectangle leaves the rest of the target with the image the
+// target took in exchange instead of the resolved pixels the console's EDRAM keeps. Off by default (a picture change if a
+// game draws such a rectangle over part of a target): turn it on in a game's toml once its passes are checked.
+REXCVAR_DEFINE_BOOL(dmc_renut_handover_fullscreen_take, false, "Banjo/Renut",
+                    "From dmc_devil-nx, NOT exact: an opaque full-viewport rectangle drawn over a colour target that "
+                    "holds a resolve in its image gives the image to the destination instead of copying it first. "
+                    "Wrong if the rectangle does not cover the target (its corners are not checked). false: as before. "
+                    "Read at start")
+    .lifecycle(::rex::cvar::Lifecycle::kInitOnly);
+void DmcFullscreenTakeLocked(const GuestDevice &device, const Targets &t, const ShaderRecord *ps, const DrawCall &call,
+                             u32 color_mask) {
+  static const bool on = REXCVAR_GET(dmc_renut_handover_fullscreen_take);
+  if (!on || !IsDeko3D() || t.color_count == 0 || !ps || !ps->entry) [[likely]]
+    return;
+  bool any_handed = false;
+  for (u32 i = 0; i < t.color_count && i < 4; ++i)
+    any_handed |= t.colors[i] && t.colors[i]->handed;
+  if (!any_handed) [[likely]]
+    return;
+  const d3d::ControlPacket &cp = device.dev().m_ControlPacket;
+  if ((u32(cp.DepthControl) & 3u) != 0u)  // stencil or depth test on
+    return;
+  const u32 cc = u32(cp.ColorControl);
+  if (((cc & 8u) && (cc & 7u) != 7u) || (cc & 16u))  // the alpha test (as sc.alpha_test_func), alpha to coverage
+    return;
+  if (ps->entry->shaderFlags & kShaderFlagPixelKill)
+    return;
+  if ((call.primitive != kRectangleList && call.primitive != kQuadList) || call.indexed || call.count == 0 ||
+      call.count > 4)
+    return;
+  const ViewportState vp = ComputeViewport(device, t);
+  const u32 bc[4] = {u32(cp.BlendControl0), u32(cp.BlendControl1), u32(cp.BlendControl2), u32(cp.BlendControl3)};
+  for (u32 i = 0; i < t.color_count && i < 4; ++i) {
+    HostSurface *c = t.colors[i];
+    if (!c || !c->handed || c->samples != plume::RenderSampleCount::COUNT_1 || ((color_mask >> (4 * i)) & 0xFu) != 0xFu ||
+        (bc[i] & 0x1FFF1FFFu) != 0x00010001u)
+      continue;
+    const int32_t tw = int32_t(c->scale.Size(c->width)), th = int32_t(c->scale.Size(c->height));
+    if (vp.scissor.left > 0 || vp.scissor.top > 0 || vp.scissor.right < tw || vp.scissor.bottom < th)
+      continue;
+    if (vp.viewport.x > 0.5f || vp.viewport.y > 0.5f || vp.viewport.x + vp.viewport.width < float(tw) - 0.5f ||
+        vp.viewport.y + std::fabs(vp.viewport.height) < float(th) - 0.5f)
+      continue;
+    const plume::RenderRect whole(0, 0, int32_t(c->width), int32_t(c->height));
+    DepthHandOverBeforeBindLocked(c, &whole, 1u);  // as a whole clear of it: the last holder takes the image
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -6308,16 +6407,39 @@ struct GpuStreams {
   u32 bytes[kMaxVertexStreams] = {};
 };
 
+// pokersmash-nx (2026-11-26, the screen-edge columns): banjo_renut_diag_stream_dump_vs takes up to four vertex shader
+// hashes, comma separated (one hash: as before; before, "A,B" read as A alone), for every user of the key. Parsed once.
+bool StreamDumpWanted(uint64_t hash) {
+  struct Wanted {
+    uint64_t hashes[4] = {};
+    u32 count = 0;
+  };
+  static const Wanted wanted = [] {
+    Wanted w;
+    const std::string v = REXCVAR_GET(banjo_renut_diag_stream_dump_vs);
+    for (const char *p = v.c_str(); *p && w.count < 4;) {
+      char *end = nullptr;
+      const uint64_t h = uint64_t(std::strtoull(p, &end, 16));
+      if (!end || end == p)
+        break;
+      if (h)
+        w.hashes[w.count++] = h;
+      p = *end == ',' ? end + 1 : end;
+    }
+    return w;
+  }();
+  for (u32 i = 0; i < wanted.count; ++i)
+    if (wanted.hashes[i] == hash)
+      return true;
+  return false;
+}
+
 // banjo-nx (2026-10-18, the deko3d water): banjo_renut_diag_stream_dump_vs names a vertex shader (hex hash); its draws'
 // streams are logged (first 16): the guest source, the first two vertices as the guest has them and as converted for
 // the host, and whether a cached copy is bound.
 bool StreamDumpLog(const ShaderRecord &vs, u32 stream, const StreamSource &src, const HostVertexStream &hs,
                    const u8 *guest, u32 first, u32 count, const DrawCall &call) {
-  static const uint64_t want = [] {
-    const std::string v = REXCVAR_GET(banjo_renut_diag_stream_dump_vs);
-    return v.empty() ? 0ull : uint64_t(std::strtoull(v.c_str(), nullptr, 16));
-  }();
-  if (!want || vs.hash != want)
+  if (!StreamDumpWanted(vs.hash))
     return false;
   static uint32_t seen = 0;
   if (seen++ >= 16 && seen % 64 != 0)  // the first 16, then every 64th
@@ -7704,12 +7826,8 @@ bool BindStreams(const GuestDevice &device, const DrawCall &call, const ShaderRe
       continue;
     if (gpu_streams.bytes[stream]) {
       {
-        static const uint64_t want = [] {
-          const std::string v = REXCVAR_GET(banjo_renut_diag_stream_dump_vs);
-          return v.empty() ? 0ull : uint64_t(std::strtoull(v.c_str(), nullptr, 16));
-        }();
         static uint32_t seen = 0;
-        if (want && vs.hash == want && (seen++ < 16 || seen % 64 == 0))
+        if (StreamDumpWanted(vs.hash) && (seen++ < 16 || seen % 64 == 0))
           RGPU_INFO("[streamdump] vs {:016X} stream {}: the GPU-converted exported stream ({} bytes)", vs.hash, stream,
                     gpu_streams.bytes[stream]);
       }
@@ -8549,6 +8667,19 @@ inline bool IsFixed16Surface(const HostSurface *s) {
         s.w[7] |= 0x10000u;
         break;
       }
+    }
+  }
+  // dmc_devil-nx (dmc_renut_target_wide_alpha, DMC-11): [7] bits 24-27, a written colour target i of RB_COLOR_INFO format
+  // 16_16_16_16 (5) or 16_16_16_16_FLOAT (7) with a colour exponent bias: its biased alpha left unclamped (constant 927
+  // bits 4-7, render/pipeline.cpp). Never set with the key off; RenderStateIdLocked's sig[7] bits 28-31 carry the same.
+  if (banjo::renut_gpu::DmcWideAlphaOn() && ps_entry && targets) {
+    for (u32 i = 0; i < targets->color_count && i < 4; ++i) {
+      if (!((color_mask >> (4 * i)) & 0xFu))
+        continue;
+      const HostSurface *c = targets->colors[i];
+      const u32 cf = c ? (u32(c->color_info_word) >> 16) & 0xFu : 0u;
+      if ((cf == 5u || cf == 7u) && ((u32(c->color_info_word) >> 20) & 0x3Fu) != 0u)
+        s.w[7] |= 0x01000000u << i;
     }
   }
   if (vs_entry && vsc && vs_entry->memExportConstants[0] && sasrt::gpu_round::On(sasrt::gpu_round::kExportFmtSpec))
@@ -10790,15 +10921,22 @@ void DrawLog(const DrawCall &call, const Geometry &geometry, const ShaderRecord 
     ordinal = 0;
   }
   const HostSurface *c0 = targets.color_count ? targets.colors[0] : nullptr;
+  // pokersmash-nx (2026-11-26, the screen-edge columns): the host viewport and scissor the draw was given (SetViewport
+  // binds them before the draw log) and the shared screen-space word, at the line's end (tools/drawlog_passes.py reads
+  // the fields before them).
+  const plume::RenderViewport &hv = g_bound.viewport;
+  const plume::RenderRect &hs = g_bound.scissor;
   RGPU_INFO("[drawlog] frame {} draw {}: vs {:016X} ps {:016X} prim {} count {} -> {} {} inst {}{} target {}x{} fmt {} "
             "x{} depth {} dc {:08X} blend {:08X} mask {:X} a2c {} vfetch {} bytes, exports {}; colour at {:08X}, depth at "
-            "{:08X}",
+            "{:08X}; viewport {} {} {} {} scissor {} {} {} {} screen space {}",
             frame, ordinal++, vs ? vs->hash : 0, ps ? ps->hash : 0, call.primitive, call.count,
             geometry.indexed ? "indices" : "vertices", geometry.indexed ? geometry.index_count : geometry.vertex_count,
             geometry.instance_count, call.tessellation ? " tess" : "", c0 ? c0->width : 0, c0 ? c0->height : 0,
             c0 ? int(c0->format) : -1, targets.color_count, targets.depth ? int(targets.depth->format) : -1,
             key.depth_control, key.blend_control[0], key.color_mask, key.alpha_to_coverage, sc.vertex_fetch_bytes,
-            export_count, c0 ? c0->guest_va : 0, targets.depth ? targets.depth->guest_va : 0);
+            export_count, c0 ? c0->guest_va : 0, targets.depth ? targets.depth->guest_va : 0,
+            g_bound.viewport_set ? hv.x : -1.0f, hv.y, hv.width, hv.height, hs.left, hs.top, hs.right, hs.bottom,
+            uint32_t(sc.screen_space));
 }
 
 #if defined(PLUME_DEKO3D)
@@ -11388,6 +11526,15 @@ uint64_t RenderStateIdLocked(const u32 rs[20], const Targets &t) {
     for (u32 i = 0; i < t.color_count && i < 4; ++i)
       sig[7] |= (((t.colors[i]->color_info_word >> 16) & 0xFu) == 1 ? 1u << i : 0u) |
                 (((t.colors[i]->color_info_word >> 20) & 0x3Fu) << (4 + 6 * i));
+  // dmc_devil-nx (dmc_renut_target_wide_alpha): SasrtSpecWordsOf's [7] bits 24-27 read each target's RB_COLOR_INFO format
+  // too (5 or 7, biased), which two targets of one host format (16_16_16_16_FLOAT and 2_10_10_10_FLOAT_AS_16_16_16_16)
+  // can differ in: bits 28-31. 0 with the key off, as before.
+  if (banjo::renut_gpu::DmcWideAlphaOn())
+    for (u32 i = 0; i < t.color_count && i < 4; ++i) {
+      const u32 cf = (u32(t.colors[i]->color_info_word) >> 16) & 0xFu;
+      if ((cf == 5u || cf == 7u) && ((u32(t.colors[i]->color_info_word) >> 20) & 0x3Fu) != 0u)
+        sig[7] |= 0x10000000u << i;
+    }
   u32 slot;
   const bool ways = RsIdWaysOn();  // deadpool-nx (deadpool_rs_id_4way)
   u32 way_set = 0;
@@ -12207,8 +12354,10 @@ int FastDrawLocked(const u8 *device_state, const DrawCall &call, const ReplayCon
     if (HostSurface *color = DepthRestoreSourceLocked(targets.depth))
       RestoreDepthFromColorLocked(targets.depth, color);
   }
+  DmcFullscreenTakeLocked(device, targets, device_ps, call, u32(device.dev().m_ValuesPacket.ColorMask));  // dmc_devil-nx
   HandOverBeforeDrawLocked(targets, u32(device.dev().m_ControlPacket.DepthControl),
-                           u32(device.dev().m_ValuesPacket.StencilRefMask));
+                           u32(device.dev().m_ValuesPacket.StencilRefMask),
+                           u32(device.dev().m_ValuesPacket.ColorMask) & 0xFFFFu);  // dmc_devil-nx: MakeKey's mask
   // banjo-nx (2026-10-28, cache-miss audit 2): the targets' write counters the draw bumps at its end (a miss there).
   for (u32 i = 0; i < targets.color_count; ++i)
     __builtin_prefetch(&targets.colors[i]->writes);
@@ -12984,7 +13133,7 @@ int FastDrawLocked(const u8 *device_state, const DrawCall &call, const ReplayCon
   // that writes its depth or stencil (BindTargets then draws the resolve first).
   const u32 fast_dc = f.kp_hot.depth_control;
   const bool fast_depth_writes = ((fast_dc & 2) && (fast_dc & 4)) ||
-                                 ((fast_dc & 1) && ((f.kp_hot.stencil_ref_mask >> 16) & 0xFF) != 0);
+                                 DmcStencilWrites(fast_dc, f.kp_hot.stencil_ref_mask);  // dmc_devil-nx
   // Port 179 (from fnxf_xiii; banjo_renut_edram_carry, off): before the bind test, so every draw marks its targets this
   // frame; a carry draws with its own framebuffer and resets g_bound, so the targets are bound again below.
   if (EdramCarryOn()) [[unlikely]]
@@ -13000,7 +13149,7 @@ int FastDrawLocked(const u8 *device_state, const DrawCall &call, const ReplayCon
     // blur-nx (2026-11-11, port 76; its key 220: blur_renut_edram_inherit): what other views wrote over a target this
     // draw keeps in part.
     InheritEdramBeforeDrawLocked(targets, f.kp_hot.color_mask, f.kp ? f.kp->blend_control : nullptr);
-    if (!BindTargets(targets, fast_depth_writes))
+    if (!BindTargets(targets, fast_depth_writes, f.kp_hot.color_mask))  // dmc_devil-nx: the key's colour mask
       return -1;
     f.bound_framebuffer = g_bound.framebuffer;
     f.bind_layout_epoch = g_layout_epoch;
@@ -13102,7 +13251,7 @@ int FastDrawLocked(const u8 *device_state, const DrawCall &call, const ReplayCon
     }
   if (targets.depth) {
     const u32 dc = f.kp_hot.depth_control;
-    if (((dc & 2) && (dc & 4)) || ((dc & 1) && ((f.kp_hot.stencil_ref_mask >> 16) & 0xFF) != 0)) {
+    if (((dc & 2) && (dc & 4)) || DmcStencilWrites(dc, f.kp_hot.stencil_ref_mask)) {  // dmc_devil-nx
       ++targets.depth->writes;
       targets.depth->write_seq = ++g_surface_write_seq;  // sasrt-nx: the EDRAM depth restore
       if (AsuraShadowDirtyRectOn() && (dc & 2) && (dc & 4))
@@ -15796,8 +15945,10 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
   const u32 texture_mask =
       (vs->entry ? vs->entry->textureFetchMask : 0) | (ps && ps->entry ? ps->entry->textureFetchMask : 0);
   g_fetch_3d_mask = Fetch3DMaskOf(vs, ps);  // kameo-nx (2026-11-03)
+  DmcFullscreenTakeLocked(device, targets, ps, call, u32(device.dev().m_ValuesPacket.ColorMask));  // dmc_devil-nx
   HandOverBeforeDrawLocked(targets, u32(device.dev().m_ControlPacket.DepthControl),
-                           u32(device.dev().m_ValuesPacket.StencilRefMask));  // kameo-nx (2026-11-03)
+                           u32(device.dev().m_ValuesPacket.StencilRefMask),  // kameo-nx (2026-11-03)
+                           u32(device.dev().m_ValuesPacket.ColorMask) & 0xFFFFu);  // dmc_devil-nx: MakeKey's mask
   g_handover_targets = &targets;  // banjo-nx (2026-10-19, banjo_deko3d_depth_handover)
   if (SasrtOrderEvery() > 0 && g_sasrt_order.on &&
       (targets.width != g_sasrt_order.tw || targets.height != g_sasrt_order.th)) [[unlikely]] {
@@ -16096,13 +16247,7 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
       SetShared(sc, sc.vertex_fetch_slots[64 + std::countr_zero(bits)], 0u);
     g_draw_sc_track.fetch_slots = fetch_mask;
   }
-  {
-    static const uint64_t want = [] {
-      const std::string v = REXCVAR_GET(banjo_renut_diag_stream_dump_vs);
-      return v.empty() ? 0ull : uint64_t(std::strtoull(v.c_str(), nullptr, 16));
-    }();
-    g_dump_fetch = want && vs->hash == want;
-  }
+  g_dump_fetch = StreamDumpWanted(vs->hash);  // pokersmash-nx: up to four hashes
   // banjo-nx (2026-10-26, Unleashed-style step 2): a draw that fetches nothing by address on deko3d (fetch_mask 0, its
   // data address and size left 0 below) makes no allocation: it took 16 bytes at a 256-byte alignment of the upload
   // ring at every such draw (most draws: about 1.3 MB of ring a frame) and wrote the fetch record nothing reads then.
@@ -16504,7 +16649,7 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
     S4CaptureDrawLocked(device, call, geometry, vs, ps, targets, key, sc, vs_constants, ps_constants, pipeline);
   // banjo-nx (2026-10-28, banjo_deko3d_depth_handover_readonly): whether this draw writes depth or stencil.
   const bool draw_depth_writes = ((key.depth_control & 2) && (key.depth_control & 4)) ||
-                                 ((key.depth_control & 1) && ((key.stencil_ref_mask >> 16) & 0xFF) != 0);
+                                 DmcStencilWrites(key.depth_control, key.stencil_ref_mask);  // dmc_devil-nx
   // Port 179 (from fnxf_xiii; banjo_renut_edram_carry, off): a target first drawn this frame without a clear.
   if (pipeline && EdramCarryOn()) [[unlikely]]
     CarryEdramBeforeDrawLocked(targets);
@@ -16514,7 +16659,8 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
   // keeps in part.
   if (pipeline)
     InheritEdramBeforeDrawLocked(targets, key.color_mask, key.blend_control);
-  if ((!pipeline || !BindTargets(targets, draw_depth_writes)) && ++g_dropped_draws[kDropPipeline])
+  if ((!pipeline || !BindTargets(targets, draw_depth_writes, key.color_mask)) &&  // dmc_devil-nx: the colour mask
+      ++g_dropped_draws[kDropPipeline])
     return false;
 #if defined(PLUME_DEKO3D)
   // banjo-nx (2026-10-21, banjo_deko3d_async_variants): a pipeline drawing a shader's generic variant while its own was
@@ -16721,7 +16867,7 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
   if (targets.depth) {
     const u32 dc = key.depth_control;
     const bool depth_writes = (dc & 2) && (dc & 4);
-    const bool stencil_writes = (dc & 1) && ((key.stencil_ref_mask >> 16) & 0xFF) != 0;
+    const bool stencil_writes = DmcStencilWrites(dc, key.stencil_ref_mask);  // dmc_devil-nx
     if (depth_writes || stencil_writes) {
       ++targets.depth->writes;
       targets.depth->write_seq = ++g_surface_write_seq;  // sasrt-nx: the EDRAM depth restore
@@ -18069,6 +18215,17 @@ void ClearTargets(const Targets &t, u32 flags, const plume::RenderRect &rect, co
     g_bound.framebuffer = nullptr;
 }
 
+// dmc_devil-nx (e3cbf45e, its GPU batch items #8 / #56, A/B 261: "single-RT depth resolve float-only framebuffer"): a
+// depth resolve whose words nothing reads (banjo_renut_depth_words_lazy) draws sasrt-nx's float-only shader through a
+// framebuffer of the float target alone, not the float and words targets with the words write-masked: one render target
+// fewer bound and no layout move of the words. The same shader and the same float target written; the words are written by
+// neither form. Exact. The pipeline is backend/video.cpp's (patch 23, sasrt_depth_float_only_pipeline), made only with
+// this key on (read there by name); off: none, every resolve as before.
+REXCVAR_DEFINE_BOOL(dmc_gpu_depth_resolve_float_only_fb, true, "Banjo/Renut",
+                    "From dmc_devil-nx: a depth resolve without its words binds the float target alone, not the float "
+                    "and words targets with the words write-masked. The same pixels. false: as before. Read at start")
+    .lifecycle(::rex::cvar::Lifecycle::kInitOnly);
+
 // Depth resolve (shaders/host/depth_resolve.hlsli): 'src' of the depth target
 // to ('dest_x', 'dest_y') of the destination and of its guest words, in guest
 // pixels (the destination is of the surface's scale).
@@ -18084,6 +18241,15 @@ bool ResolveDepth(HostSurface *surface, HostTexture *dest, const ClearRect &src,
       !s.depth_resolve_pipeline[variant]) {
     return false;
   }
+  // dmc_devil-nx (dmc_gpu_depth_resolve_float_only_fb): where the float-only shader draws (below), the framebuffer of
+  // the float target alone (made here once). Never with the key off (no such pipeline).
+  bool float_1rt = !words && variant == 0 && s.sasrt_depth_float_pipeline && s.sasrt_depth_float_only_pipeline &&
+                   dest->texture && sasrt::gpu_round::On(sasrt::gpu_round::kDepthFloatPs);
+  if (float_1rt && !dest->dmc_depth_float_framebuffer) [[unlikely]] {
+    const plume::RenderTexture *one[] = {dest->texture.get()};
+    dest->dmc_depth_float_framebuffer = s.device->createFramebuffer(plume::RenderFramebufferDesc(one, 1));
+  }
+  float_1rt = float_1rt && dest->dmc_depth_float_framebuffer;
   plume::RenderCommandList *cmd = s.command_list;
   static const uint32_t kProfileLabel = gpu_profile::Label("depth resolves");
   gpu_profile::Mark(s, kProfileLabel);
@@ -18092,12 +18258,16 @@ bool ResolveDepth(HostSurface *surface, HostTexture *dest, const ClearRect &src,
     gpu_profile::Mark(s, SasrtResolvePartLabel(surface, 0));
   TransitionSurfaceLocked(surface, plume::RenderTextureLayout::SHADER_READ);
   TransitionTextureLocked(dest, plume::RenderTextureLayout::COLOR_WRITE);
-  TransitionTextureLocked(dest->words.get(), plume::RenderTextureLayout::COLOR_WRITE);
+  if (!float_1rt)  // dmc_devil-nx: the words are not bound then
+    TransitionTextureLocked(dest->words.get(), plume::RenderTextureLayout::COLOR_WRITE);
   if (split) [[unlikely]] {
     gpu_profile::Mark(s, SasrtResolvePartLabel(surface, 1));
     gpu_profile::CountDraw(s, SasrtResolvePartLabel(surface, 1));  // its resolves a frame
   }
-  cmd->setFramebuffer(dest->depth_framebuffer.get());
+  if (float_1rt)  // dmc_devil-nx
+    cmd->setFramebuffer(dest->dmc_depth_float_framebuffer.get());
+  else
+    cmd->setFramebuffer(dest->depth_framebuffer.get());
   // Pixel coordinates are destination texels.
   cmd->setViewports(plume::RenderViewport(0.0f, 0.0f, float(dest->alloc_width),
                                           float(dest->alloc_height)));
@@ -18139,8 +18309,11 @@ bool ResolveDepth(HostSurface *surface, HostTexture *dest, const ClearRect &src,
   cmd->setGraphicsPipelineLayout(s.utility_layout.get());
   // sasrt-nx (2026-11-08, sasrt_gpu_depth_resolve_float_ps; the second GPU round): the depth-only resolve with the
   // shader that computes the float alone (the words target is write-masked in both).
-  if (!words && variant == 0 && s.sasrt_depth_float_pipeline &&
-      sasrt::gpu_round::On(sasrt::gpu_round::kDepthFloatPs)) {
+  if (float_1rt) {  // dmc_devil-nx: the same shader, the float target alone
+    cmd->setPipeline(s.sasrt_depth_float_only_pipeline.get());
+    sasrt::gpu_round::Count(sasrt::gpu_round::kDepthFloatPs);
+  } else if (!words && variant == 0 && s.sasrt_depth_float_pipeline &&
+             sasrt::gpu_round::On(sasrt::gpu_round::kDepthFloatPs)) {
     cmd->setPipeline(s.sasrt_depth_float_pipeline.get());
     sasrt::gpu_round::Count(sasrt::gpu_round::kDepthFloatPs);
   } else {
@@ -19001,13 +19174,29 @@ bool DrawResolveCopy(HostSurface *surface, HostTexture *dest, const plume::Rende
 // after it. On the console both are the same memory; here each host format has its own target (surfaces.cpp, TargetKey). Halo
 // 3's last pass draws to a 2_10_10_10_FLOAT view and resolves through a 2_10_10_10 one, which was the black frame: the resolve
 // read a target nothing had drawn to. The floats are encoded into it as the console stores them. Other pairs are reported once.
+// dmc_devil-nx (527367bb, DMC-04: "SyncColorViewLocked compared alias->bound_serial > surface->bound_serial, which was
+// bumped by depth-only clears and 0-draw binds (masking 4007ED80 0x3F HDR scene behind 40009720 0x06)"; its fix
+// "Eliminated all Resolve through a view of format warnings"): the alias that last held the EDRAM's pixels is the one
+// written last (write_seq: draws that write colour, clears, carries), not the one bound last. asura-nx's 32bpp sync (port
+// 297, asura_renut_view_sync_32bpp) already takes write_seq; this is the default (halo3) form's. A picture change where
+// a game binds a view it does not write: off. false: bound_serial, as before.
+REXCVAR_DEFINE_BOOL(dmc_renut_view_sync_write_seq, false, "Banjo/Renut",
+                    "From dmc_devil-nx: a resolve through an EDRAM view synced from the alias written last (not the "
+                    "one bound last: a depth-only clear or a bind without draws no longer counts). false: as before. "
+                    "Read at start")
+    .lifecycle(::rex::cvar::Lifecycle::kInitOnly);
 void SyncColorViewHalo3Locked(HostSurface *surface) {
   static std::vector<HostSurface *> aliases;
   ColorAliasesLocked(surface, aliases);
   HostSurface *latest = nullptr;
+  static const bool by_writes = REXCVAR_GET(dmc_renut_view_sync_write_seq);  // dmc_devil-nx
   for (HostSurface *alias : aliases) {
-    if (alias->bound_serial > surface->bound_serial && (!latest || alias->bound_serial > latest->bound_serial))
+    if (by_writes) {
+      if (alias->write_seq > surface->write_seq && (!latest || alias->write_seq > latest->write_seq))
+        latest = alias;
+    } else if (alias->bound_serial > surface->bound_serial && (!latest || alias->bound_serial > latest->bound_serial)) {
       latest = alias;
+    }
   }
   if (!latest || (surface->synced_view == latest && surface->synced_writes == latest->writes)) {
     if (EdramInheritViewSyncOn())

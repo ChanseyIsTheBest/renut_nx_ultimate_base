@@ -283,6 +283,44 @@ def sasrt_guess(hashes, spec):
     return g
 
 
+# dmc_devil-nx (517b4928, DMC-11: "Both spec and generic tail carry 924/925/927"): the generic pipeline a specialised key
+# draws with until its own is built (render/pipeline.cpp GetPipelineSlow) is the key with its bools, alpha function, fetch
+# types, tess kind, fetch pad and spec words cleared, but its reserved word kept and, with asura_renut_generic_keeps_clamps
+# (on), sasrt_words[7] bits 28-31 and 16 (and 24-27 with dmc_renut_target_wide_alpha). Build() so gives it 924, 925 / 927,
+# 929 and 990 as the specialised key's, which the tail below has none of: the console compiled those generic variants as
+# it went. Each such generic is made too, beside the base's tail (nothing the tool made before is left out), and 927 has
+# Build()'s value (2 for asura-nx's fixed16 bit 16; 1 before). DMC_VARIANT_GENERIC_TARGETS=0: as before;
+# DMC_VARIANT_GENERIC_CLAMPS=0: for a game that turns asura_renut_generic_keeps_clamps off.
+GENERIC_TARGETS = os.environ.get('DMC_VARIANT_GENERIC_TARGETS', '1') != '0'
+GENERIC_KEPT7 = 0xFF010000 if os.environ.get('DMC_VARIANT_GENERIC_CLAMPS', '1') != '0' else 0
+
+
+def target_bias_927(sw7):
+    """render/pipeline.cpp Build()'s constant 927 beside 925 (blur_renut_target_bias_rgb, on): 2 with asura-nx's fixed16
+    bit (sasrt_words[7] bit 16), 1 | the wide-alpha targets << 4 (bits 24-27, dmc_renut_target_wide_alpha), else 1."""
+    if sw7 & 0x10000:
+        return 2
+    if sw7 & 0x0F000000:
+        return 1 | (((sw7 >> 24) & 0xF) << 4)
+    return 1
+
+
+def generic_of(tail, ps, reserved, no_clip, sw7, kept7=None):
+    """The generic pipeline's constants (GetPipelineSlow), from the tail (900, 901 and the flags) and what it keeps."""
+    kept = sw7 & (GENERIC_KEPT7 if kept7 is None else kept7)
+    g = dict(tail)
+    if ps and (reserved >> 4) & 0xF:
+        g[924] = (reserved >> 4) & 0xF
+    if ps and reserved >> 8:
+        g[925] = reserved >> 8
+        g[927] = target_bias_927(kept)
+    if ps and kept >> 28:
+        g[990] = kept >> 28
+    if no_clip:
+        g[929] = 0
+    return g
+
+
 def read_list(path, blend_skip_on, alpha_guess=ALPHA_GUESS):
     """blend_skip_on: keep the keys' blend skip (constant 900); off (Renut's renderer since package 30,
     banjo_renut_blend_skip) the pipelines are built without it, whatever the list recorded. alpha_guess: the
@@ -378,7 +416,7 @@ def read_list(path, blend_skip_on, alpha_guess=ALPHA_GUESS):
             spec[924] = (reserved >> 4) & 0xF
         if ps and reserved >> 8:
             spec[925] = reserved >> 8
-            spec[927] = 1
+            spec[927] = target_bias_927(sw[7]) if GENERIC_TARGETS else 1  # dmc_devil-nx: Build()'s value
         for w in range(8):
             for b in range(32):
                 if mask[w] >> b & 1:
@@ -397,6 +435,13 @@ def read_list(path, blend_skip_on, alpha_guess=ALPHA_GUESS):
             out.append((hashes, {k: v for k, v in spec.items() if not 950 <= k <= 957}))
         if any(mask) or alpha_func or tess_kind or any(fetch_types) or plain or no_clip or any(sw):
             out.append((hashes, tail))  # the generic pipeline a specialised key draws with until it is built
+        # dmc_devil-nx (GENERIC_TARGETS): that generic as Build() makes it, for a key render/pipeline.cpp Specialised()
+        # calls specialised (the kept word-7 bits are not a specialisation), when it differs from the tail
+        if GENERIC_TARGETS and (any(mask) or alpha_func or tess_kind or any(fetch_types) or plain or
+                                any((w & ~GENERIC_KEPT7) if k == 7 else w for k, w in enumerate(sw))):
+            generic = generic_of(tail, ps, reserved, no_clip, sw[7])
+            if generic != tail:
+                out.append((hashes, generic))
         made = [spec]
         if not alpha_func and ps:
             for guess in alpha_guess:

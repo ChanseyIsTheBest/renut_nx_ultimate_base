@@ -305,6 +305,31 @@ REXCVAR_DEFINE_BOOL(banjo_deko3d_uam_wide_rows, true, "Banjo/Enhancements",
                     "vertex shaders memory-bound. Same words, same pixels. Aligned by construction: the fetch data's "
                     "storage binding starts on 256 bytes (render/draw.cpp) and a row is element n of 16 bytes. Off: the "
                     "32-bit loads, with a DKSH cache of its own (deko3d_shaders_f447.bin)");
+// dmc_devil-nx (e3cbf45e, its audited batch's uam items #37-#39; it shipped them unconditionally in uam with the cache tag
+// uam110-sw8-bnx5): each as a banjo flag of its own here, all off, so the default flags stay 1471 and deko3d_shaders.bin
+// stays what every port's cache was built with. One on changes Deko3DUamFlags and so the DKSH cache's file name
+// (deko3d_shaders_f<flags>.bin, banjo_renut_deko3d.cpp LoadCache): the console compiles into a new cache, or a port builds
+// one with tools/deko3d_variant_cache.py and UAM_BANJO_FLAGS=<the flags> in uam's environment. The port gives no timings.
+REXCVAR_DEFINE_BOOL(dmc_deko3d_uam_shared_barrier, false, "Banjo/Enhancements",
+                    "From dmc_devil-nx (uam flag 1048576): Maxwell scheduling, a variable-latency write or read with no "
+                    "consumer in its block on the shared scoreboard barrier 5, so 0-4 stay free inside the block. The "
+                    "same results. Another DKSH cache. false: as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(dmc_deko3d_uam_prmt_latency, false, "Banjo/Enhancements",
+                    "From dmc_devil-nx (uam flag 2097152), NOT checked against the hardware: PRMT scheduled with a "
+                    "latency of 6 (the other integer operations') instead of 15. Wrong results if the GPU takes longer. "
+                    "Another DKSH cache. false: as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(dmc_deko3d_uam_uniform_phi, false, "Banjo/Enhancements",
+                    "From dmc_devil-nx (uam flag 4194304, with banjo_deko3d_uam_uniform_branches): a phi of uniform "
+                    "values whose block every thread reaches through uniform branches counts as uniform, so more "
+                    "branches lose their reconvergence point. Another DKSH cache. false: as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(dmc_deko3d_uam_rescue_40, false, "Banjo/Enhancements",
+                    "From dmc_devil-nx (uam flag 8388608, with banjo_deko3d_uam_pressure): the register rescue for "
+                    "shaders above 40 registers (not 56), with value numbering for the costly operations only. More "
+                    "compile time; another DKSH cache. false: as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(banjo_renut_diag_null_ps, false, "Banjo/Diagnostics",
                     "Diagnostic (2026-10-20): the fur family's pixel shaders (tools/nullps_shaders.txt) discard at once, so the GPU profile shows their draws' vertex and rasterisation cost alone. The fur vanishes: a measurement, not a picture (configs/banjo_renut_diag_fur_vertex_only.toml)");
 // renut-ultimate (2026-11-12, port 118, the user's choice): on by default in the base. It acts only in a game whose
@@ -1945,6 +1970,15 @@ unsigned Deko3DUamFlags() {
   // sink; a shader still above 56 registers compiled again with the costlier ones: DekoCompiler::TryRescue).
   if (REXCVAR_GET(banjo_deko3d_uam_pressure))
     flags |= 2048u | 8192u | 65536u;
+  // dmc_devil-nx (all off): each bit only where it acts, so a flag that changes no code changes no cache file.
+  if (REXCVAR_GET(dmc_deko3d_uam_shared_barrier))
+    flags |= 1048576u;
+  if (REXCVAR_GET(dmc_deko3d_uam_prmt_latency))
+    flags |= 2097152u;
+  if (REXCVAR_GET(dmc_deko3d_uam_uniform_phi) && (flags & 256u))
+    flags |= 4194304u;
+  if (REXCVAR_GET(dmc_deko3d_uam_rescue_40) && (flags & 2048u))
+    flags |= 8388608u;
   return flags;
 }
 // banjo-nx (2026-10-27): the background threads' core: the system core when the process has it

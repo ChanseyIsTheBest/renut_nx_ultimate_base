@@ -329,6 +329,10 @@ class XThread : public XObject {
   static uint32_t GetLastError();
   static void SetLastError(uint32_t error_code);
 
+  // pokersmash-nx (kernel_main_thread_cpu0): takes the round-robin's next processor number (the one a thread created
+  // without a processor mask gets) and drops it.
+  static void SkipFakeCpuNumber();
+
   const CreationParams* creation_params() const { return &creation_params_; }
   uint32_t tls_ptr() const { return tls_static_address_; }
   uint32_t pcr_ptr() const { return pcr_address_; }

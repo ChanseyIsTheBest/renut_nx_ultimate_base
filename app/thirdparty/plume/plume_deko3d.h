@@ -413,6 +413,9 @@ namespace plume {
         DkColorWriteState colorWrite{};
         DkBlendState blend[8]{};
         uint32_t blendWords[8][7]{}; // the IndependentBlend registers written again (deko3d 0.5.0's FuncAlphaDst)
+        // dmc_devil-nx (Deko3DOptions::blendWordsNeeded): bit i, target i blends with an alpha destination factor other
+        // than its colour one (the only case deko3d 0.5.0's FuncAlphaDst gets wrong).
+        uint32_t blendWordsMask = 0;
         DkDepthStencilState depthStencil{};
         uint8_t stencilReadMask = 0xFF, stencilWriteMask = 0xFF, stencilReference = 0;
         float depthBias = 0.0f, depthBiasClamp = 0.0f, slopeScaledDepthBias = 0.0f;
@@ -686,6 +689,7 @@ namespace plume {
         // last Full barrier, are not ordered without the barrier).
         bool copyRunFenced = false;
         uint32_t sampleMaskSet = 0xFFFFFFFFu;  // port 166: the mask last recorded (none yet in this list)
+        uint8_t srgbSet = 0xFFu;  // dmc_devil-nx (Deko3DOptions::srgbRegisterKept): 0x56E as last written; 0xFF: unknown
         void flushBarriers() {
             flushBarriersRaw();
             copyRunFenced = false;
@@ -1445,6 +1449,15 @@ namespace plume {
         // attribute when a pipeline is made. Off: its bufferId is 16 (DkVtxAttribState.bufferId is 5 bits), a stream
         // deko3d never configures, as before.
         bool vtxSlotBound = false;
+        // dmc_devil-nx (e3cbf45e, its #15 / #60 "blendWordsMask"; dmc_deko3d_blend_words_needed): a pipeline's blend group
+        // writes a target's IndependentBlend registers again (blendWords) only when its alpha destination factor differs
+        // from its colour one. deko3d 0.5.0 writes the colour destination factor into FuncAlphaDst; where the two are
+        // the same factor that is already right. The same registers. Off: all targets' again, as before.
+        bool blendWordsNeeded = false;
+        // dmc_devil-nx (its #15 / #60 "srgb dedupe"; dmc_deko3d_srgb_register_kept): the framebuffer sRGB register (0x56E,
+        // which deko3d never writes) written at a framebuffer bind only when the list's last value differs (unknown at
+        // the list's begin). The same register. Off: at every bind, as before.
+        bool srgbRegisterKept = false;
     };
     // sasrt-nx (2026-11-08, Deko3DOptions::dataOnlyInvalidate): plume's own invalidate bit, above deko3d's flags.
     constexpr uint32_t Deko3DDataInvalidate = 1u << 30;

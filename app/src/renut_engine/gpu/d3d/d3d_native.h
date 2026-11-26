@@ -321,6 +321,20 @@ constexpr u32 AutoFrontBuffer = 0x39D4;  // katamari-nx: 0x39EC->0x39D4
 constexpr u32 AutoBackBuffer = 0x39D8;  // katamari-nx: 0x39F0->0x39D8
 }  // namespace off
 
+// dmc_devil-nx (527367bb; its remap missed literal copies of moved fields, BUGLOG DMC-17): the fields d3d.h names too
+// are one place. These check equality, not values: a port that remaps one copy and not the other stops at the build.
+static_assert(off::Ring == offsetof(d3d::Device, m_pRing));
+static_assert(off::FenceTag == d3d::kDeviceOffsetFenceTag);
+static_assert(off::Flags1 == d3d::kDeviceOffsetSwapFlags);
+static_assert(off::IndexBuffer == d3d::kDeviceOffsetIndexBuffer);
+static_assert(off::RenderTargets == d3d::kDeviceOffsetRenderTargets);
+static_assert(off::DepthStencil == d3d::kDeviceOffsetDepthStencil);
+static_assert(off::StreamSources == d3d::kDeviceOffsetStreamSources);
+static_assert(off::StreamStrides == d3d::kDeviceOffsetStreamStrides);
+static_assert(off::Textures == d3d::kDeviceOffsetTextures);
+static_assert(off::Predication == d3d::kDeviceOffsetPredication);
+static_assert(off::CommandBuffer == d3d::kDeviceOffsetCommandBuffer);
+
 // Flags (0x2ABC) bits: 0x01 the draws that follow run in each tile's pass,
 // 0x08/0x04 command buffer recording modes, 0x10/0x20 tiling, 0x80 no GPU
 // hardware. Flags1 (0x2ABD): 0x02 fences complete as they are written, 0x20

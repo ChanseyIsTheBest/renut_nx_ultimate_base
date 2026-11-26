@@ -320,6 +320,37 @@ bool WantHardwareSrgb(const TextureFetch &fetch, plume::RenderFormat host_format
          fetch.Sign(3) != TextureSign::Gamma;
 }
 
+// dmc_devil-nx (e3cbf45e, DMC-15 "Hardware sRGB Texture Views (dmc_gpu_hw_srgb = true)": "BC1/BC2/BC3/RGBA8/BGRA8 sRGB
+// textures decode in Maxwell texture hardware and compile as 0x8000 plain fetches", e.g. its ps_38097E59C4C17121 10,240 B /
+// 56 GPR -> 3,840 B / 35 GPR): asura_renut_hw_srgb's sRGB view for 8_8_8_8 textures (host RGBA8 / BGRA8) as well, only
+// those uploaded from guest memory (not a resolve's or another GPU write's: what a gamma target wrote is the Xenos
+// curve's, not sRGB), not a depth words or stacked source. sRGB is not the Xenos piecewise-linear curve the shader
+// decodes: a picture change, off. On its own (asura_renut_hw_srgb keeps BC1-3). false: as before.
+REXCVAR_DEFINE_BOOL(dmc_renut_hw_srgb_rgba8, false, "Banjo/Renut",
+                    "From dmc_devil-nx: deko3d samples RGBA8 / BGRA8 textures (uploaded, not GPU-written) with gamma "
+                    "colour signs through an sRGB view and the shader leaves those channels alone (the sRGB curve, not "
+                    "the Xenos one). false: as before. Read at start")
+    .lifecycle(::rex::cvar::Lifecycle::kInitOnly);
+plume::RenderFormat DmcRgba8SrgbFormat(plume::RenderFormat f) {  // UNKNOWN with the key off
+  static const bool on = REXCVAR_GET(dmc_renut_hw_srgb_rgba8);
+  if (!on)
+    return plume::RenderFormat::UNKNOWN;
+  switch (f) {
+  case plume::RenderFormat::R8G8B8A8_UNORM:
+    return plume::RenderFormat::R8G8B8A8_UNORM_SRGB;
+  case plume::RenderFormat::B8G8R8A8_UNORM:
+    return plume::RenderFormat::B8G8R8A8_UNORM_SRGB;
+  default:
+    return plume::RenderFormat::UNKNOWN;
+  }
+}
+bool DmcWantHardwareSrgbRgba8(const TextureFetch &fetch, const HostTexture &t, bool depth_source, bool stacked_source) {
+  return IsDeko3D() && DmcRgba8SrgbFormat(t.host_format) != plume::RenderFormat::UNKNOWN && !t.gpu_written &&
+         !depth_source && !stacked_source && t.texture && banjo::renut_gpu::TextureSignsOn() &&
+         fetch.Sign(0) == TextureSign::Gamma && fetch.Sign(1) == TextureSign::Gamma &&
+         fetch.Sign(2) == TextureSign::Gamma && fetch.Sign(3) != TextureSign::Gamma;
+}
+
 // The bindless slot of 't' seen through 'swizzle': its own view's when that is
 // the swizzle it was made with, else a view made for it (kept with 't'); asura-nx: 'srgb', an sRGB view (kept
 // under the swizzle with bit 12 set). With srgb false exactly as before.
@@ -332,8 +363,9 @@ uint32_t SlotForSwizzle(HostTexture &t, u32 swizzle, bool srgb = false) {
       return v.slot;
   }
   plume::RenderTextureViewDesc desc = t.view_desc;
-  if (srgb)
-    desc.format = SrgbFormatFor(t.host_format);
+  if (srgb)  // dmc_devil-nx: an RGBA8 / BGRA8 one's with dmc_renut_hw_srgb_rgba8 (UNKNOWN otherwise)
+    desc.format = DmcRgba8SrgbFormat(t.host_format) != plume::RenderFormat::UNKNOWN ? DmcRgba8SrgbFormat(t.host_format)
+                                                                                     : SrgbFormatFor(t.host_format);
   desc.componentMapping = SwizzleMapping(swizzle, t.view_swap_red_blue, t.host_format);
   HostTexture::SwizzleView v;
   v.swizzle = key;
@@ -987,6 +1019,8 @@ void Retire(HostTexture &t) {
   t.level0_slot = UINT32_MAX;
   Video::RetireLocked(std::move(t.level0_view));
   Video::RetireLocked(std::move(t.copy_framebuffer));  // banjo-nx (2026-10-18)
+  if (t.dmc_depth_float_framebuffer) [[unlikely]]  // dmc_devil-nx (dmc_gpu_depth_resolve_float_only_fb)
+    Video::RetireLocked(std::move(t.dmc_depth_float_framebuffer));
   if (!t.stacked_layer_framebuffers.empty() || !t.stacked_layer_views.empty()) [[unlikely]] {  // asura-nx
     for (auto &fb : t.stacked_layer_framebuffers)
       Video::RetireLocked(std::move(fb));
@@ -2522,7 +2556,9 @@ TextureBinding BindTextureLocked(u32 texture_va, const TextureFetch &device_fetc
     fx->slot_texture = !depth_source && !stacked_source;  // banjo-nx (2026-10-27): RefreshBindingLocked's
   }
   binding.dimension = t.dimension;
-  const bool want_srgb = !(t.handed_from || t.held_current) && WantHardwareSrgb(fetch, t.host_format);  // asura-nx
+  const bool want_srgb = !(t.handed_from || t.held_current) &&
+                         (WantHardwareSrgb(fetch, t.host_format) ||  // asura-nx
+                          DmcWantHardwareSrgbRgba8(fetch, t, depth_source != nullptr, stacked_source != nullptr));
   binding.slot = SlotForSwizzle(t, swizzle, want_srgb);
   binding.hw_srgb = want_srgb && binding.slot != t.slot;
   // banjo-nx (2026-10-19, banjo_deko3d_depth_handover): its content where it is.

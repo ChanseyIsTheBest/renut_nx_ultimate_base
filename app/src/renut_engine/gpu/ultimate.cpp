@@ -415,6 +415,20 @@ REXCVAR_DEFINE_BOOL(dishonored_renut_clamp_7e3, true, "Banjo/Enhancements",
                     "highlights far above the range (a washed-out frame). Needs the shader package with the clamp7e3 pass "
                     "(constant 990). Blending past the range is not clamped. Off: the output as the shader computes it")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// dmc_devil-nx (517b4928, DMC-11, "Lilith DOF blowout"; its notes: banjoTrim "clamped alpha to 0..1 even on wide-alpha
+// float/HDR EDRAM formats 5 and 7 (color_exp_bias != 0)"). A colour target of RB_COLOR_INFO format 16_16_16_16 (5) or
+// 16_16_16_16_FLOAT (7) holds an alpha wider than 0..1, which the GPU scales by the exponent bias like the colour; the
+// shader's saturate (banjoTrim, shader_common.h) cut UE3's half-resolution depth-of-field weights (biased, divided back
+// by the resolve) to 1. render/draw.cpp SasrtSpecWordsOf: sasrt_words[7] bits 24-27 for such written targets;
+// render/pipeline.cpp: constant 927 bits 4-7; banjoTrim leaves those targets' alpha unclamped only in a GLSL package made
+// with DMC_TARGET_WIDE_ALPHA=1 in the translator's environment (XenosRecomp). deko3d only. A picture change: off.
+REXCVAR_DEFINE_BOOL(dmc_renut_target_wide_alpha, false, "Banjo/Renut",
+                    "From dmc_devil-nx: a pixel shader drawing into a 16_16_16_16 or 16_16_16_16_FLOAT target with a "
+                    "colour exponent bias keeps its biased alpha unclamped (the console stores it in the target's wide "
+                    "alpha) instead of saturating it to 1. Needs the GLSL package made with DMC_TARGET_WIDE_ALPHA=1 and "
+                    "blur_renut_target_bias_rgb. New pipeline variants (rebuild the DKSH cache). false: as before. "
+                    "Read at start")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 namespace banjo::renut_gpu {
 int Deko3DUserClipEnable() { return REXCVAR_GET(banjo_deko3d_user_clip_enable); }
@@ -639,6 +653,10 @@ bool VertexReadableCheckOn() {
 }
 bool Clamp7e3On() {
   static const bool on = REXCVAR_GET(dishonored_renut_clamp_7e3);
+  return on;
+}
+bool DmcWideAlphaOn() {  // dmc_devil-nx: only with the bias on the colour too (constant 927 is pushed only then)
+  static const bool on = REXCVAR_GET(dmc_renut_target_wide_alpha) && TargetBiasRgbOn();
   return on;
 }
 }  // namespace banjo::renut_gpu

@@ -50,6 +50,19 @@ REXCVAR_DEFINE_BOOL(asura_deko3d_vtx_state_dedupe, false, "Banjo/Enhancements",
                     "deko3d (from asura-nx): vertex attribute and buffer state sent only when it differs from what the "
                     "list bound, with the strides each draw binds. false: as before. Read at start")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// dmc_devil-nx (e3cbf45e, its audited "pixel-identical" #15 / #60): plume_deko3d.h Deko3DOptions::blendWordsNeeded and
+// ::srgbRegisterKept. The same registers in the GPU either way: fewer command words a pipeline or framebuffer change. The
+// port's other dedupes (viewports, scissors, depth bias, stencil reference by hash) are left out: Renut keeps its
+// viewports already (blur_renut_viewport_memo) and plume's clears write scissors directly.
+REXCVAR_DEFINE_BOOL(dmc_deko3d_blend_words_needed, true, "Banjo/Enhancements",
+                    "deko3d (from dmc_devil-nx): a blend state's per-target registers written again only for targets "
+                    "whose alpha destination factor differs from the colour one (deko3d 0.5.0's FuncAlphaDst fault). "
+                    "The same state. false: every target's again, as before. Read at start")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(dmc_deko3d_srgb_register_kept, true, "Banjo/Enhancements",
+                    "deko3d (from dmc_devil-nx): the framebuffer sRGB register written at a framebuffer bind only when "
+                    "it changes within the command list. The same state. false: at every bind, as before. Read at start")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 // Port 161 (from fnxf_xiii, its note of 2026-11-05): see DiagLogWriter.
 REXCVAR_DEFINE_BOOL(banjo_deko3d_log_writer, true, "Banjo/Enhancements",
                     "deko3d.log's progress lines (memory blocks, compile threads, swapchain) written and flushed by a "
@@ -817,6 +830,8 @@ void InstallShaderCache() {
   options.descriptorCache = REXCVAR_GET(lo_deko3d_descriptor_cache);                       // port 59
   options.relaxedDescriptorCounters = REXCVAR_GET(lo_deko3d_relaxed_descriptor_counters);  // port 59
   options.vtxStateChecked = REXCVAR_GET(asura_deko3d_vtx_state_dedupe);  // asura-nx
+  options.blendWordsNeeded = REXCVAR_GET(dmc_deko3d_blend_words_needed);  // dmc_devil-nx
+  options.srgbRegisterKept = REXCVAR_GET(dmc_deko3d_srgb_register_kept);  // dmc_devil-nx
   plume::Deko3DSetOptions(options);
   sasrt::gpu_round::ApplyPlume();  // sasrt-nx (2026-11-08): the GPU round's items in plume (preciseDepthResolve)
   // banjo-nx (2026-10-28, the console's OOM): a block that finds no room in the heap gets the spare command buffers'.

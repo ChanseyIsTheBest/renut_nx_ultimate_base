@@ -183,6 +183,10 @@ namespace plume {
         R5G6B5_UNORM,
         R5G5B5A1_UNORM,
         R4G4B4A4_UNORM,
+        // dmc_devil-nx (DMC-15, renut's dmc_renut_hw_srgb_rgba8): sRGB views of RGBA8 / BGRA8 images. deko3d only (the
+        // other back ends never get them); after the others, so no earlier value moves.
+        R8G8B8A8_UNORM_SRGB,
+        B8G8R8A8_UNORM_SRGB,
         MAX
     };
 
@@ -571,10 +575,12 @@ namespace plume {
             return 8;
         case RenderFormat::R8G8B8A8_TYPELESS:
         case RenderFormat::R8G8B8A8_UNORM:
+        case RenderFormat::R8G8B8A8_UNORM_SRGB:  // dmc_devil-nx
         case RenderFormat::R8G8B8A8_UINT:
         case RenderFormat::R8G8B8A8_SNORM:
         case RenderFormat::R8G8B8A8_SINT:
         case RenderFormat::B8G8R8A8_UNORM:
+        case RenderFormat::B8G8R8A8_UNORM_SRGB:  // dmc_devil-nx
         case RenderFormat::R16G16_TYPELESS:
         case RenderFormat::R16G16_FLOAT:
         case RenderFormat::R16G16_UNORM:
@@ -663,10 +669,12 @@ namespace plume {
         case RenderFormat::R32G32_SINT:
         case RenderFormat::R8G8B8A8_TYPELESS:
         case RenderFormat::R8G8B8A8_UNORM:
+        case RenderFormat::R8G8B8A8_UNORM_SRGB:  // dmc_devil-nx
         case RenderFormat::R8G8B8A8_UINT:
         case RenderFormat::R8G8B8A8_SNORM:
         case RenderFormat::R8G8B8A8_SINT:
         case RenderFormat::B8G8R8A8_UNORM:
+        case RenderFormat::B8G8R8A8_UNORM_SRGB:  // dmc_devil-nx
         case RenderFormat::R16G16_TYPELESS:
         case RenderFormat::R16G16_FLOAT:
         case RenderFormat::R16G16_UNORM:

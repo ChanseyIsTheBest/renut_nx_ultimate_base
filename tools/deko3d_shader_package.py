@@ -32,6 +32,11 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ZSTD = r'C:\devkitPro\msys2\usr\bin\zstd.exe'
+# dmc_devil-nx (4858b474, Phase 3: its 35,734-shader package): the zstd runs of 300 files each, up to 8 at a time instead
+# of one after another. Each file is compressed alone with the same dictionary into a file of its own, so every frame,
+# and the package, is the same. DMC_PACKAGE_PARALLEL=0: one run at a time, as before. (The port's in-memory `zstandard`
+# path, with a dictionary trained on a sample of the shaders, is left out: another dictionary, so another package.)
+PARALLEL = os.environ.get('DMC_PACKAGE_PARALLEL', '1') != '0'
 
 
 def fwd(p):
@@ -91,9 +96,19 @@ def main():
             subprocess.run([ZSTD, '--train', '-q', f'--maxdict={maxdict}', '-o', dict_path, '-r',
                             fwd(os.path.relpath(a.glsl))], check=True)
             os.makedirs(zdir, exist_ok=True)
-            for i in range(0, len(files), 300):
-                subprocess.run([ZSTD, f'-{a.level}', '-q', '-f', '-D', dict_path, '--output-dir-flat', zdir] +
-                               files[i:i + 300], check=True)
+            if PARALLEL:  # dmc_devil-nx
+                import concurrent.futures
+
+                def zbatch(chunk):
+                    subprocess.run([ZSTD, f'-{a.level}', '-q', '-f', '-D', dict_path, '--output-dir-flat', zdir] +
+                                   chunk, check=True)
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+                    list(ex.map(zbatch, [files[i:i + 300] for i in range(0, len(files), 300)]))
+            else:
+                for i in range(0, len(files), 300):
+                    subprocess.run([ZSTD, f'-{a.level}', '-q', '-f', '-D', dict_path, '--output-dir-flat', zdir] +
+                                   files[i:i + 300], check=True)
             dictionary = open(dict_path, 'rb').read()
         entries = []
         data = bytearray()

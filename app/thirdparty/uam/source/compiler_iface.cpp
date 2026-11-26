@@ -728,16 +728,21 @@ std::unique_ptr<DekoCompiler> DekoCompiler::CompileBest(pipeline_stage stage, co
 std::unique_ptr<DekoCompiler> DekoCompiler::TryRescue(std::unique_ptr<DekoCompiler> best, pipeline_stage stage,
 	int optLevel, unsigned flags, const char* glsl)
 {
-	if (!best || !(flags & 2048) || best->m_dkph.num_gprs <= 56 || strstr(glsl, "SPIRV_CROSS_CONSTANT_ID_910 1u"))
+	// dmc_devil-nx (e3cbf45e, its #37, banjo flag 8388608: "TryRescue <= 40 + flag bit 64u"): from 40 registers (48 warps
+	// an SM) instead of 56, and both sets with DomCSE for the costly operations only (64), which keeps fewer values alive.
+	// The kept variant is still the one with fewer register steps (then smaller code). Without the flag: 56 and no 64.
+	const unsigned limit = (flags & 8388608u) ? 40u : 56u;
+	const unsigned costly = (flags & 8388608u) ? 64u : 0u;
+	if (!best || !(flags & 2048) || best->m_dkph.num_gprs <= limit || strstr(glsl, "SPIRV_CROSS_CONSTANT_ID_910 1u"))
 		return best;
 	static const unsigned add = 2048u | 4096u | 65536u | 131072u | 262144u | 524288u;
 	const unsigned sets[2] = {
-		(flags | add) & ~16u,
-		(flags | add | 16384u | 32768u) & ~(16u | 8192u),
+		(flags | add | costly) & ~16u,
+		(flags | add | costly | 16384u | 32768u) & ~(16u | 8192u),
 	};
 	for (unsigned set : sets)
 	{
-		if (best->m_dkph.num_gprs <= 56)
+		if (best->m_dkph.num_gprs <= limit)
 			break;
 		nv50_ir_set_banjo_flags(set);
 		std::unique_ptr<DekoCompiler> alt(new DekoCompiler(stage, optLevel));

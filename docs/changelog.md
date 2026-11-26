@@ -450,3 +450,12 @@ Ports 1-43 are the first round: the universal fixes of the other ports' renderer
   bounce buffer that falls back instead of throwing, the APM hint without Mass Effect's key.
 - Port 332 (blur-nx's): content_backup_root's copies one folder per profile.
 - Port 333 (blur-nx's advice): content_backup_root copies saved games only, not DLC folders.
+- Ports 334-357 (dmc_devil-nx v1.0.0's, hardened): static modules and their store cards, flags and title-update path,
+  Katamari's pack hiding only in Katamari, UTF-8 NRO names, port 315's recorded index count fixed, device offsets in one
+  place, exact hand-over and resolve savings (all-KEEP stencil, masked colour targets, one-target float resolves, blend
+  words), shader tool speed-ups; picture changes off (wide alpha, vector kill lanes, sRGB RGBA8, write-order view sync,
+  full-screen take, uam flags, the PWL fit, CRT cards after the write).
+- Ports 358-369 (pokersmash-nx 1.0.0's, hardened): profile settings saved without a throw, under a lock, within the
+  console's size; the main thread on processor 0 and a gamer picture from a Switch user's icon or a file (both off, a
+  game's toml turns them on); a PC crash report's host stack scan (off); the hot copies' shard count in one line;
+  diagnostics and tools.

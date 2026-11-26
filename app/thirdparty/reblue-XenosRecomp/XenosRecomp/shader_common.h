@@ -843,8 +843,16 @@ float4 banjoTrim(float4 c, uint target)
         c.xyz = renutLinearToGamma(c.xyz);
     // Saturated: the alpha of the formats that use a bias is unorm on the console (2 bits in 2_10_10_10_FLOAT), and a blend
     // reads what the target can hold. A shader that does not divide its alpha by the bias would blend past 1 here.
+#if defined(DMC_TARGET_WIDE_ALPHA) && DMC_TARGET_WIDE_ALPHA
+    // dmc_devil-nx (DMC-11, dmc_renut_target_wide_alpha): bits 4-7 of constant 927, the 16_16_16_16 and
+    // 16_16_16_16_FLOAT targets, whose alpha is as wide as their colour: scaled, not saturated (the resolve divides it
+    // back). Only in a package made with DMC_TARGET_WIDE_ALPHA=1 (XenosRecomp); otherwise the line below, as before.
+    if (bias != 0u)
+        c.w = ((g_banjoTargetBiasRgb >> (target + 4u)) & 1u) != 0u ? c.w * biasScale : saturate(c.w * biasScale);
+#else
     if (bias != 0u)
         c.w = saturate(c.w * biasScale);
+#endif
     const uint m = (g_banjoOutputTrim >> (target * 4u)) & 0xFu;
     const float v = g_banjoTrimPoison != 0u ? 60000.0 : 0.0;
     return select(bool4((m & 1u) != 0u, (m & 2u) != 0u, (m & 4u) != 0u, (m & 8u) != 0u), float4(v, v, v, v), c);

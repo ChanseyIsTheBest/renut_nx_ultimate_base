@@ -24,6 +24,8 @@
 #include "codegen/nv50_ir_target_gm107.h"
 #include "codegen/nv50_ir_lowering_gm107.h"
 
+extern "C" unsigned nv50_ir_get_banjo_flags();  // banjo-nx (nv50_ir_peephole.cpp); dmc_devil-nx: flag 2097152 below
+
 namespace nv50_ir {
 
 Target *getTargetGM107(unsigned int chipset)
@@ -309,6 +311,12 @@ TargetGM107::canDualIssue(const Instruction *a, const Instruction *b) const
 int
 TargetGM107::getLatency(const Instruction *insn) const
 {
+   // dmc_devil-nx (e3cbf45e, its #38, banjo flag 2097152): PRMT (banjo-nx's byte swaps, flag 1) with the fixed latency of
+   // the other integer operations (6) instead of the 15 stall counts of an operation the table does not know. The port's
+   // value, NOT checked against the hardware here: a PRMT slower than 6 would hand its reader a stale register. Without
+   // the flag: 15, as before.
+   if (insn->op == OP_PERMT && insn->dType != TYPE_F64 && (nv50_ir_get_banjo_flags() & 2097152u))
+      return 6;
    // TODO: better values! This should be good enough for now though.
    switch (insn->op) {
    case OP_EMIT:

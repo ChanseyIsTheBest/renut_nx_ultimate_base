@@ -39,6 +39,13 @@ REXCVAR_DEFINE_BOOL(katamari_dlc_unlock_packs, false, "Nuts&Bolts/DLC",
     "Beautiful Katamari's DLC packs that only unlock presents and cousins (Accessory Sets A-D, Character Sets A-D, "
     "Special Accessory): false (the default) keeps them from the game, though they stay installed; true shows them "
     "too. The stage packs are shown either way.");
+// dmc_devil-nx (e3cbf45e): the packs above are Beautiful Katamari's, hidden by their display names ("Character Set A",
+// "Special Accessory", ...), which another game's DLC may share; and every other game logged the line about them.
+// renut-ultimate's form: Katamari's title ID from docs/katamari-notes.md (the port wrote 0x4E4D07DB, which is not it, and
+// would have stopped the hiding in Katamari). A title not known yet (0) keeps the rule, as before.
+REXCVAR_DEFINE_BOOL(dmc_dlc_katamari_packs_title_gate, true, "Nuts&Bolts/DLC",
+    "dmc_devil-nx: katamari_dlc_unlock_packs = false hides Beautiful Katamari's packs in Beautiful Katamari only "
+    "(title 4E4D07DC). false: in every game, as before");
 REXCVAR_DECLARE(std::string, dlc_hidden);  // sdk/src/system/xam/content_manager.cpp
 REXCVAR_DECLARE(bool, deadpool_dlc_enabled);  // sdk/src/system/xam/content_manager.cpp (deadpool-nx)
 
@@ -48,6 +55,8 @@ namespace {
 
 namespace fs = std::filesystem;
 
+// Beautiful Katamari's title ID (docs/katamari-notes.md): dmc_devil-nx's gate (dmc_dlc_katamari_packs_title_gate).
+constexpr uint32_t kKatamariTitleId = 0x4E4D07DCu;
 // The display names of the packs katamari_dlc_unlock_packs = false hides (their package headers' names).
 constexpr std::array<const char *, 9> kKatamariUnlockPacks = {
     "Accessory Set A", "Accessory Set B", "Accessory Set C", "Accessory Set D", "Character Set A",
@@ -146,7 +155,12 @@ void InstallPackages(rex::Runtime *runtime) {
         return;
     if (!REXCVAR_GET(deadpool_dlc_enabled))
         return;
-    if (!REXCVAR_GET(katamari_dlc_unlock_packs)) {
+    // dmc_devil-nx (dmc_dlc_katamari_packs_title_gate): Katamari's packs in Katamari (or a title not known yet) only.
+    const bool katamari_packs_apply = !REXCVAR_GET(dmc_dlc_katamari_packs_title_gate) || [runtime] {
+        const uint32_t game_title = runtime->kernel_state()->title_id();
+        return game_title == 0 || game_title == kKatamariTitleId;
+    }();
+    if (katamari_packs_apply && !REXCVAR_GET(katamari_dlc_unlock_packs)) {
         std::string &hidden = REXCVAR_GET(dlc_hidden);
         for (const char *name : kKatamariUnlockPacks) {
             if (!hidden.empty())
