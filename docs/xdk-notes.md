@@ -177,3 +177,25 @@ Episode I's (2.0.11626) hooks and device layout by aligning paired functions (to
 port 328) and found the same rule as TFU and Sonic 4: an address one instruction off (its caps table read at 0x820F80E0
 instead of 0x821080E0) made every D3DXCreateTexture fail with E_OUTOFMEMORY and the screen sample never-resolved
 textures: check each moved address by the code that forms it.
+
+## Hook signature tables per XDK (2026-11-27, port 371)
+
+tools/xdk_2.0.5632_renut_sigs.json (Katamari, 323 hooks) and tools/xdk_2.0.6534_renut_sigs.json (Poker Smash, 326)
+place Renut's hooks exactly in a game of the same XDK:
+
+  python -I tools/xdk_sigmatch.py find app/generated out/renut_image.bin tools/xdk_2.0.6534_renut_sigs.json --xdk 2.0.6534
+
+An address found once is the hook's place; more than once, or an entry with "unique": false (Katamari's
+SetGammaRamp, SetPWLGamma, D3DLineTexture_LockRect, D3D_CDevice_BeginRingManual), is read by hand. Only on the table's
+own XDK: across 2.0.5632 and 2.0.6534, 176 of the 318 hooks both games bind have the same signature, but nine
+render-state getters a way matched another state's getter (the device's state fields moved), so another XDK's hits
+are leads to check against the game's own state table. A port of an XDK with no table adds one once its hooks run in
+its builds (a bound hook is a checked one):
+
+  python -I tools/xdk_sigmatch.py hooks app/generated out/renut_image.bin app/src/renut_engine/gpu/d3d/hooks \
+      --xdk 2.0.NNNN --names-from <the base's app/src/renut_engine/gpu/d3d/hooks> --game "<game, build>" \
+      --out tools/xdk_2.0.NNNN_renut_sigs.json [--name ADDR=NAME for a raw hook its comment does not name]
+
+The tables hold SHA-1 hashes of the masked instruction words, sizes and addresses: no XDK code. Katamari's has no state
+block functions (port 370: it uses none); Poker Smash's names them D3DStateBlock_Capture / _Apply (descriptive names,
+its notes').

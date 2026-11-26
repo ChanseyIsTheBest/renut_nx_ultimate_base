@@ -1,0 +1,2936 @@
+{
+ "D3DArrayTexture_UnlockRect": {
+  "address": "82171730",
+  "instructions": 5,
+  "signature": "e15f41ba639cc6ede7a50b4898d1301a8755c257",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DBaseTexture_GetLevelCount": {
+  "address": "821730C8",
+  "instructions": 4,
+  "signature": "f0315b1fb3bdd1d5f34937139ecef64512c9facc",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DConstantBuffer_Unlock": {
+  "address": "82174130",
+  "instructions": 3,
+  "signature": "0efc10fb04e7668cef1adf3ade22589b06df777d",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DCubeTexture_GetCubeMapSurface": {
+  "address": "821731A8",
+  "instructions": 46,
+  "signature": "99b8229e67672d131acb7d1a1be3e07102df497a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_AddRef": {
+  "address": "821765C8",
+  "instructions": 5,
+  "signature": "5e9f2de7bb90a78ffc9553c1c849ec28019d36cc",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_BeginTiling": {
+  "address": "82188B58",
+  "instructions": 293,
+  "signature": "2c6443ba28dc13f29051d680b1b080562e7c0797",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_BeginVertices": {
+  "address": "82239CD8",
+  "instructions": 296,
+  "signature": "353c1955488dda2d2c2a926a30cdda39a9350eae",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_BlockUntilIdle": {
+  "address": "82175F20",
+  "instructions": 29,
+  "signature": "a39972ca11a9892bd6bf4f226c8c0a5dca6c324b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_Clear": {
+  "address": "82191A08",
+  "instructions": 47,
+  "signature": "6948a5b9e589c738e14b1f7c89c337f00fbded47",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_ClearF": {
+  "address": "821918E0",
+  "instructions": 73,
+  "signature": "98a412b5fe69afdaa7c9dcd6559e5e667b1047a9",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_CreateIndexBuffer": {
+  "address": "82174038",
+  "instructions": 43,
+  "signature": "41416333263804ee69c45f5acd724dfaa1cc1c36",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_CreatePixelShader": {
+  "address": "82181928",
+  "instructions": 68,
+  "signature": "5ced46e01de15484e7d51527806b3e320d429c7e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_CreateSurface": {
+  "address": "82173440",
+  "instructions": 74,
+  "signature": "02cc291a0cc935dae98f249b98f36ec3c467775e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_CreateTexture": {
+  "address": "82173320",
+  "instructions": 72,
+  "signature": "53ddf67e592b506aa06cc911bd6b8d7296062293",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_CreateVertexBuffer": {
+  "address": "82173F10",
+  "instructions": 50,
+  "signature": "d2cb75c0ab642bc1bb60b5344e1eece0a5334cab",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_CreateVertexDeclaration": {
+  "address": "82180420",
+  "instructions": 33,
+  "signature": "3de221c6e3e43fb6b4505ae7df4a599e6d5fa365",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_CreateVertexShader": {
+  "address": "82181A38",
+  "instructions": 60,
+  "signature": "773f0ec32ce8d6768deaad9f756d7a96e110aad4",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_DrawIndexedVertices": {
+  "address": "8223A5A8",
+  "instructions": 278,
+  "signature": "1d444813b498b0cd9d7329df2ec8e70964fc3144",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_DrawVertices": {
+  "address": "8223A1C0",
+  "instructions": 250,
+  "signature": "475e794cf69a8ca15db65b14bed7d52c56f293bb",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_DrawVerticesUP": {
+  "address": "8223A178",
+  "instructions": 18,
+  "signature": "48d2a2944148999dff570aa364ab36fe0daa25b2",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_EndTiling": {
+  "address": "82188FF0",
+  "instructions": 304,
+  "signature": "275e56e6338ffaa8dbf7dcaeb4ff39a2bd1c3796",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetDeviceCaps": {
+  "address": "82185540",
+  "instructions": 5,
+  "signature": "0e9a9642c398b32016823c7a2272dddf4d610ea3",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_AlphaBlendEnable": {
+  "address": "82176D98",
+  "instructions": 3,
+  "signature": "1d2743d3ccce1c37d738c951522aa7f5420fd240",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_AlphaFunc": {
+  "address": "821771C8",
+  "instructions": 3,
+  "signature": "84de5a7c62d50fffc5d69261a5ca09e57d1082e9",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_AlphaRef": {
+  "address": "82177178",
+  "instructions": 11,
+  "signature": "5fa0763b9cb7fdddd93f2bc793d97fa6cf99406e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_AlphaTestEnable": {
+  "address": "82176D08",
+  "instructions": 3,
+  "signature": "a8449e903293aff4a78c69ca1dbbadb650ff7db0",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_AlphaToMaskEnable": {
+  "address": "82178350",
+  "instructions": 3,
+  "signature": "6f1eb8d14fdb6d6e55cfd09867aa243bad4ca76a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_AlphaToMaskOffsets": {
+  "address": "82178380",
+  "instructions": 5,
+  "signature": "95a4fa972e4ac61bca245231150de73294931610",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_BlendFactor": {
+  "address": "82177278",
+  "instructions": 32,
+  "signature": "07c32852785904e7a2b893bb619ed993bf3e77ec",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_BlendOp": {
+  "address": "82176E28",
+  "instructions": 3,
+  "signature": "dfa42546dd1cc26d864e3bb8b62ed74710b0c6c7",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_BlendOpAlpha": {
+  "address": "82176FB8",
+  "instructions": 3,
+  "signature": "5709fbb8e40f4899e798a564b7fb8e8435dff830",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_Buffer2Frames": {
+  "address": "821773C0",
+  "instructions": 3,
+  "signature": "c4507c31d305802287312a4aabbd7088cfa65f3e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_CCWStencilFail": {
+  "address": "82177618",
+  "instructions": 3,
+  "signature": "f481994ed25389e5ecdbedc2356127c8b9961c8b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_CCWStencilFunc": {
+  "address": "821775E0",
+  "instructions": 3,
+  "signature": "b2461bfa26bfa597984a26bebf6adae16d38116d",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_CCWStencilMask": {
+  "address": "82177728",
+  "instructions": 2,
+  "signature": "098e3ff568d0bec0db253e934d1b4cb68d21865a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_CCWStencilPass": {
+  "address": "82177680",
+  "instructions": 3,
+  "signature": "7ad49d40717f7c1e8e2adf1aa97482c2bc94d68e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_CCWStencilRef": {
+  "address": "82177708",
+  "instructions": 2,
+  "signature": "f32f296ad5e47734c3def12d217214feb95fb7a6",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_CCWStencilWriteMask": {
+  "address": "82177748",
+  "instructions": 2,
+  "signature": "483c03b0629a86ff537f80aa32538c02ee4650ee",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_CCWStencilZFail": {
+  "address": "82177650",
+  "instructions": 3,
+  "signature": "080ced03a7a58aadfab654d296f4a6cff69ee4d6",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_ClipPlaneEnable": {
+  "address": "82177790",
+  "instructions": 3,
+  "signature": "8c0617430df89b9d79ca52405958939d2eba697e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_ColorWriteEnable": {
+  "address": "821779A0",
+  "instructions": 2,
+  "signature": "9b26f14d4fe2adaee67beeed501c5bba397b8e25",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_ColorWriteEnable1": {
+  "address": "821779E0",
+  "instructions": 2,
+  "signature": "98e7e107a40389eef2ef32b5330eaa31e8f1479f",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_ColorWriteEnable2": {
+  "address": "82177A20",
+  "instructions": 2,
+  "signature": "e248c9c6c75c7c26d14db1c92ef1f9d59deab191",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_ColorWriteEnable3": {
+  "address": "82177A60",
+  "instructions": 2,
+  "signature": "95bdeed6add54699db04b337f3827584a53d72fb",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_CullMode": {
+  "address": "82176CA0",
+  "instructions": 3,
+  "signature": "cc8eaa71c05d317ec1e5294ca9ad44fc7578f8e2",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_DepthBias": {
+  "address": "82177908",
+  "instructions": 4,
+  "signature": "84468064044fdd7f83bb5af0b58e2b94d84e2fe3",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_DestBlend": {
+  "address": "82176F48",
+  "instructions": 3,
+  "signature": "a681668e753c65c57d3878b9459d3855be040984",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_DestBlendAlpha": {
+  "address": "82177098",
+  "instructions": 3,
+  "signature": "f7f5e38ddfaa441a0d32b1cfbd3933a082742f76",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_DiscardBand_X": {
+  "address": "82178418",
+  "instructions": 2,
+  "signature": "a13e39c969fa99541c85180637e0cb2fa53e656a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_DiscardBand_Y": {
+  "address": "82178448",
+  "instructions": 2,
+  "signature": "066dd68b0805ee7bd235d1547f82f8c68880709b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_FillMode": {
+  "address": "82176CD0",
+  "instructions": 3,
+  "signature": "d4d1244999499dcb2d287a059b75740c4379d273",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_GuardBand_X": {
+  "address": "821783C0",
+  "instructions": 2,
+  "signature": "6cbd3158b36274da1e49f4c3a84ce176db2b1e73",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_GuardBand_Y": {
+  "address": "821783F0",
+  "instructions": 2,
+  "signature": "9bac26ef9239c7ff076e3aaac531827ada8712c0",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_HalfPixelOffset": {
+  "address": "821782C8",
+  "instructions": 3,
+  "signature": "ee5e34fb94a7beab139635434e7ef7024fbbcb40",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_HiStencilEnable": {
+  "address": "82178508",
+  "instructions": 3,
+  "signature": "929cab1e1e22f17201ed194f7e6dd66abe9445db",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_HiStencilFunc": {
+  "address": "82178568",
+  "instructions": 3,
+  "signature": "e3b58ba1d772dd788d2afafdb06daa2cc8ab6a9b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_HiStencilRef": {
+  "address": "82178590",
+  "instructions": 2,
+  "signature": "1fadf631e3341bf0707b7fdc82b541abdf8db252",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_HiStencilWriteEnable": {
+  "address": "82178538",
+  "instructions": 3,
+  "signature": "620cfa48395c6fe3052bc3b6b85167d9bd114eb0",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_HiZEnable": {
+  "address": "82178470",
+  "instructions": 3,
+  "signature": "e67161d9e293176e2f710601ec85f2a80a9655ba",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_HiZWriteEnable": {
+  "address": "821784D8",
+  "instructions": 3,
+  "signature": "2da94a2171a94360dd327ebce40cd9c460ce9eaf",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_HighPrecisionBlendEnable": {
+  "address": "82177FE0",
+  "instructions": 2,
+  "signature": "64d8069549c274873b3d2cea99a25b18293b9be5",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_HighPrecisionBlendEnable1": {
+  "address": "82178090",
+  "instructions": 2,
+  "signature": "72793ea09ee5accf51df2d946bb8391f718a2bd4",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_HighPrecisionBlendEnable2": {
+  "address": "82178140",
+  "instructions": 2,
+  "signature": "5a6adaaa6d61162c3e177e0ddb994935cf36874d",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_HighPrecisionBlendEnable3": {
+  "address": "821781F0",
+  "instructions": 2,
+  "signature": "b738454c05f94bb72b0751e81d4e48a6f134e743",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_LastPixel": {
+  "address": "82177320",
+  "instructions": 3,
+  "signature": "b526a374444c3dfa0c501e50a55c018522f51a36",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_LineWidth": {
+  "address": "82177370",
+  "instructions": 12,
+  "signature": "bc8a1098df58ad4774d0da2d6779f47d487e2cfd",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_MaxTessellationLevel": {
+  "address": "82178258",
+  "instructions": 4,
+  "signature": "05e9d3a63671621f5ae74dab27eb2832366c9693",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_MinTessellationLevel": {
+  "address": "82178220",
+  "instructions": 4,
+  "signature": "fab5cc045d454d7b8471b0abc92671b7c90984a3",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_MultiSampleAntiAlias": {
+  "address": "82177938",
+  "instructions": 3,
+  "signature": "b73a9922ecf37668eeba7b6bccafeaf4896525f8",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_MultiSampleMask": {
+  "address": "82177960",
+  "instructions": 2,
+  "signature": "a917abde716f8fe84ce9892a4a163b4dddec795b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_PointSize": {
+  "address": "82177AC8",
+  "instructions": 4,
+  "signature": "a6d893f093477384da3958d768ff006439ce73a6",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_PointSizeMax": {
+  "address": "82177B78",
+  "instructions": 4,
+  "signature": "63212f0df3ac8eaf7fcfb8878631fcef33dd9799",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_PointSizeMin": {
+  "address": "82177B20",
+  "instructions": 4,
+  "signature": "01fe99a746cadb1396f2545574ec71fdb79e6ed7",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_PointSpriteEnable": {
+  "address": "82177A70",
+  "instructions": 2,
+  "signature": "588f356d723d1fa8da7632f8c5354b59d0855919",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_PresentImmediateThreshold": {
+  "address": "821785B8",
+  "instructions": 3,
+  "signature": "fd38d6e64b88d228b5d13edaf3e9c2c797d5d023",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_PresentInterval": {
+  "address": "821785A0",
+  "instructions": 2,
+  "signature": "c951dc21f8459d4f91726a5d4a64c33aac739e45",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_PrimitiveResetEnable": {
+  "address": "821782F8",
+  "instructions": 3,
+  "signature": "2fdaf0f0bb1bf2fbebcdd32c38b4bd44aac30312",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_PrimitiveResetIndex": {
+  "address": "82178328",
+  "instructions": 2,
+  "signature": "000dd2189c8be21e27113c0271af1cea79066a28",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_ScissorTestEnable": {
+  "address": "821777A0",
+  "instructions": 2,
+  "signature": "982093651b7fdaf2aa28740bf5407c9f0522a0ba",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_SeparateAlphaBlendEnable": {
+  "address": "82177130",
+  "instructions": 3,
+  "signature": "2fac1c865730d6bfb272a93ce0b279813591c55e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_SlopeScaleDepthBias": {
+  "address": "82177850",
+  "instructions": 7,
+  "signature": "5895627f438042a0dee185e98e45721d025688dd",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_SrcBlend": {
+  "address": "82176EB8",
+  "instructions": 3,
+  "signature": "c882b276683080ed195a9dc109a760cd3a05e1bd",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_SrcBlendAlpha": {
+  "address": "82177028",
+  "instructions": 3,
+  "signature": "29633ca4543648ee972340bdd032281869578667",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_StencilEnable": {
+  "address": "821774B0",
+  "instructions": 2,
+  "signature": "f16f6578fffc1fb8f70165316d07146d8ebfe2cc",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_StencilFail": {
+  "address": "82177548",
+  "instructions": 3,
+  "signature": "be6470b630aec546b5ccc7d83aa163fe9ff7c515",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_StencilFunc": {
+  "address": "82177510",
+  "instructions": 3,
+  "signature": "88a0010074dfaf077ecef075aff9ab14e5a88652",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_StencilMask": {
+  "address": "821776C8",
+  "instructions": 2,
+  "signature": "ab64e570aa2fa766dcb3c923bcda0845c78061f1",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_StencilPass": {
+  "address": "821775B0",
+  "instructions": 3,
+  "signature": "cd9b647407c4a9e2a0ce1a40b5d8f1bf98577947",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_StencilRef": {
+  "address": "821776A8",
+  "instructions": 2,
+  "signature": "5f4ecb99e5ec213928486bd059b28140fc1f6143",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_StencilWriteMask": {
+  "address": "821776E8",
+  "instructions": 2,
+  "signature": "60b55e04a6e01c296e57080f567cb1d926e4ed33",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_StencilZFail": {
+  "address": "82177580",
+  "instructions": 3,
+  "signature": "322d553837371c123c6d40e954f9bd0f3d248453",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_TessellationMode": {
+  "address": "82178290",
+  "instructions": 3,
+  "signature": "fab681fdef0126d4edaf246a17224a94e70d46a0",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_TwoSidedStencilMode": {
+  "address": "821774E0",
+  "instructions": 3,
+  "signature": "d91130ae4feab4ab70b37d4f7acc5cd2285272f6",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_ViewportEnable": {
+  "address": "82177F28",
+  "instructions": 3,
+  "signature": "8a0a985f8c8328e7bc71941b1f9241b5f6a33677",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_Wrap0": {
+  "address": "82177DE8",
+  "instructions": 3,
+  "signature": "9a218bc5de6a53ad6f93cee56817aeecd41d9419",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_Wrap1": {
+  "address": "82177DF8",
+  "instructions": 3,
+  "signature": "c49f53ff70619025edc6b11af28dafcf2d82e90a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_Wrap10": {
+  "address": "82177E88",
+  "instructions": 3,
+  "signature": "f1d56f70c58d59bb2edbc2d7845c72fc86f67dd4",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_Wrap11": {
+  "address": "82177E98",
+  "instructions": 3,
+  "signature": "3f4db71329c2dcfc499e7791474c8a281ca61a1c",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_Wrap12": {
+  "address": "82177EA8",
+  "instructions": 3,
+  "signature": "07ca4f119294fb4583cacd0447164d0cb700b117",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_Wrap13": {
+  "address": "82177EB8",
+  "instructions": 3,
+  "signature": "2680d4b8636567a298900488a4500cade9fcf5b4",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_Wrap14": {
+  "address": "82177EC8",
+  "instructions": 3,
+  "signature": "ee7b7d6a38fb98c11e8f9a4f0da2459b7ca00843",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_Wrap15": {
+  "address": "82177ED8",
+  "instructions": 3,
+  "signature": "942ef3162fb3f07986a6e5d6502215076ae33292",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_Wrap2": {
+  "address": "82177E08",
+  "instructions": 3,
+  "signature": "920ef377cd726cea45e620b0b31ee1bef27fc950",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_Wrap3": {
+  "address": "82177E18",
+  "instructions": 3,
+  "signature": "50150897ca05bebc1d8802f81bae31c9a9e45051",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_Wrap4": {
+  "address": "82177E28",
+  "instructions": 3,
+  "signature": "10fcadb2c001d5e309dab75e0d86067a65e23806",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_Wrap5": {
+  "address": "82177E38",
+  "instructions": 3,
+  "signature": "1a70d0728086f7caf094286ca40e4d6d33f00a7b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_Wrap6": {
+  "address": "82177E48",
+  "instructions": 3,
+  "signature": "150c5ccdc51ec9c9f088f44dfa570d08c7416200",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_Wrap7": {
+  "address": "82177E58",
+  "instructions": 3,
+  "signature": "920e6dc834cd5bb81a7ebd15300c754fa05012b3",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_Wrap8": {
+  "address": "82177E68",
+  "instructions": 3,
+  "signature": "142f347ea4653ab03bb3babf0c3d8592fa1028a4",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_Wrap9": {
+  "address": "82177E78",
+  "instructions": 3,
+  "signature": "d17d4913fd9f5d38b3e0a2b720769d63a0105300",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_ZEnable": {
+  "address": "82177408",
+  "instructions": 2,
+  "signature": "0aa5a09cd976cf1cbd9549f54148a9c0d5bdf411",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_ZFunc": {
+  "address": "82177468",
+  "instructions": 3,
+  "signature": "470e52f6bed192e9043e42fce2fc7b25a69bc0bc",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetRenderState_ZWriteEnable": {
+  "address": "82177430",
+  "instructions": 3,
+  "signature": "cbf093178cb0f25e2d05dd543373e9b65ce3aa67",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetSamplerState_AddressU": {
+  "address": "82178D40",
+  "instructions": 5,
+  "signature": "c88cac4e600408bea2933c2e2368269a3fd7848b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetSamplerState_AddressV": {
+  "address": "82178D90",
+  "instructions": 5,
+  "signature": "301e600bbf23b93de032ed93d5153734649d5d6a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetSamplerState_AddressW": {
+  "address": "82178DE0",
+  "instructions": 5,
+  "signature": "d404f98b56a4269272980f856a9bafd0ad9d2fa8",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetSamplerState_AnisotropyBias": {
+  "address": "82178AB0",
+  "instructions": 17,
+  "signature": "524788e300187dad0ba90faef3a16eda4ed1610c",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetSamplerState_BorderColor": {
+  "address": "82178CE8",
+  "instructions": 7,
+  "signature": "b76767f78c16b4856a48aef6d86e3c2ef2374e06",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetSamplerState_HGradientExpBias": {
+  "address": "82178E90",
+  "instructions": 6,
+  "signature": "357beb7a7e9c71b19b7bc1199106632a3a03057f",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetSamplerState_MagFilter": {
+  "address": "82178818",
+  "instructions": 13,
+  "signature": "eddf3f142074f372c2a852a0fa6024aaaca68028",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetSamplerState_MagFilterZ": {
+  "address": "821788D8",
+  "instructions": 4,
+  "signature": "982914c53fd31311f7ca6d6ed424648b4ba45f36",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetSamplerState_MaxAnisotropy": {
+  "address": "82178A40",
+  "instructions": 3,
+  "signature": "2721477d585ef8b7b8b9212ab1d2dedc36395af0",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetSamplerState_MaxMipLevel": {
+  "address": "82178C08",
+  "instructions": 3,
+  "signature": "c9f60b832123f96c2d03ce1c7cf2c3ea10f861f4",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetSamplerState_MinFilter": {
+  "address": "82178688",
+  "instructions": 13,
+  "signature": "89ce9b4bcd37c8934be907393445cfb97274b37b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetSamplerState_MinFilterZ": {
+  "address": "82178748",
+  "instructions": 4,
+  "signature": "1ab4ea496d50077125d61be99b87733e24369fb9",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetSamplerState_MinMipLevel": {
+  "address": "82178C88",
+  "instructions": 3,
+  "signature": "23147b3e405babcf83cef1b59fd5ba6a252d0969",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetSamplerState_MipFilter": {
+  "address": "82178928",
+  "instructions": 5,
+  "signature": "c36c21363f875bd533356f3c59fa18b09671197f",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetSamplerState_MipMapLodBias": {
+  "address": "82178B58",
+  "instructions": 16,
+  "signature": "3ce2083f9b213a8f729b666ba88a9d1dc5c2848f",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetSamplerState_PointBorderEnable": {
+  "address": "82178FA0",
+  "instructions": 6,
+  "signature": "51bbcc32010549e929d55ebe4e3a426290700980",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetSamplerState_SeparateZFilterEnable": {
+  "address": "821789C8",
+  "instructions": 4,
+  "signature": "11c0d93b0fa73150bc180417a20221ab2c71fc59",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetSamplerState_TrilinearThreshold": {
+  "address": "82178E38",
+  "instructions": 5,
+  "signature": "11f4218927a78060041c4e246dacb9cfa2c3612a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetSamplerState_VGradientExpBias": {
+  "address": "82178EE8",
+  "instructions": 5,
+  "signature": "7062592b613659c575a108dd13b0a5aa409a59f3",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_GetSamplerState_WhiteBorderColorW": {
+  "address": "82178F40",
+  "instructions": 5,
+  "signature": "da3e6d8b75af54a499d996c0ec8863383d61b297",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_InsertCallback": {
+  "address": "82175F98",
+  "instructions": 21,
+  "signature": "0cf30d576d04cf2d2486788f8efb2558fbd7e4be",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_IsFencePending": {
+  "address": "82175DD8",
+  "instructions": 30,
+  "signature": "488845356bcf2e9ff9c392eeba8fb7e5fe628f3b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_Release": {
+  "address": "82176760",
+  "instructions": 21,
+  "signature": "774d927151874911c4b3268cc430b3db772d4aee",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_Resolve": {
+  "address": "8218DF90",
+  "instructions": 949,
+  "signature": "3c6b652f44ce300bb9f687fad4877d21e07e8c14",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetClipPlane": {
+  "address": "82179480",
+  "instructions": 20,
+  "signature": "33bd636ae10adc4a85950a9e14b586ec3221c55e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetDepthStencilSurface": {
+  "address": "82179CE0",
+  "instructions": 182,
+  "signature": "7a12760693febac9779d177e2599dc94671e1aae",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetGammaRamp": {
+  "address": "821792F0",
+  "instructions": 49,
+  "signature": "d2147d5b996d2c45b50f463ffc6396e2dfd0e30a",
+  "mask": "struct",
+  "unique": false,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetIndices": {
+  "address": "82179260",
+  "instructions": 36,
+  "signature": "fa7a117d17c76f0a01fe493f12aaf4aa547ee32e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetPWLGamma": {
+  "address": "821793B8",
+  "instructions": 49,
+  "signature": "d2147d5b996d2c45b50f463ffc6396e2dfd0e30a",
+  "mask": "struct",
+  "unique": false,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetPixelShader": {
+  "address": "8217FE90",
+  "instructions": 111,
+  "signature": "7cd82d379b0e63d1accafb4679e8195a12c57015",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetPixelShaderConstantB": {
+  "address": "8217FD30",
+  "instructions": 23,
+  "signature": "e1e80c0fe99e1bdefb88fbe3e854af50df4ee756",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetPixelShaderConstantI": {
+  "address": "8217FDE8",
+  "instructions": 21,
+  "signature": "1dc830546c051321596222c2d61455719b3153e2",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetPredication": {
+  "address": "821889E8",
+  "instructions": 91,
+  "signature": "5a649fe832c799a507e1c897ffb4e2a51de3f25c",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_AlphaBlendEnable": {
+  "address": "82176D18",
+  "instructions": 32,
+  "signature": "6941d12e6001a375196efe6dac32ee91afc36954",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_AlphaFunc": {
+  "address": "821771A8",
+  "instructions": 7,
+  "signature": "19a2330140d27e2e4e5be9a7c710c2914653ba04",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_AlphaRef": {
+  "address": "82177140",
+  "instructions": 13,
+  "signature": "9af3b9a77eb98d4a14075234eaa572e21a6fcc26",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_AlphaTestEnable": {
+  "address": "82176CE0",
+  "instructions": 9,
+  "signature": "09e44b0e869e23a87b65bce9a8833808ff14f4e5",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_AlphaToMaskEnable": {
+  "address": "82178330",
+  "instructions": 7,
+  "signature": "ebf7a052fe87a8ac2685254baecc93d2f496e200",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_AlphaToMaskOffsets": {
+  "address": "82178360",
+  "instructions": 7,
+  "signature": "714ee81e7801fbdc7326386f22d9fa51f11bb44c",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_BlendFactor": {
+  "address": "821771D8",
+  "instructions": 39,
+  "signature": "75e3dc504ff96a2a0a102bcfbdffe65b954e0a24",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_BlendOp": {
+  "address": "82176DA8",
+  "instructions": 31,
+  "signature": "3dc02623444a7ba96da3577043fee8f4d2b4b882",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_BlendOpAlpha": {
+  "address": "82176F58",
+  "instructions": 23,
+  "signature": "139b140ed78a4cf831afce2c0d68a055ef2f6aa2",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_Buffer2Frames": {
+  "address": "821773A0",
+  "instructions": 8,
+  "signature": "6243787276d1a8334b2d6d958108e52f0a60af66",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_CCWStencilFail": {
+  "address": "821775F0",
+  "instructions": 9,
+  "signature": "0b44fe52b9ab8df79f746140bae02bebd36bf3b4",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_CCWStencilFunc": {
+  "address": "821775C0",
+  "instructions": 7,
+  "signature": "2b8445d272139cf45b6ce1873a62f371a27e288b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_CCWStencilMask": {
+  "address": "82177710",
+  "instructions": 5,
+  "signature": "dd0d4a01409bdba13775bd0ca23ed2196cc0d826",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_CCWStencilPass": {
+  "address": "82177660",
+  "instructions": 7,
+  "signature": "ebcf2216a009e0b0b11725947190369963fe0917",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_CCWStencilRef": {
+  "address": "821776F0",
+  "instructions": 5,
+  "signature": "4ca77802cc806b97ce9145eb1833892aa5848cda",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_CCWStencilWriteMask": {
+  "address": "82177730",
+  "instructions": 5,
+  "signature": "8673b075271559d1d4d61edc3e4688a40b7eb989",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_CCWStencilZFail": {
+  "address": "82177628",
+  "instructions": 9,
+  "signature": "7608f33ec655034e53b8686ffaab83b8aade787f",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_ClipPlaneEnable": {
+  "address": "82177750",
+  "instructions": 16,
+  "signature": "587380c2c77746a926ee8dbb4e71cbde7c8bde35",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_ColorWriteEnable": {
+  "address": "82177968",
+  "instructions": 14,
+  "signature": "17d76ca12d052fbfb88f859931b8c946a40bfd3f",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_ColorWriteEnable1": {
+  "address": "821779A8",
+  "instructions": 14,
+  "signature": "306f99bc48fb9732a0090b33352a2694c6a29612",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_ColorWriteEnable2": {
+  "address": "821779E8",
+  "instructions": 14,
+  "signature": "ac42ebc6ea1bf98f5ccd9986a40b16cda965f7c5",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_ColorWriteEnable3": {
+  "address": "82177A28",
+  "instructions": 14,
+  "signature": "81f99734d6a296dc6e812d7623498dd40513b350",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_CullMode": {
+  "address": "82176C80",
+  "instructions": 7,
+  "signature": "b19541e8169a471f2b7c5aba372dfd213c73ac25",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_DepthBias": {
+  "address": "82177870",
+  "instructions": 38,
+  "signature": "96413ced1c796e2d01a39ee1e2747c16775ffd56",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_DestBlend": {
+  "address": "82176EC8",
+  "instructions": 31,
+  "signature": "cb7349efd8e46c4d173e25c8c693b0317a134c5f",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_DestBlendAlpha": {
+  "address": "82177038",
+  "instructions": 23,
+  "signature": "372297a50c9d7759360c6f1f492e30538a50eabe",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_DiscardBand_X": {
+  "address": "821783F8",
+  "instructions": 7,
+  "signature": "eb1f07c562c8a651b552cd85ab603e52e2856188",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_DiscardBand_Y": {
+  "address": "82178420",
+  "instructions": 9,
+  "signature": "bc0fd2e57620769045c1f174ec6d4c002fbd355a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_FillMode": {
+  "address": "82176CB0",
+  "instructions": 7,
+  "signature": "ee31782725353af9a5a021f9753f99acbe7bb662",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_GuardBand_X": {
+  "address": "82178398",
+  "instructions": 9,
+  "signature": "9ab9574871f369b7370e7af6256ac76771218bf0",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_GuardBand_Y": {
+  "address": "821783C8",
+  "instructions": 9,
+  "signature": "d824a397442a40e9d17377c525c7b622211363ba",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_HalfPixelOffset": {
+  "address": "821782A0",
+  "instructions": 9,
+  "signature": "e063003ce7818b5dce35a5f7677038fe2cb9a8a4",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_HiStencilEnable": {
+  "address": "821784E8",
+  "instructions": 7,
+  "signature": "7940a389df408f63ecf599e88dc829ba7c81fbbe",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_HiStencilFunc": {
+  "address": "82178548",
+  "instructions": 7,
+  "signature": "5a466557fd2b6bf640feb2231db93e39cb2646fb",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_HiStencilRef": {
+  "address": "82178578",
+  "instructions": 5,
+  "signature": "8c63e7b0cb9ba3292e4e52f26bb62ccc162bfe13",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_HiStencilWriteEnable": {
+  "address": "82178518",
+  "instructions": 7,
+  "signature": "2413c8e845ace48da7d004f967dd64227b9c7c14",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_HiZEnable": {
+  "address": "82178450",
+  "instructions": 7,
+  "signature": "ba6fb2e453137fc4754bc2a6af63ac0b60778937",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_HiZWriteEnable": {
+  "address": "82178480",
+  "instructions": 21,
+  "signature": "df4d820935a7fe1e6c6a816bd2909abce6760413",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_HighPrecisionBlendEnable": {
+  "address": "82177F38",
+  "instructions": 41,
+  "signature": "c2945a74aa56e0a4457aee3d712d14f79c33f29d",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_HighPrecisionBlendEnable1": {
+  "address": "82177FE8",
+  "instructions": 41,
+  "signature": "2867e67d7673d25edf5c501cf5bbe1534d5e2120",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_HighPrecisionBlendEnable2": {
+  "address": "82178098",
+  "instructions": 41,
+  "signature": "c8e0439d14d6b5e3ee7e428065a8735e292ebf08",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_HighPrecisionBlendEnable3": {
+  "address": "82178148",
+  "instructions": 41,
+  "signature": "3fb4f012a22131b53ed1b19dd672352b85684c57",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_LastPixel": {
+  "address": "821772F8",
+  "instructions": 9,
+  "signature": "801882f5bd11f68d9b149526d1c5d907d1aa1c30",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_LineWidth": {
+  "address": "82177330",
+  "instructions": 16,
+  "signature": "399005d66e45ef0dbea9355ce40e482276c2302c",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_MaxTessellationLevel": {
+  "address": "82178230",
+  "instructions": 9,
+  "signature": "f97e3c0ba31975534bc68c3cf2215cad86586ef7",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_MinTessellationLevel": {
+  "address": "821781F8",
+  "instructions": 9,
+  "signature": "4f5ef5d8ac20c9215aa68f9b78f41aa159424c1d",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_MultiSampleAntiAlias": {
+  "address": "82177918",
+  "instructions": 7,
+  "signature": "7db3e1c7c312eecd4c94dd16812fb9430265e97c",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_MultiSampleMask": {
+  "address": "82177948",
+  "instructions": 6,
+  "signature": "01b5344bdd2e6274e82755636ccd1008d5e6daaa",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_PointSize": {
+  "address": "82177A78",
+  "instructions": 19,
+  "signature": "206e8c2d7f81a6b866dc6870007796fb5bba3b0c",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_PointSizeMax": {
+  "address": "82177B30",
+  "instructions": 17,
+  "signature": "c8323cb5c49bf43f3bb2349d86d7578e34e3c574",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_PointSizeMin": {
+  "address": "82177AD8",
+  "instructions": 17,
+  "signature": "1acc1a237e06c8e760715e2b57b04c24f4524c11",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_PointSpriteEnable": {
+  "address": "82177A68",
+  "instructions": 2,
+  "signature": "35ad0e28f85f8d525f865567bc86f37642ac8d17",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_PresentImmediateThreshold": {
+  "address": "821785A8",
+  "instructions": 4,
+  "signature": "79ea5651f55f40abf46698403cfbabada3feaa7a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_PresentInterval": {
+  "address": "82178598",
+  "instructions": 2,
+  "signature": "b9b6267f257bf5c8ca0be60a5d832bb92981372e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_PrimitiveResetEnable": {
+  "address": "821782D8",
+  "instructions": 7,
+  "signature": "af465fe1dac7d0d9e42bef87ba4901183284207a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_PrimitiveResetIndex": {
+  "address": "82178308",
+  "instructions": 7,
+  "signature": "3a56f372e32de7786ef90a76cf0b486975574a7e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_ScissorTestEnable": {
+  "address": "82179830",
+  "instructions": 4,
+  "signature": "8a1a058901f4118f9d660ea0a4ce5d11788ff36c",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_SeparateAlphaBlendEnable": {
+  "address": "821770A8",
+  "instructions": 33,
+  "signature": "e177525a035c25d72355ae91a735266d5e4c72c2",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_SlopeScaleDepthBias": {
+  "address": "821777A8",
+  "instructions": 41,
+  "signature": "2cc24026150187c0c358b042c4db71e02ded2440",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_SrcBlend": {
+  "address": "82176E38",
+  "instructions": 31,
+  "signature": "e3e66583b91a30d98d94a93bd2b3cae1423e6152",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_SrcBlendAlpha": {
+  "address": "82176FC8",
+  "instructions": 23,
+  "signature": "2c8387618f06fa9ad88302ff59dec99f1aac0fd0",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_StencilEnable": {
+  "address": "82177478",
+  "instructions": 14,
+  "signature": "6191729ff3d737e6ecad47ba3c95bd7fd0a96bde",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_StencilFail": {
+  "address": "82177520",
+  "instructions": 9,
+  "signature": "ce064a47e2a52fc47043c722351e552b82dfddd4",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_StencilFunc": {
+  "address": "821774F0",
+  "instructions": 7,
+  "signature": "cde2d0ba4bb77edf25c760c6bb370999f15b369a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_StencilMask": {
+  "address": "821776B0",
+  "instructions": 5,
+  "signature": "7d7ebfac8c5914769d0fe8bc7281cb654a44a476",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_StencilPass": {
+  "address": "82177590",
+  "instructions": 7,
+  "signature": "a46deec1a7f460c09eb8de96aded60710c9daa69",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_StencilRef": {
+  "address": "82177690",
+  "instructions": 5,
+  "signature": "323771494a349f49b0c5200799a7493686a2f1b7",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_StencilWriteMask": {
+  "address": "821776D0",
+  "instructions": 5,
+  "signature": "0fcde526308da23f74cb8b7b342a3c204995bba2",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_StencilZFail": {
+  "address": "82177558",
+  "instructions": 9,
+  "signature": "ff25891e9b1626365df50a175cd43928f34efec6",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_TessellationMode": {
+  "address": "82178268",
+  "instructions": 9,
+  "signature": "c46bdeaf0211a1dd939957c32010f1f68dc9d2e0",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_TwoSidedStencilMode": {
+  "address": "821774B8",
+  "instructions": 9,
+  "signature": "603a1a28c54a1a94f59e07cdf4d68d2f27b5ccb5",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_ViewportEnable": {
+  "address": "82177EE8",
+  "instructions": 16,
+  "signature": "d313f86806ebe067479ddd94eb761b5ac887d807",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_Wrap0": {
+  "address": "82177B88",
+  "instructions": 8,
+  "signature": "a4c347cb8f183097d19d91676c7644b03d385f44",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_Wrap1": {
+  "address": "82177BA8",
+  "instructions": 9,
+  "signature": "d687bd6a8466a1e964a6cd0ffb1e267befd8b394",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_Wrap10": {
+  "address": "82177D00",
+  "instructions": 9,
+  "signature": "db9ebc54153478eea81686631a26f07881c13a69",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_Wrap11": {
+  "address": "82177D28",
+  "instructions": 9,
+  "signature": "ca46935ae855bb72f7d24604c830a8344c2f513c",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_Wrap12": {
+  "address": "82177D50",
+  "instructions": 9,
+  "signature": "51d302e727dd55edd9bf49f69031c28943fb611e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_Wrap13": {
+  "address": "82177D78",
+  "instructions": 9,
+  "signature": "6698893368ce55023226e35ffa9d759bce3267eb",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_Wrap14": {
+  "address": "82177DA0",
+  "instructions": 9,
+  "signature": "f43d7f67cca2f6e51ac369581d5e5e240dd497d2",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_Wrap15": {
+  "address": "82177DC8",
+  "instructions": 7,
+  "signature": "3086d66030d73a305b7293abf81207b4b81d1bef",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_Wrap2": {
+  "address": "82177BD0",
+  "instructions": 9,
+  "signature": "df1e37a50b22118c60d8568cf8044d1e47f66ab1",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_Wrap3": {
+  "address": "82177BF8",
+  "instructions": 9,
+  "signature": "a9564f03848f7e968090ed2e6bc88a0eaed7fd5c",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_Wrap4": {
+  "address": "82177C20",
+  "instructions": 9,
+  "signature": "857a84e21c6c68cf5d1b2d292c43acc9a86f7386",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_Wrap5": {
+  "address": "82177C48",
+  "instructions": 9,
+  "signature": "3086e31ba6820c624be83410326bd612f3742b59",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_Wrap6": {
+  "address": "82177C70",
+  "instructions": 9,
+  "signature": "14d2f1c218bc9a704d9bc65a219f40ac357bec0d",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_Wrap7": {
+  "address": "82177C98",
+  "instructions": 7,
+  "signature": "1765f7d8ed2aa341f04fc734603a60e8fe5a47f3",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_Wrap8": {
+  "address": "82177CB8",
+  "instructions": 8,
+  "signature": "c64c2d583cac37bb648c12b59d3c51997f67b550",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_Wrap9": {
+  "address": "82177CD8",
+  "instructions": 9,
+  "signature": "9fa84ac126a6ed7373889de2403cc00a980058a6",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_ZEnable": {
+  "address": "821773D0",
+  "instructions": 14,
+  "signature": "adc5a6133de0f8efb5f0d6a3e836972daff2af47",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_ZFunc": {
+  "address": "82177440",
+  "instructions": 9,
+  "signature": "8c6c4b796a60d94ed0812cf2a8453b60d3451852",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderState_ZWriteEnable": {
+  "address": "82177410",
+  "instructions": 7,
+  "signature": "60374d49b16c79cd26a7fe65485b3ce312a9596a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRenderTarget": {
+  "address": "82179978",
+  "instructions": 217,
+  "signature": "d0ef5529f7edf77b73d9335f881fa83f153e69e6",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetRingBufferParameters": {
+  "address": "82175FF0",
+  "instructions": 273,
+  "signature": "642cdbabc2c0037da6f8efad6d421fbd3c47e156",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetSamplerState_AddressU": {
+  "address": "82178D08",
+  "instructions": 14,
+  "signature": "4c1840b219fb3358420c865d96a10cdd0c5b55bf",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetSamplerState_AddressV": {
+  "address": "82178D58",
+  "instructions": 14,
+  "signature": "32a21481aa314051f4e8f44e785fdddfd64b8d67",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetSamplerState_AddressW": {
+  "address": "82178DA8",
+  "instructions": 14,
+  "signature": "711854887c8e7a2a404209fd6d6560c31a2fbef1",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetSamplerState_AnisotropyBias": {
+  "address": "82178A50",
+  "instructions": 24,
+  "signature": "3e2d73c05f7e8e4fc3f6647dd2118cefdf22c98c",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetSamplerState_BorderColor": {
+  "address": "82178C98",
+  "instructions": 19,
+  "signature": "ff3a39b9bbb7cea89dd91a269fd5b59092106f90",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetSamplerState_HGradientExpBias": {
+  "address": "82178E50",
+  "instructions": 15,
+  "signature": "6badf6b7088b1363be74a2c01299c7eb2c517dfb",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetSamplerState_MagFilter": {
+  "address": "82178758",
+  "instructions": 48,
+  "signature": "c9b1cd5fb49fc24dc6acd526e05f3cd10a4b28fc",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetSamplerState_MagFilterZ": {
+  "address": "82178850",
+  "instructions": 33,
+  "signature": "a958f9751687dec94b5737c4b53f9e9e41c20c38",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetSamplerState_MaxAnisotropy": {
+  "address": "821789D8",
+  "instructions": 26,
+  "signature": "382c490dae7f1d96403525bdaaa8a52f5689515d",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetSamplerState_MaxMipLevel": {
+  "address": "82178B98",
+  "instructions": 27,
+  "signature": "1ea409c3062ff29d67425b35661192274dc3d551",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetSamplerState_MinFilter": {
+  "address": "821785C8",
+  "instructions": 48,
+  "signature": "057af1c59e9c756e11ea8fe3d63e8ca60992e64b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetSamplerState_MinFilterZ": {
+  "address": "821786C0",
+  "instructions": 34,
+  "signature": "3a5d18808bb6ebeec3b1e9d1f541ab25e5c466b4",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetSamplerState_MinMipLevel": {
+  "address": "82178C18",
+  "instructions": 27,
+  "signature": "c053090f688ae362d61975538a039f4718bb2c71",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetSamplerState_MipFilter": {
+  "address": "821788E8",
+  "instructions": 15,
+  "signature": "6daf73dd1fcd12fe410639d3ad3e1a0450f7d1ea",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetSamplerState_MipMapLodBias": {
+  "address": "82178AF8",
+  "instructions": 24,
+  "signature": "d090cf33fd6227c1e6ff81111e9cd468df8a1934",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetSamplerState_PointBorderEnable": {
+  "address": "82178F58",
+  "instructions": 17,
+  "signature": "3f4220c7cf5bee7d08a3543ccdbf7f9d619991e6",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetSamplerState_SeparateZFilterEnable": {
+  "address": "82178940",
+  "instructions": 34,
+  "signature": "60da3b891f212aec9d88f9d91cc81c6789e68f8d",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetSamplerState_TrilinearThreshold": {
+  "address": "82178DF8",
+  "instructions": 15,
+  "signature": "8b70cb80fb4fd687b4f8429f9bac4a0f77489ef9",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetSamplerState_VGradientExpBias": {
+  "address": "82178EA8",
+  "instructions": 15,
+  "signature": "e4e8ac2c6d759d8d9925ecf5d976c5d17f80dceb",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetSamplerState_WhiteBorderColorW": {
+  "address": "82178F00",
+  "instructions": 15,
+  "signature": "c502b96daaee32634c7d504184b6242a651b3c9e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetScissorRect": {
+  "address": "82178FB8",
+  "instructions": 63,
+  "signature": "6db6abb534959870730200f44d41dd47de952034",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetScreenExtentQueryMode": {
+  "address": "821855B8",
+  "instructions": 28,
+  "signature": "d579056aca9a70af682f94b0de1094fc7a36b82d",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetShaderGPRAllocation": {
+  "address": "821804A8",
+  "instructions": 58,
+  "signature": "d0607fa49300e6078cbbb4131d6b5c7ea0d6df21",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetStreamSource": {
+  "address": "821790B8",
+  "instructions": 71,
+  "signature": "bcffa714a43e46fbc4f035fce025384bf7bd0212",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetTexture": {
+  "address": "82173688",
+  "instructions": 95,
+  "signature": "a4e3dbc78618c7520e3a595e41f99b0f869a8534",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetVertexDeclaration": {
+  "address": "82180318",
+  "instructions": 5,
+  "signature": "2967f2cbf9a56ba97be9e8360599514499f03075",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetVertexShader": {
+  "address": "82180148",
+  "instructions": 115,
+  "signature": "ae744ba41fa9bbe2e7601daf13634b8d584ddab3",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetVertexShaderConstantB": {
+  "address": "8217FCD0",
+  "instructions": 23,
+  "signature": "e05a2f5a16a4ad5e20f1650b14002f431453e4f4",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetVertexShaderConstantI": {
+  "address": "8217FD90",
+  "instructions": 21,
+  "signature": "dbceb95ca6c27d5da7f957d0c259086655594336",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_SetViewport": {
+  "address": "82179840",
+  "instructions": 31,
+  "signature": "41a4a319c28ccbb5d46eb5645a555e7d052b0fc3",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_Swap": {
+  "address": "8217CF48",
+  "instructions": 357,
+  "signature": "3fe2a1f8845ac581d0fcfff9dcc8452c4662d3ff",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DDevice_UnsetAll": {
+  "address": "821767B8",
+  "instructions": 68,
+  "signature": "9fd64580d6f787151ce80c91a581108d1b5f4ef6",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DIndexBuffer_Lock": {
+  "address": "821740E8",
+  "instructions": 18,
+  "signature": "61f0acaf9a363ae0d47002ea25021527aa8207c1",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DLineTexture_LockRect": {
+  "address": "82173190",
+  "instructions": 6,
+  "signature": "eeded41f394d58aeaf627cb4c8f35a41270bfb84",
+  "mask": "struct",
+  "unique": false,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DPixelShader_GetFunction": {
+  "address": "82181878",
+  "instructions": 22,
+  "signature": "1a4c807e55c0e390871afaa7be0be6113b3fe557",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DResource_AddRef": {
+  "address": "82173DC8",
+  "instructions": 29,
+  "signature": "504a173f9b1d5163b8a66cdbf1dc6ea056094dde",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DResource_Destroy": {
+  "address": "82173898",
+  "instructions": 121,
+  "signature": "e095cd7a3ac712c4d1aedb73aa3f013b195bf898",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DResource_GetType": {
+  "address": "82173808",
+  "instructions": 35,
+  "signature": "d460e1e26eb613ecfca05f08436148e7b2222e3a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DResource_Release": {
+  "address": "82173E40",
+  "instructions": 32,
+  "signature": "c8ec37def627fd472d4c5fba2fc67872eda29ecb",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DStateBlock_Apply": {
+  "address": "82239A28",
+  "instructions": 172,
+  "signature": "1646af23692047f47c9fb8c59506e5bb4e0ef5ed",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DStateBlock_Capture": {
+  "address": "82239650",
+  "instructions": 175,
+  "signature": "5bfa009fbc974bd96336e8d9a4d4123833ac1682",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DSurface_GetDesc": {
+  "address": "82173568",
+  "instructions": 38,
+  "signature": "166b12bf1f3421a26d4550cfb05b0ddfe1f3de85",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DSurface_LockRect": {
+  "address": "82173600",
+  "instructions": 8,
+  "signature": "44bb3f2519523a5fb0b303875957f85d728b0556",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DSurface_UnlockRect": {
+  "address": "82171748",
+  "instructions": 6,
+  "signature": "801638211c325087977f4ec43b4da0dca6769661",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DTexture_GetSurfaceLevel": {
+  "address": "821730D8",
+  "instructions": 46,
+  "signature": "0aa34494b9feb3a98ddc684c83889341b376a984",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DVertexBuffer_Lock": {
+  "address": "82173FD8",
+  "instructions": 20,
+  "signature": "2f9e7f939f23e2d0d73d30b4a0fa07014134efe5",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DVertexBuffer_Unlock": {
+  "address": "82174028",
+  "instructions": 4,
+  "signature": "c25af7550429f1e1f817672eb142beba4d347af9",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DVertexShader_GetFunction": {
+  "address": "821818D0",
+  "instructions": 22,
+  "signature": "2360e8812c824c4caca466fadb836e0502be6a3d",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DVolumeTexture_GetVolumeLevel": {
+  "address": "82173268",
+  "instructions": 43,
+  "signature": "87ab5010d3c6f0d68770a374e6fdd5a7df1af674",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DVolume_GetDesc": {
+  "address": "82173620",
+  "instructions": 17,
+  "signature": "25a9ebd559013fb58d18d6a250f2014fb43e4486",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3DVolume_LockBox": {
+  "address": "82173668",
+  "instructions": 7,
+  "signature": "1321404cdd88523cf2d3d6944270b0b00da1ee9e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_AlignTextureDimensions": {
+  "address": "821718F0",
+  "instructions": 72,
+  "signature": "94cc6d725125ba90acdb7a93cb8dbb0e506e82ff",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_BlockSizeOfGpuFormat": {
+  "address": "821717D0",
+  "instructions": 38,
+  "signature": "61b570ddbd71c29b5a16f8db1a3b1a2cf0f860ab",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_CBlocker_Check": {
+  "address": "82176688",
+  "instructions": 53,
+  "signature": "fe7d4ad3b4040c097b8ed1594dd642b991ad7f12",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_CDevice_AllocateInlineData": {
+  "address": "82175010",
+  "instructions": 58,
+  "signature": "7428b56058b9b6303116fc342b90d1a7532afdf5",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_CDevice_BeginRingBig": {
+  "address": "82175EB8",
+  "instructions": 26,
+  "signature": "0338f07bfd26756ed1f8a7af6e4284a648944221",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_CDevice_BeginRingManual": {
+  "address": "821B6A90",
+  "instructions": 2,
+  "signature": "6e3fa172c6ee4dc5de2d14ef22b6f88b3e3aee5b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_CDevice_BlockOnFence": {
+  "address": "82175660",
+  "instructions": 49,
+  "signature": "80198d35c695c7c7c386eb31b457c101bfe1ab0e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_CDevice_KickOff": {
+  "address": "82175CA0",
+  "instructions": 63,
+  "signature": "32843738f7f48147a866ac040c0294569e564b44",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_CDevice_KickOffSegment": {
+  "address": "82175B18",
+  "instructions": 97,
+  "signature": "31dae2a39bde581d8b9db693916e4f45a8ef247c",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_CDevice_Uninitialize": {
+  "address": "8217DF30",
+  "instructions": 79,
+  "signature": "c2c712ee7592e5c6c28e1f9a122a662f0fc09afb",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_CleanupGprAllocationSetup": {
+  "address": "8217F850",
+  "instructions": 69,
+  "signature": "3f20518c0bd0d55d68f6c0849ca76baad2920a45",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_FindTextureSize": {
+  "address": "82171A10",
+  "instructions": 220,
+  "signature": "b2d5061ed0c98fe74805a78bb90cb27a090fd727",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_Get2DSurfaceDesc": {
+  "address": "821722A0",
+  "instructions": 64,
+  "signature": "344a4d05dde58cc062604c891855b978b4caf8fa",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_Get3DSurfaceDesc": {
+  "address": "821723A0",
+  "instructions": 64,
+  "signature": "b915290ce574e1c181025cf24462986c3cd90b79",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_GetLevelLayout": {
+  "address": "82171ED8",
+  "instructions": 241,
+  "signature": "25d9cc64f828ee4d990c1c2d561a75040f573715",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_GetMaxMipLevels": {
+  "address": "82171868",
+  "instructions": 33,
+  "signature": "beaff9e9d28eacc7f3a49488dbec5ed6538b1244",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_GetMipTailLevelOffsetCoords": {
+  "address": "82171D80",
+  "instructions": 86,
+  "signature": "dd8d579fa2a5d356995a4634a0518ffdf539f96a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_GetSubresourceLayout": {
+  "address": "821724A0",
+  "instructions": 303,
+  "signature": "9f5226926988ee4968a939993161f72a95ca6f80",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_GetTextureDimensions": {
+  "address": "82171698",
+  "instructions": 38,
+  "signature": "79b000cbe75af8aa6400f971fdfc6e144467d3d0",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_InitializeApiState": {
+  "address": "8217D528",
+  "instructions": 154,
+  "signature": "85ed02e05fc19ee6d7a562b4013d888de9fff4da",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_InitializePresentationParameters": {
+  "address": "8217D790",
+  "instructions": 143,
+  "signature": "9deb1a157117d93d0f609f79aa56b180d860f06f",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_Lock2DSurface": {
+  "address": "82172A28",
+  "instructions": 35,
+  "signature": "f4295ee8b886ab26767091ec5357584b8255d694",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_Lock3DSurface": {
+  "address": "82172AB8",
+  "instructions": 42,
+  "signature": "caf18ae14f06cc8d29ac70f96c4ea163ca3a7f2c",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_LockResource": {
+  "address": "82173A80",
+  "instructions": 141,
+  "signature": "db20d43f5ac632b2a0d683ee66ef7f773dbc474d",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_LockSurface": {
+  "address": "82172960",
+  "instructions": 50,
+  "signature": "bd956964601585593d3118a3e11d1ca46770477e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_ResetAllState": {
+  "address": "821794D0",
+  "instructions": 61,
+  "signature": "c8a37f06d2700aefef7e6dc6b905648d1dbf2d8b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_RingBufferDeviceAllocate": {
+  "address": "82174E08",
+  "instructions": 129,
+  "signature": "144078095c3692e15a8e4d1366a3c5c7fcc6ef6f",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_SetSurfaceClip": {
+  "address": "821769A0",
+  "instructions": 184,
+  "signature": "a6255e162ba3f9d24a8d52db1dc13596e97e861b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_SetSurfaceInfo": {
+  "address": "821798E0",
+  "instructions": 38,
+  "signature": "9ed25004d68a133504047729830df300b0aa3412",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_SetTextureHeader": {
+  "address": "82172B60",
+  "instructions": 195,
+  "signature": "b6f5863f8d7be438530c97320bfaa1e89b0e6146",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_SetViewport": {
+  "address": "821795C8",
+  "instructions": 153,
+  "signature": "390ac0c296240f12dc32c10d8533b2775f69f4a3",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_SynchronizeToPresentationInterval": {
+  "address": "8217CAA0",
+  "instructions": 106,
+  "signature": "4b9292b3df2c65c6e4dd8e34f888fb00ae84fa63",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_UnlockResource": {
+  "address": "82173CB8",
+  "instructions": 67,
+  "signature": "45d7c2f85ede28b2bd5b1f5fc68730aa3e4ffa81",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "D3D_XenonGpu_Initialize": {
+  "address": "8218EE68",
+  "instructions": 116,
+  "signature": "e82f5f7b972343f2e64c7520e2a151be6b8ed26e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "Direct3D_CreateDevice": {
+  "address": "821768C8",
+  "instructions": 53,
+  "signature": "89b78a0c1f7f68368f89965aab74bd8289b43289",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ },
+ "XGRegisterVertexShader": {
+  "address": "82180050",
+  "instructions": 62,
+  "signature": "afe03010634880735de03ed53c8c72f4c7e28e3e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.6534",
+  "game": "Poker Smash (pokersmash-nx 1.0.0, 93873e35)"
+ }
+}

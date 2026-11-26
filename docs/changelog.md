@@ -460,3 +460,4 @@ Ports 1-43 are the first round: the universal fixes of the other ports' renderer
   game's toml turns them on); a PC crash report's host stack scan (off); the hot copies' shard count in one line;
   diagnostics and tools.
 - Port 370: tools/state_block_scan.py, whether a game uses Direct3D state blocks (Poker Smash: its two; Katamari: none).
+- Port 371: per-XDK signature tables of Renut's hooks (XDK 2.0.5632 from Katamari, 2.0.6534 from Poker Smash), the `struct` mask and the `hooks` command of tools/xdk_sigmatch.py.

@@ -1,0 +1,2909 @@
+{
+ "D3DArrayTexture_UnlockRect": {
+  "address": "824D06E8",
+  "instructions": 5,
+  "signature": "e15f41ba639cc6ede7a50b4898d1301a8755c257",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DBaseTexture_GetLevelCount": {
+  "address": "824D2080",
+  "instructions": 4,
+  "signature": "f0315b1fb3bdd1d5f34937139ecef64512c9facc",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DConstantBuffer_Unlock": {
+  "address": "824DB8B8",
+  "instructions": 3,
+  "signature": "0efc10fb04e7668cef1adf3ade22589b06df777d",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DCubeTexture_GetCubeMapSurface": {
+  "address": "824D2160",
+  "instructions": 46,
+  "signature": "1dd7524b0b28039daece34b020e983798d6a5100",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_AcquireThreadOwnership": {
+  "address": "824D0430",
+  "instructions": 16,
+  "signature": "15d7a86ba3439950ceca914a354c38ce74c66008",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_AddRef": {
+  "address": "824D01C8",
+  "instructions": 5,
+  "signature": "5e9f2de7bb90a78ffc9553c1c849ec28019d36cc",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_BeginTiling": {
+  "address": "824EFBC8",
+  "instructions": 353,
+  "signature": "534175c4546120e636db731596e259a282229cde",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_BeginVertices": {
+  "address": "824D92B8",
+  "instructions": 296,
+  "signature": "12b4a64c6ec9cb043f80f5078a46608a193c103e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_BlockUntilIdle": {
+  "address": "824E0518",
+  "instructions": 29,
+  "signature": "aac607d514fc343733704fabdb2bc89f082f6884",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_Clear": {
+  "address": "824F3370",
+  "instructions": 47,
+  "signature": "6948a5b9e589c738e14b1f7c89c337f00fbded47",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_ClearF": {
+  "address": "824F3248",
+  "instructions": 73,
+  "signature": "84b6690d58e4cb21a912e903df0f846039e99358",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_CreateIndexBuffer": {
+  "address": "824DB7C0",
+  "instructions": 43,
+  "signature": "41416333263804ee69c45f5acd724dfaa1cc1c36",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_CreatePixelShader": {
+  "address": "824D6010",
+  "instructions": 68,
+  "signature": "535979588b99a7d609641f7fda374c54a5a78115",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_CreateSurface": {
+  "address": "824D23F8",
+  "instructions": 74,
+  "signature": "e1abaf390eef48e326686a4e6e56f7e070434f0e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_CreateTexture": {
+  "address": "824D22D8",
+  "instructions": 72,
+  "signature": "53ddf67e592b506aa06cc911bd6b8d7296062293",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_CreateVertexBuffer": {
+  "address": "824DB698",
+  "instructions": 50,
+  "signature": "f5550f6e5ecf91b3464bd4924b22e70a333c220f",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_CreateVertexDeclaration": {
+  "address": "824D4C50",
+  "instructions": 33,
+  "signature": "3de221c6e3e43fb6b4505ae7df4a599e6d5fa365",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_CreateVertexShader": {
+  "address": "824D6120",
+  "instructions": 60,
+  "signature": "5e1af2c0105a5df4366102c592d6b9787ddc8dfd",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_DrawIndexedTessellatedVertices": {
+  "address": "824DA9C0",
+  "instructions": 374,
+  "signature": "f713fc613e8bd243037b3131f956e1480d8fa831",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_DrawIndexedVertices": {
+  "address": "824DA0F0",
+  "instructions": 278,
+  "signature": "59a5baf4608a5b2bcd2c3d0a7c822482e5397630",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_DrawVertices": {
+  "address": "824D9D08",
+  "instructions": 250,
+  "signature": "91578ed176710b273028db42e0128d3ca9e4f101",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_DrawVerticesUP": {
+  "address": "824D9758",
+  "instructions": 23,
+  "signature": "e74e9c320ca57edf2dea20fb6439d9f074877175",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_EndTiling": {
+  "address": "824F0150",
+  "instructions": 304,
+  "signature": "9083f1bae371df232829924d75613d6bee97cdc0",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetDeviceCaps": {
+  "address": "824E6410",
+  "instructions": 5,
+  "signature": "0e9a9642c398b32016823c7a2272dddf4d610ea3",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_AlphaBlendEnable": {
+  "address": "824DBCC0",
+  "instructions": 3,
+  "signature": "1216636c9f50104d0437eb5be32689610425e656",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_AlphaFunc": {
+  "address": "824DC0F0",
+  "instructions": 3,
+  "signature": "84de5a7c62d50fffc5d69261a5ca09e57d1082e9",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_AlphaRef": {
+  "address": "824DC0A0",
+  "instructions": 11,
+  "signature": "5fa0763b9cb7fdddd93f2bc793d97fa6cf99406e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_AlphaTestEnable": {
+  "address": "824DBC30",
+  "instructions": 3,
+  "signature": "a8449e903293aff4a78c69ca1dbbadb650ff7db0",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_AlphaToMaskEnable": {
+  "address": "824DD278",
+  "instructions": 3,
+  "signature": "6f1eb8d14fdb6d6e55cfd09867aa243bad4ca76a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_AlphaToMaskOffsets": {
+  "address": "824DD2A8",
+  "instructions": 5,
+  "signature": "95a4fa972e4ac61bca245231150de73294931610",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_BlendFactor": {
+  "address": "824DC1A0",
+  "instructions": 32,
+  "signature": "07c32852785904e7a2b893bb619ed993bf3e77ec",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_BlendOp": {
+  "address": "824DBD50",
+  "instructions": 3,
+  "signature": "4cb13df7a95d11ac22aecb220e876218e7d489ad",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_BlendOpAlpha": {
+  "address": "824DBEE0",
+  "instructions": 3,
+  "signature": "fbc6ef7bfa4b302918b50dffd72ccc7924df28fd",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_Buffer2Frames": {
+  "address": "824DC2E8",
+  "instructions": 3,
+  "signature": "c455637042f0a430a15710235787d1cb2d0d0d90",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_CCWStencilFail": {
+  "address": "824DC540",
+  "instructions": 3,
+  "signature": "f481994ed25389e5ecdbedc2356127c8b9961c8b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_CCWStencilFunc": {
+  "address": "824DC508",
+  "instructions": 3,
+  "signature": "b2461bfa26bfa597984a26bebf6adae16d38116d",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_CCWStencilMask": {
+  "address": "824DC650",
+  "instructions": 2,
+  "signature": "098e3ff568d0bec0db253e934d1b4cb68d21865a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_CCWStencilPass": {
+  "address": "824DC5A8",
+  "instructions": 3,
+  "signature": "7ad49d40717f7c1e8e2adf1aa97482c2bc94d68e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_CCWStencilRef": {
+  "address": "824DC630",
+  "instructions": 2,
+  "signature": "f32f296ad5e47734c3def12d217214feb95fb7a6",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_CCWStencilWriteMask": {
+  "address": "824DC670",
+  "instructions": 2,
+  "signature": "483c03b0629a86ff537f80aa32538c02ee4650ee",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_CCWStencilZFail": {
+  "address": "824DC578",
+  "instructions": 3,
+  "signature": "080ced03a7a58aadfab654d296f4a6cff69ee4d6",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_ClipPlaneEnable": {
+  "address": "824DC6B8",
+  "instructions": 3,
+  "signature": "8c0617430df89b9d79ca52405958939d2eba697e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_ColorWriteEnable": {
+  "address": "824DC8C8",
+  "instructions": 2,
+  "signature": "efa18a1b70b8eae28a4eede430f5ef5ceb481864",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_ColorWriteEnable1": {
+  "address": "824DC908",
+  "instructions": 2,
+  "signature": "982093651b7fdaf2aa28740bf5407c9f0522a0ba",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_ColorWriteEnable2": {
+  "address": "824DC948",
+  "instructions": 2,
+  "signature": "9b26f14d4fe2adaee67beeed501c5bba397b8e25",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_ColorWriteEnable3": {
+  "address": "824DC988",
+  "instructions": 2,
+  "signature": "98e7e107a40389eef2ef32b5330eaa31e8f1479f",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_CullMode": {
+  "address": "824DBBC8",
+  "instructions": 3,
+  "signature": "cc8eaa71c05d317ec1e5294ca9ad44fc7578f8e2",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_DepthBias": {
+  "address": "824DC830",
+  "instructions": 4,
+  "signature": "84468064044fdd7f83bb5af0b58e2b94d84e2fe3",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_DestBlend": {
+  "address": "824DBE70",
+  "instructions": 3,
+  "signature": "c7af09424d38700fe7f76d2d37e5a8964afa8709",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_DestBlendAlpha": {
+  "address": "824DBFC0",
+  "instructions": 3,
+  "signature": "be7c047aa588ff556d11e0a00b603a1dc8ac0cd3",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_DiscardBand_X": {
+  "address": "824DD340",
+  "instructions": 2,
+  "signature": "a13e39c969fa99541c85180637e0cb2fa53e656a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_DiscardBand_Y": {
+  "address": "824DD370",
+  "instructions": 2,
+  "signature": "066dd68b0805ee7bd235d1547f82f8c68880709b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_FillMode": {
+  "address": "824DBBF8",
+  "instructions": 3,
+  "signature": "d4d1244999499dcb2d287a059b75740c4379d273",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_GuardBand_X": {
+  "address": "824DD2E8",
+  "instructions": 2,
+  "signature": "6cbd3158b36274da1e49f4c3a84ce176db2b1e73",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_GuardBand_Y": {
+  "address": "824DD318",
+  "instructions": 2,
+  "signature": "9bac26ef9239c7ff076e3aaac531827ada8712c0",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_HalfPixelOffset": {
+  "address": "824DD1F0",
+  "instructions": 3,
+  "signature": "ee5e34fb94a7beab139635434e7ef7024fbbcb40",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_HiStencilEnable": {
+  "address": "824DD430",
+  "instructions": 3,
+  "signature": "929cab1e1e22f17201ed194f7e6dd66abe9445db",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_HiStencilFunc": {
+  "address": "824DD490",
+  "instructions": 3,
+  "signature": "e3b58ba1d772dd788d2afafdb06daa2cc8ab6a9b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_HiStencilRef": {
+  "address": "824DD4B8",
+  "instructions": 2,
+  "signature": "1fadf631e3341bf0707b7fdc82b541abdf8db252",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_HiStencilWriteEnable": {
+  "address": "824DD460",
+  "instructions": 3,
+  "signature": "620cfa48395c6fe3052bc3b6b85167d9bd114eb0",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_HiZEnable": {
+  "address": "824DD398",
+  "instructions": 3,
+  "signature": "ca1ca013b459037289c2bcdf7a53a4b1d690b209",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_HiZWriteEnable": {
+  "address": "824DD400",
+  "instructions": 3,
+  "signature": "9aa69fc68124b3dd96c6370c3a3a2f8c3964c965",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_HighPrecisionBlendEnable": {
+  "address": "824DCF08",
+  "instructions": 2,
+  "signature": "a49ce6d0ffdc4493e12ae3b7ddfbab33e429529b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_HighPrecisionBlendEnable1": {
+  "address": "824DCFB8",
+  "instructions": 2,
+  "signature": "f053aad3f2f23ad5f20eb5a4bed50c69e86405ff",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_HighPrecisionBlendEnable2": {
+  "address": "824DD068",
+  "instructions": 2,
+  "signature": "64d8069549c274873b3d2cea99a25b18293b9be5",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_HighPrecisionBlendEnable3": {
+  "address": "824DD118",
+  "instructions": 2,
+  "signature": "72793ea09ee5accf51df2d946bb8391f718a2bd4",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_LastPixel": {
+  "address": "824DC248",
+  "instructions": 3,
+  "signature": "b526a374444c3dfa0c501e50a55c018522f51a36",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_LineWidth": {
+  "address": "824DC298",
+  "instructions": 12,
+  "signature": "bc8a1098df58ad4774d0da2d6779f47d487e2cfd",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_MaxTessellationLevel": {
+  "address": "824DD180",
+  "instructions": 4,
+  "signature": "05e9d3a63671621f5ae74dab27eb2832366c9693",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_MinTessellationLevel": {
+  "address": "824DD148",
+  "instructions": 4,
+  "signature": "fab5cc045d454d7b8471b0abc92671b7c90984a3",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_MultiSampleAntiAlias": {
+  "address": "824DC860",
+  "instructions": 3,
+  "signature": "b73a9922ecf37668eeba7b6bccafeaf4896525f8",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_MultiSampleMask": {
+  "address": "824DC888",
+  "instructions": 2,
+  "signature": "a917abde716f8fe84ce9892a4a163b4dddec795b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_PointSize": {
+  "address": "824DC9F0",
+  "instructions": 4,
+  "signature": "3755abef8fcaa2c179e8d46b344e6e63fbd2acdd",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_PointSizeMax": {
+  "address": "824DCAA0",
+  "instructions": 4,
+  "signature": "a6d893f093477384da3958d768ff006439ce73a6",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_PointSizeMin": {
+  "address": "824DCA48",
+  "instructions": 4,
+  "signature": "8c7fe35aec2a9bc6c6df47e1854a12defd28d269",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_PointSpriteEnable": {
+  "address": "824DC998",
+  "instructions": 2,
+  "signature": "0aa5a09cd976cf1cbd9549f54148a9c0d5bdf411",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_PresentImmediateThreshold": {
+  "address": "824DD4E0",
+  "instructions": 3,
+  "signature": "7f787279de87eb29e1f7c7e16d124ae30bd176c6",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_PresentInterval": {
+  "address": "824DD4C8",
+  "instructions": 2,
+  "signature": "10e6da3378abc7de4cba8e589f94075712f3b6ed",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_PrimitiveResetEnable": {
+  "address": "824DD220",
+  "instructions": 3,
+  "signature": "2fdaf0f0bb1bf2fbebcdd32c38b4bd44aac30312",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_PrimitiveResetIndex": {
+  "address": "824DD250",
+  "instructions": 2,
+  "signature": "000dd2189c8be21e27113c0271af1cea79066a28",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_ScissorTestEnable": {
+  "address": "824DC6C8",
+  "instructions": 2,
+  "signature": "d41a67355c0d60ffe6b014e438ac318383526e37",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_SeparateAlphaBlendEnable": {
+  "address": "824DC058",
+  "instructions": 3,
+  "signature": "2a33e651fbbdded04d971437e619b775cb0038df",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_SlopeScaleDepthBias": {
+  "address": "824DC778",
+  "instructions": 7,
+  "signature": "5895627f438042a0dee185e98e45721d025688dd",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_SrcBlend": {
+  "address": "824DBDE0",
+  "instructions": 3,
+  "signature": "baab902632008c468800c4da966c438b5f1fa632",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_SrcBlendAlpha": {
+  "address": "824DBF50",
+  "instructions": 3,
+  "signature": "140d52c2db5858666d5780f334d95369d0fd8f0a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_StencilEnable": {
+  "address": "824DC3D8",
+  "instructions": 2,
+  "signature": "95bdeed6add54699db04b337f3827584a53d72fb",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_StencilFail": {
+  "address": "824DC470",
+  "instructions": 3,
+  "signature": "be6470b630aec546b5ccc7d83aa163fe9ff7c515",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_StencilFunc": {
+  "address": "824DC438",
+  "instructions": 3,
+  "signature": "88a0010074dfaf077ecef075aff9ab14e5a88652",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_StencilMask": {
+  "address": "824DC5F0",
+  "instructions": 2,
+  "signature": "ab64e570aa2fa766dcb3c923bcda0845c78061f1",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_StencilPass": {
+  "address": "824DC4D8",
+  "instructions": 3,
+  "signature": "cd9b647407c4a9e2a0ce1a40b5d8f1bf98577947",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_StencilRef": {
+  "address": "824DC5D0",
+  "instructions": 2,
+  "signature": "5f4ecb99e5ec213928486bd059b28140fc1f6143",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_StencilWriteMask": {
+  "address": "824DC610",
+  "instructions": 2,
+  "signature": "60b55e04a6e01c296e57080f567cb1d926e4ed33",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_StencilZFail": {
+  "address": "824DC4A8",
+  "instructions": 3,
+  "signature": "322d553837371c123c6d40e954f9bd0f3d248453",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_TessellationMode": {
+  "address": "824DD1B8",
+  "instructions": 3,
+  "signature": "fab681fdef0126d4edaf246a17224a94e70d46a0",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_TwoSidedStencilMode": {
+  "address": "824DC408",
+  "instructions": 3,
+  "signature": "d91130ae4feab4ab70b37d4f7acc5cd2285272f6",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_ViewportEnable": {
+  "address": "824DCE50",
+  "instructions": 3,
+  "signature": "8a0a985f8c8328e7bc71941b1f9241b5f6a33677",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_Wrap0": {
+  "address": "824DCD10",
+  "instructions": 3,
+  "signature": "9a218bc5de6a53ad6f93cee56817aeecd41d9419",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_Wrap1": {
+  "address": "824DCD20",
+  "instructions": 3,
+  "signature": "c49f53ff70619025edc6b11af28dafcf2d82e90a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_Wrap10": {
+  "address": "824DCDB0",
+  "instructions": 3,
+  "signature": "f1d56f70c58d59bb2edbc2d7845c72fc86f67dd4",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_Wrap11": {
+  "address": "824DCDC0",
+  "instructions": 3,
+  "signature": "3f4db71329c2dcfc499e7791474c8a281ca61a1c",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_Wrap12": {
+  "address": "824DCDD0",
+  "instructions": 3,
+  "signature": "07ca4f119294fb4583cacd0447164d0cb700b117",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_Wrap13": {
+  "address": "824DCDE0",
+  "instructions": 3,
+  "signature": "2680d4b8636567a298900488a4500cade9fcf5b4",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_Wrap14": {
+  "address": "824DCDF0",
+  "instructions": 3,
+  "signature": "ee7b7d6a38fb98c11e8f9a4f0da2459b7ca00843",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_Wrap15": {
+  "address": "824DCE00",
+  "instructions": 3,
+  "signature": "942ef3162fb3f07986a6e5d6502215076ae33292",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_Wrap2": {
+  "address": "824DCD30",
+  "instructions": 3,
+  "signature": "920ef377cd726cea45e620b0b31ee1bef27fc950",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_Wrap3": {
+  "address": "824DCD40",
+  "instructions": 3,
+  "signature": "50150897ca05bebc1d8802f81bae31c9a9e45051",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_Wrap4": {
+  "address": "824DCD50",
+  "instructions": 3,
+  "signature": "10fcadb2c001d5e309dab75e0d86067a65e23806",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_Wrap5": {
+  "address": "824DCD60",
+  "instructions": 3,
+  "signature": "1a70d0728086f7caf094286ca40e4d6d33f00a7b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_Wrap6": {
+  "address": "824DCD70",
+  "instructions": 3,
+  "signature": "150c5ccdc51ec9c9f088f44dfa570d08c7416200",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_Wrap7": {
+  "address": "824DCD80",
+  "instructions": 3,
+  "signature": "920e6dc834cd5bb81a7ebd15300c754fa05012b3",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_Wrap8": {
+  "address": "824DCD90",
+  "instructions": 3,
+  "signature": "142f347ea4653ab03bb3babf0c3d8592fa1028a4",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_Wrap9": {
+  "address": "824DCDA0",
+  "instructions": 3,
+  "signature": "d17d4913fd9f5d38b3e0a2b720769d63a0105300",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_ZEnable": {
+  "address": "824DC330",
+  "instructions": 2,
+  "signature": "e248c9c6c75c7c26d14db1c92ef1f9d59deab191",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_ZFunc": {
+  "address": "824DC390",
+  "instructions": 3,
+  "signature": "470e52f6bed192e9043e42fce2fc7b25a69bc0bc",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetRenderState_ZWriteEnable": {
+  "address": "824DC358",
+  "instructions": 3,
+  "signature": "cbf093178cb0f25e2d05dd543373e9b65ce3aa67",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetSamplerState_AddressU": {
+  "address": "824DDC68",
+  "instructions": 5,
+  "signature": "c88cac4e600408bea2933c2e2368269a3fd7848b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetSamplerState_AddressV": {
+  "address": "824DDCB8",
+  "instructions": 5,
+  "signature": "301e600bbf23b93de032ed93d5153734649d5d6a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetSamplerState_AddressW": {
+  "address": "824DDD08",
+  "instructions": 5,
+  "signature": "d404f98b56a4269272980f856a9bafd0ad9d2fa8",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetSamplerState_AnisotropyBias": {
+  "address": "824DD9D8",
+  "instructions": 17,
+  "signature": "524788e300187dad0ba90faef3a16eda4ed1610c",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetSamplerState_BorderColor": {
+  "address": "824DDC10",
+  "instructions": 7,
+  "signature": "b76767f78c16b4856a48aef6d86e3c2ef2374e06",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetSamplerState_HGradientExpBias": {
+  "address": "824DDDB8",
+  "instructions": 6,
+  "signature": "357beb7a7e9c71b19b7bc1199106632a3a03057f",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetSamplerState_MagFilter": {
+  "address": "824DD740",
+  "instructions": 13,
+  "signature": "eddf3f142074f372c2a852a0fa6024aaaca68028",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetSamplerState_MagFilterZ": {
+  "address": "824DD800",
+  "instructions": 4,
+  "signature": "790e581a9e8528e032bc3af324960eef049aadeb",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetSamplerState_MaxAnisotropy": {
+  "address": "824DD968",
+  "instructions": 3,
+  "signature": "cbf4aa0fd8833254875e333917959e9b8e2069f3",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetSamplerState_MaxMipLevel": {
+  "address": "824DDB30",
+  "instructions": 3,
+  "signature": "6c6fd2173269469da319ec1d9b525e7c81e16eb0",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetSamplerState_MinFilter": {
+  "address": "824DD5B0",
+  "instructions": 13,
+  "signature": "89ce9b4bcd37c8934be907393445cfb97274b37b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetSamplerState_MinFilterZ": {
+  "address": "824DD670",
+  "instructions": 4,
+  "signature": "d60649fcd220f701883ce05eba73401b0528f1c7",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetSamplerState_MinMipLevel": {
+  "address": "824DDBB0",
+  "instructions": 3,
+  "signature": "2ac082ce6c1913d601c19d16b49a5a8dc372add2",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetSamplerState_MipFilter": {
+  "address": "824DD850",
+  "instructions": 5,
+  "signature": "c36c21363f875bd533356f3c59fa18b09671197f",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetSamplerState_MipMapLodBias": {
+  "address": "824DDA80",
+  "instructions": 16,
+  "signature": "3ce2083f9b213a8f729b666ba88a9d1dc5c2848f",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetSamplerState_PointBorderEnable": {
+  "address": "824DDEC8",
+  "instructions": 6,
+  "signature": "51bbcc32010549e929d55ebe4e3a426290700980",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetSamplerState_SeparateZFilterEnable": {
+  "address": "824DD8F0",
+  "instructions": 4,
+  "signature": "43270006ff4a887e0c01701a4ce5e27db949137f",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetSamplerState_TrilinearThreshold": {
+  "address": "824DDD60",
+  "instructions": 5,
+  "signature": "11f4218927a78060041c4e246dacb9cfa2c3612a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetSamplerState_VGradientExpBias": {
+  "address": "824DDE10",
+  "instructions": 5,
+  "signature": "7062592b613659c575a108dd13b0a5aa409a59f3",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_GetSamplerState_WhiteBorderColorW": {
+  "address": "824DDE68",
+  "instructions": 5,
+  "signature": "da3e6d8b75af54a499d996c0ec8863383d61b297",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_InsertCallback": {
+  "address": "824E0590",
+  "instructions": 21,
+  "signature": "5d09d1f1e0e73cdb224f8470ff358cfc4620ed1b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_IsFencePending": {
+  "address": "824E03D0",
+  "instructions": 30,
+  "signature": "488845356bcf2e9ff9c392eeba8fb7e5fe628f3b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_Present": {
+  "address": "824E9428",
+  "instructions": 76,
+  "signature": "ddc029c58fc90f4780b205afbe4a7736f992dfc1",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_Release": {
+  "address": "824D0368",
+  "instructions": 21,
+  "signature": "774d927151874911c4b3268cc430b3db772d4aee",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_ReleaseThreadOwnership": {
+  "address": "824D0470",
+  "instructions": 4,
+  "signature": "169eee35fa7ca7019cc47c53ac9015a38092d877",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_Resolve": {
+  "address": "824F12B8",
+  "instructions": 913,
+  "signature": "e7ddbd6d581fb9214305e8ae5d1f3d6359ffd72f",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetDepthStencilSurface": {
+  "address": "824DEBD0",
+  "instructions": 182,
+  "signature": "274f3f5d03fd2927df90591e1acbb2576df5c386",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetGammaRamp": {
+  "address": "824DE218",
+  "instructions": 49,
+  "signature": "8b6e6e40be3327d4b30f92d3b58417e1c1852424",
+  "mask": "struct",
+  "unique": false,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetIndices": {
+  "address": "824DE188",
+  "instructions": 36,
+  "signature": "d413bcfe84287684e93cb1d16c6d2f7569426ac2",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetPWLGamma": {
+  "address": "824DE2F8",
+  "instructions": 49,
+  "signature": "8b6e6e40be3327d4b30f92d3b58417e1c1852424",
+  "mask": "struct",
+  "unique": false,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetPixelShader": {
+  "address": "824D4630",
+  "instructions": 111,
+  "signature": "c92d2e3e853f5d46d423ef1abd3460d527c3bcf5",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetPixelShaderConstantB": {
+  "address": "824D44D0",
+  "instructions": 23,
+  "signature": "e1e80c0fe99e1bdefb88fbe3e854af50df4ee756",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetPredication": {
+  "address": "824EFA58",
+  "instructions": 91,
+  "signature": "e25b439449f881b450b16292d58ab79c4ff72901",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_AlphaBlendEnable": {
+  "address": "824DBC40",
+  "instructions": 32,
+  "signature": "8de6569d5b688e9a0ef97f54bef5c8486d4cc1be",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_AlphaFunc": {
+  "address": "824DC0D0",
+  "instructions": 7,
+  "signature": "19a2330140d27e2e4e5be9a7c710c2914653ba04",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_AlphaRef": {
+  "address": "824DC068",
+  "instructions": 13,
+  "signature": "9af3b9a77eb98d4a14075234eaa572e21a6fcc26",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_AlphaTestEnable": {
+  "address": "824DBC08",
+  "instructions": 9,
+  "signature": "09e44b0e869e23a87b65bce9a8833808ff14f4e5",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_AlphaToMaskEnable": {
+  "address": "824DD258",
+  "instructions": 7,
+  "signature": "ebf7a052fe87a8ac2685254baecc93d2f496e200",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_AlphaToMaskOffsets": {
+  "address": "824DD288",
+  "instructions": 7,
+  "signature": "714ee81e7801fbdc7326386f22d9fa51f11bb44c",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_BlendFactor": {
+  "address": "824DC100",
+  "instructions": 39,
+  "signature": "75e3dc504ff96a2a0a102bcfbdffe65b954e0a24",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_BlendOp": {
+  "address": "824DBCD0",
+  "instructions": 31,
+  "signature": "3de4dc110b2c2c63e62c78bdca7a8f6239249c60",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_BlendOpAlpha": {
+  "address": "824DBE80",
+  "instructions": 23,
+  "signature": "85464f2ad0f39f65a931b6f4d9d44e7b961c992c",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_Buffer2Frames": {
+  "address": "824DC2C8",
+  "instructions": 8,
+  "signature": "6cda3137f7eb6418cbffc6f10572a3a11c8d11ca",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_CCWStencilFail": {
+  "address": "824DC518",
+  "instructions": 9,
+  "signature": "0b44fe52b9ab8df79f746140bae02bebd36bf3b4",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_CCWStencilFunc": {
+  "address": "824DC4E8",
+  "instructions": 7,
+  "signature": "2b8445d272139cf45b6ce1873a62f371a27e288b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_CCWStencilMask": {
+  "address": "824DC638",
+  "instructions": 5,
+  "signature": "dd0d4a01409bdba13775bd0ca23ed2196cc0d826",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_CCWStencilPass": {
+  "address": "824DC588",
+  "instructions": 7,
+  "signature": "ebcf2216a009e0b0b11725947190369963fe0917",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_CCWStencilRef": {
+  "address": "824DC618",
+  "instructions": 5,
+  "signature": "4ca77802cc806b97ce9145eb1833892aa5848cda",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_CCWStencilWriteMask": {
+  "address": "824DC658",
+  "instructions": 5,
+  "signature": "8673b075271559d1d4d61edc3e4688a40b7eb989",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_CCWStencilZFail": {
+  "address": "824DC550",
+  "instructions": 9,
+  "signature": "7608f33ec655034e53b8686ffaab83b8aade787f",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_ClipPlaneEnable": {
+  "address": "824DC678",
+  "instructions": 16,
+  "signature": "e0e0121f9398a0411848e5aee2dcd84ec0553213",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_ColorWriteEnable": {
+  "address": "824DC890",
+  "instructions": 14,
+  "signature": "f5c9e8ecc7a82b1a4c411ca5bc097a3a3a1a5620",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_ColorWriteEnable1": {
+  "address": "824DC8D0",
+  "instructions": 14,
+  "signature": "c6910885b80e6efad5f8c8e26e09eb2496d03d2e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_ColorWriteEnable2": {
+  "address": "824DC910",
+  "instructions": 14,
+  "signature": "0e984bc396e54f62e0b6c98c9c87bf5c63a05a97",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_ColorWriteEnable3": {
+  "address": "824DC950",
+  "instructions": 14,
+  "signature": "09b121bab54ae1a8f919a6388f714bf406844973",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_CullMode": {
+  "address": "824DBBA8",
+  "instructions": 7,
+  "signature": "b19541e8169a471f2b7c5aba372dfd213c73ac25",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_DepthBias": {
+  "address": "824DC798",
+  "instructions": 38,
+  "signature": "765f25be3d54e4f8201fdcc17edbbfdada5983ad",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_DestBlend": {
+  "address": "824DBDF0",
+  "instructions": 31,
+  "signature": "b1ffa27b4cda641bedd8380fa62b96e920789e99",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_DestBlendAlpha": {
+  "address": "824DBF60",
+  "instructions": 23,
+  "signature": "26cc0b729ece9667ad3f0115e861b787883fd800",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_DiscardBand_X": {
+  "address": "824DD320",
+  "instructions": 7,
+  "signature": "eb1f07c562c8a651b552cd85ab603e52e2856188",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_DiscardBand_Y": {
+  "address": "824DD348",
+  "instructions": 9,
+  "signature": "bc0fd2e57620769045c1f174ec6d4c002fbd355a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_FillMode": {
+  "address": "824DBBD8",
+  "instructions": 7,
+  "signature": "ee31782725353af9a5a021f9753f99acbe7bb662",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_GuardBand_X": {
+  "address": "824DD2C0",
+  "instructions": 9,
+  "signature": "9ab9574871f369b7370e7af6256ac76771218bf0",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_GuardBand_Y": {
+  "address": "824DD2F0",
+  "instructions": 9,
+  "signature": "d824a397442a40e9d17377c525c7b622211363ba",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_HalfPixelOffset": {
+  "address": "824DD1C8",
+  "instructions": 9,
+  "signature": "e063003ce7818b5dce35a5f7677038fe2cb9a8a4",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_HiStencilEnable": {
+  "address": "824DD410",
+  "instructions": 7,
+  "signature": "7940a389df408f63ecf599e88dc829ba7c81fbbe",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_HiStencilFunc": {
+  "address": "824DD470",
+  "instructions": 7,
+  "signature": "5a466557fd2b6bf640feb2231db93e39cb2646fb",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_HiStencilRef": {
+  "address": "824DD4A0",
+  "instructions": 5,
+  "signature": "8c63e7b0cb9ba3292e4e52f26bb62ccc162bfe13",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_HiStencilWriteEnable": {
+  "address": "824DD440",
+  "instructions": 7,
+  "signature": "2413c8e845ace48da7d004f967dd64227b9c7c14",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_HiZEnable": {
+  "address": "824DD378",
+  "instructions": 7,
+  "signature": "6d4fa2011b7357c56a1773a941dd29ee4e37ad0e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_HiZWriteEnable": {
+  "address": "824DD3A8",
+  "instructions": 21,
+  "signature": "1fde6a826884dbd4838e58df9ec6fff901c349c6",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_HighPrecisionBlendEnable": {
+  "address": "824DCE60",
+  "instructions": 41,
+  "signature": "871108ff84c774f208f1ee5db8d33a5d24db7cef",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_HighPrecisionBlendEnable1": {
+  "address": "824DCF10",
+  "instructions": 41,
+  "signature": "1e85912068a990151ec5f148346b46bc4a8a816f",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_HighPrecisionBlendEnable2": {
+  "address": "824DCFC0",
+  "instructions": 41,
+  "signature": "d782d6caf86e1dac062eb94045fede59dfff53df",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_HighPrecisionBlendEnable3": {
+  "address": "824DD070",
+  "instructions": 41,
+  "signature": "c2348cdf836ff91a3931772e1c2605a47e033813",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_LastPixel": {
+  "address": "824DC220",
+  "instructions": 9,
+  "signature": "801882f5bd11f68d9b149526d1c5d907d1aa1c30",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_LineWidth": {
+  "address": "824DC258",
+  "instructions": 16,
+  "signature": "399005d66e45ef0dbea9355ce40e482276c2302c",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_MaxTessellationLevel": {
+  "address": "824DD158",
+  "instructions": 9,
+  "signature": "f97e3c0ba31975534bc68c3cf2215cad86586ef7",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_MinTessellationLevel": {
+  "address": "824DD120",
+  "instructions": 9,
+  "signature": "4f5ef5d8ac20c9215aa68f9b78f41aa159424c1d",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_MultiSampleAntiAlias": {
+  "address": "824DC840",
+  "instructions": 7,
+  "signature": "7db3e1c7c312eecd4c94dd16812fb9430265e97c",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_MultiSampleMask": {
+  "address": "824DC870",
+  "instructions": 6,
+  "signature": "01b5344bdd2e6274e82755636ccd1008d5e6daaa",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_PointSize": {
+  "address": "824DC9A0",
+  "instructions": 19,
+  "signature": "4149c762321a0d38b9c18bf51781951edddd41db",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_PointSizeMax": {
+  "address": "824DCA58",
+  "instructions": 17,
+  "signature": "42e22cb018cc9fd4def152ca9c3206fdf84e444b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_PointSizeMin": {
+  "address": "824DCA00",
+  "instructions": 17,
+  "signature": "40f43240bf326d69296c9e18555e7475bb0264ae",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_PointSpriteEnable": {
+  "address": "824DC990",
+  "instructions": 2,
+  "signature": "2cf36da55f257bed14ff09dcac165a43658259b9",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_PresentImmediateThreshold": {
+  "address": "824DD4D0",
+  "instructions": 4,
+  "signature": "975e7909c3c7636fccc916f534765f741ef57ab4",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_PresentInterval": {
+  "address": "824DD4C0",
+  "instructions": 2,
+  "signature": "fb4101302171d9ca4bf46fccac8f3329019179fe",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_PrimitiveResetEnable": {
+  "address": "824DD200",
+  "instructions": 7,
+  "signature": "af465fe1dac7d0d9e42bef87ba4901183284207a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_PrimitiveResetIndex": {
+  "address": "824DD230",
+  "instructions": 7,
+  "signature": "3a56f372e32de7786ef90a76cf0b486975574a7e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_ScissorTestEnable": {
+  "address": "824DE720",
+  "instructions": 4,
+  "signature": "d8e52a7f6eed3f8f2dac15b0325d6ae947dbb872",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_SeparateAlphaBlendEnable": {
+  "address": "824DBFD0",
+  "instructions": 33,
+  "signature": "f869bfa090db1349bcb15c0b56d61fe2e75ad71a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_SlopeScaleDepthBias": {
+  "address": "824DC6D0",
+  "instructions": 41,
+  "signature": "260cbc14d32baf371d10ca68239ae5fbbf3cbb47",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_SrcBlend": {
+  "address": "824DBD60",
+  "instructions": 31,
+  "signature": "ce67c122e9cde6cece6da1d7ef4ddb623d2f32ea",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_SrcBlendAlpha": {
+  "address": "824DBEF0",
+  "instructions": 23,
+  "signature": "aa0f4d123a1a6026884f77756d4f76a97679eaad",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_StencilEnable": {
+  "address": "824DC3A0",
+  "instructions": 14,
+  "signature": "92a2da0ee78c92ad1cedd75b8db66f809ef5ac60",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_StencilFail": {
+  "address": "824DC448",
+  "instructions": 9,
+  "signature": "ce064a47e2a52fc47043c722351e552b82dfddd4",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_StencilFunc": {
+  "address": "824DC418",
+  "instructions": 7,
+  "signature": "cde2d0ba4bb77edf25c760c6bb370999f15b369a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_StencilMask": {
+  "address": "824DC5D8",
+  "instructions": 5,
+  "signature": "7d7ebfac8c5914769d0fe8bc7281cb654a44a476",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_StencilPass": {
+  "address": "824DC4B8",
+  "instructions": 7,
+  "signature": "a46deec1a7f460c09eb8de96aded60710c9daa69",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_StencilRef": {
+  "address": "824DC5B8",
+  "instructions": 5,
+  "signature": "323771494a349f49b0c5200799a7493686a2f1b7",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_StencilWriteMask": {
+  "address": "824DC5F8",
+  "instructions": 5,
+  "signature": "0fcde526308da23f74cb8b7b342a3c204995bba2",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_StencilZFail": {
+  "address": "824DC480",
+  "instructions": 9,
+  "signature": "ff25891e9b1626365df50a175cd43928f34efec6",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_TessellationMode": {
+  "address": "824DD190",
+  "instructions": 9,
+  "signature": "c46bdeaf0211a1dd939957c32010f1f68dc9d2e0",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_TwoSidedStencilMode": {
+  "address": "824DC3E0",
+  "instructions": 9,
+  "signature": "603a1a28c54a1a94f59e07cdf4d68d2f27b5ccb5",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_ViewportEnable": {
+  "address": "824DCE10",
+  "instructions": 16,
+  "signature": "d313f86806ebe067479ddd94eb761b5ac887d807",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_Wrap0": {
+  "address": "824DCAB0",
+  "instructions": 8,
+  "signature": "a4c347cb8f183097d19d91676c7644b03d385f44",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_Wrap1": {
+  "address": "824DCAD0",
+  "instructions": 9,
+  "signature": "6317d2a094c3493dbe99e970812c882a41edab30",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_Wrap10": {
+  "address": "824DCC28",
+  "instructions": 9,
+  "signature": "4403464c17843ca1c8f3948da6cb8721b9acd3cf",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_Wrap11": {
+  "address": "824DCC50",
+  "instructions": 9,
+  "signature": "90a6d045ef1b0847d579321c8a30f785526d76df",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_Wrap12": {
+  "address": "824DCC78",
+  "instructions": 9,
+  "signature": "e2fc9bdae3445f66cb519f0189b3a4589e4f8ab1",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_Wrap13": {
+  "address": "824DCCA0",
+  "instructions": 9,
+  "signature": "1aa36e3946d79ccc73f6037e8bb58642e8d20d5e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_Wrap14": {
+  "address": "824DCCC8",
+  "instructions": 9,
+  "signature": "43f8f1454b57f8227c1b43d75890790aa2460396",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_Wrap15": {
+  "address": "824DCCF0",
+  "instructions": 7,
+  "signature": "3086d66030d73a305b7293abf81207b4b81d1bef",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_Wrap2": {
+  "address": "824DCAF8",
+  "instructions": 9,
+  "signature": "ef84a61caefbef11f1e02e5b66d8ce8d3effe2da",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_Wrap3": {
+  "address": "824DCB20",
+  "instructions": 9,
+  "signature": "ff727aa0ab38f890f9bdffdb703095e53750cedf",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_Wrap4": {
+  "address": "824DCB48",
+  "instructions": 9,
+  "signature": "86cad51af7526c604c4f12f062af101e877f26b9",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_Wrap5": {
+  "address": "824DCB70",
+  "instructions": 9,
+  "signature": "02add40aa474ee97f3e26ccfa444bfa8ebaabb9d",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_Wrap6": {
+  "address": "824DCB98",
+  "instructions": 9,
+  "signature": "6bcff9d684c076d28a43649e216dba418b7493a8",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_Wrap7": {
+  "address": "824DCBC0",
+  "instructions": 7,
+  "signature": "1765f7d8ed2aa341f04fc734603a60e8fe5a47f3",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_Wrap8": {
+  "address": "824DCBE0",
+  "instructions": 8,
+  "signature": "c64c2d583cac37bb648c12b59d3c51997f67b550",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_Wrap9": {
+  "address": "824DCC00",
+  "instructions": 9,
+  "signature": "c1a724140384b4d132548f9e77eb0069b0514d03",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_ZEnable": {
+  "address": "824DC2F8",
+  "instructions": 14,
+  "signature": "ceebe18b9d5d19facefc7d7005ae88bafcd3468b",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_ZFunc": {
+  "address": "824DC368",
+  "instructions": 9,
+  "signature": "8c6c4b796a60d94ed0812cf2a8453b60d3451852",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderState_ZWriteEnable": {
+  "address": "824DC338",
+  "instructions": 7,
+  "signature": "60374d49b16c79cd26a7fe65485b3ce312a9596a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRenderTarget": {
+  "address": "824DE868",
+  "instructions": 217,
+  "signature": "5b9433b77f994806cd1724a216970e2f733c495c",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetRingBufferParameters": {
+  "address": "824E05E8",
+  "instructions": 260,
+  "signature": "5bad19f4aef540632bb6ce871a86cff85e73d155",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetSamplerState_AddressU": {
+  "address": "824DDC30",
+  "instructions": 14,
+  "signature": "4c1840b219fb3358420c865d96a10cdd0c5b55bf",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetSamplerState_AddressV": {
+  "address": "824DDC80",
+  "instructions": 14,
+  "signature": "32a21481aa314051f4e8f44e785fdddfd64b8d67",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetSamplerState_AddressW": {
+  "address": "824DDCD0",
+  "instructions": 14,
+  "signature": "711854887c8e7a2a404209fd6d6560c31a2fbef1",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetSamplerState_AnisotropyBias": {
+  "address": "824DD978",
+  "instructions": 24,
+  "signature": "9da4956501601436c312d730f52fde20b68e0c92",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetSamplerState_BorderColor": {
+  "address": "824DDBC0",
+  "instructions": 19,
+  "signature": "ff3a39b9bbb7cea89dd91a269fd5b59092106f90",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetSamplerState_HGradientExpBias": {
+  "address": "824DDD78",
+  "instructions": 15,
+  "signature": "6badf6b7088b1363be74a2c01299c7eb2c517dfb",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetSamplerState_MagFilter": {
+  "address": "824DD680",
+  "instructions": 48,
+  "signature": "3acd91b553ba6ad35b37d5133eb756ae513dee7a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetSamplerState_MagFilterZ": {
+  "address": "824DD778",
+  "instructions": 33,
+  "signature": "c90b40ed30e8ffe3dba9280e0abce1dcd4284841",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetSamplerState_MaxAnisotropy": {
+  "address": "824DD900",
+  "instructions": 26,
+  "signature": "f45fd5db353191f9ed02cc888be4c1349dae77ec",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetSamplerState_MaxMipLevel": {
+  "address": "824DDAC0",
+  "instructions": 27,
+  "signature": "0e5844b13fbb5f4b9b17054f1708cc90ead31b35",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetSamplerState_MinFilter": {
+  "address": "824DD4F0",
+  "instructions": 48,
+  "signature": "65e2664f7ffe369aae77a5960e8beb0c809a7ad2",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetSamplerState_MinFilterZ": {
+  "address": "824DD5E8",
+  "instructions": 34,
+  "signature": "5896b2a284f02c1d205983276da6418eb479a74f",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetSamplerState_MinMipLevel": {
+  "address": "824DDB40",
+  "instructions": 27,
+  "signature": "d6c62186cae6bb97e30b0686a0931e411ba3d998",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetSamplerState_MipFilter": {
+  "address": "824DD810",
+  "instructions": 15,
+  "signature": "6daf73dd1fcd12fe410639d3ad3e1a0450f7d1ea",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetSamplerState_MipMapLodBias": {
+  "address": "824DDA20",
+  "instructions": 24,
+  "signature": "74d221df8cb2eadacf25df5362095ae8deb99df4",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetSamplerState_PointBorderEnable": {
+  "address": "824DDE80",
+  "instructions": 17,
+  "signature": "3f4220c7cf5bee7d08a3543ccdbf7f9d619991e6",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetSamplerState_SeparateZFilterEnable": {
+  "address": "824DD868",
+  "instructions": 34,
+  "signature": "7143f0d8536d1eab650f741f643f9420875cb600",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetSamplerState_TrilinearThreshold": {
+  "address": "824DDD20",
+  "instructions": 15,
+  "signature": "8b70cb80fb4fd687b4f8429f9bac4a0f77489ef9",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetSamplerState_VGradientExpBias": {
+  "address": "824DDDD0",
+  "instructions": 15,
+  "signature": "e4e8ac2c6d759d8d9925ecf5d976c5d17f80dceb",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetSamplerState_WhiteBorderColorW": {
+  "address": "824DDE28",
+  "instructions": 15,
+  "signature": "c502b96daaee32634c7d504184b6242a651b3c9e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetScissorRect": {
+  "address": "824DDEE0",
+  "instructions": 63,
+  "signature": "6d00b84577b53af270aee0941bb38b8441993b13",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetScreenExtentQueryMode": {
+  "address": "824E67C8",
+  "instructions": 28,
+  "signature": "0c886cce311d2f1265865e0d5be15e16200d6f42",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetShaderGPRAllocation": {
+  "address": "824D4CD8",
+  "instructions": 58,
+  "signature": "898f83aacf2f602825d3d65867d787e523dd4e37",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetStreamSource": {
+  "address": "824DDFE0",
+  "instructions": 71,
+  "signature": "42b2a251c00b3e94055e89408807e1280b8b8ab4",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetTexture": {
+  "address": "824D2640",
+  "instructions": 94,
+  "signature": "b2d5c81f42bca35dcc176acce2b0d39501c90dd5",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetTexture_Inline": {
+  "address": "824A3D40",
+  "instructions": 6,
+  "signature": "3bc42fcb243c84d9cf7742943ce006f15c6ee8ec",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetVertexDeclaration": {
+  "address": "824D4B48",
+  "instructions": 5,
+  "signature": "94e0865ca2347e5ce829b77afa43447a9d305cf1",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetVertexShader": {
+  "address": "824D4930",
+  "instructions": 115,
+  "signature": "9b45e076eaa09afba5363e1b1cc1b9cdae6a6d49",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetVertexShaderConstantB": {
+  "address": "824D4470",
+  "instructions": 23,
+  "signature": "e05a2f5a16a4ad5e20f1650b14002f431453e4f4",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_SetViewport": {
+  "address": "824DE730",
+  "instructions": 31,
+  "signature": "41a4a319c28ccbb5d46eb5645a555e7d052b0fc3",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_Swap": {
+  "address": "824E8E90",
+  "instructions": 357,
+  "signature": "098ac23d196e8aeed00ee15d87742f20f7485a17",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DDevice_UnsetAll": {
+  "address": "824D0488",
+  "instructions": 68,
+  "signature": "ea5bdc69c41e8d209ca3b98efc005422085317f8",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DIndexBuffer_Lock": {
+  "address": "824DB870",
+  "instructions": 18,
+  "signature": "61f0acaf9a363ae0d47002ea25021527aa8207c1",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DLineTexture_LockRect": {
+  "address": "824D2148",
+  "instructions": 6,
+  "signature": "eeded41f394d58aeaf627cb4c8f35a41270bfb84",
+  "mask": "struct",
+  "unique": false,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DResource_AddRef": {
+  "address": "824DB550",
+  "instructions": 29,
+  "signature": "504a173f9b1d5163b8a66cdbf1dc6ea056094dde",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DResource_Destroy": {
+  "address": "824DB028",
+  "instructions": 121,
+  "signature": "e095cd7a3ac712c4d1aedb73aa3f013b195bf898",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DResource_GetType": {
+  "address": "824DAF98",
+  "instructions": 35,
+  "signature": "d460e1e26eb613ecfca05f08436148e7b2222e3a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DResource_Release": {
+  "address": "824DB5C8",
+  "instructions": 32,
+  "signature": "c8ec37def627fd472d4c5fba2fc67872eda29ecb",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DSurface_GetDesc": {
+  "address": "824D2520",
+  "instructions": 38,
+  "signature": "166b12bf1f3421a26d4550cfb05b0ddfe1f3de85",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DSurface_LockRect": {
+  "address": "824D25B8",
+  "instructions": 8,
+  "signature": "44bb3f2519523a5fb0b303875957f85d728b0556",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DSurface_UnlockRect": {
+  "address": "824D0700",
+  "instructions": 6,
+  "signature": "801638211c325087977f4ec43b4da0dca6769661",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DTexture_GetSurfaceLevel": {
+  "address": "824D2090",
+  "instructions": 46,
+  "signature": "a1646bd2ea530c767f74217555b2f1fd3aa79c33",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DVertexBuffer_Lock": {
+  "address": "824DB760",
+  "instructions": 20,
+  "signature": "2f9e7f939f23e2d0d73d30b4a0fa07014134efe5",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DVertexBuffer_Unlock": {
+  "address": "824DB7B0",
+  "instructions": 4,
+  "signature": "c25af7550429f1e1f817672eb142beba4d347af9",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DVolumeTexture_GetVolumeLevel": {
+  "address": "824D2228",
+  "instructions": 43,
+  "signature": "2e7827d135d93f0767c6938bc9fd7a4bcefeed1f",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DVolume_GetDesc": {
+  "address": "824D25D8",
+  "instructions": 17,
+  "signature": "25a9ebd559013fb58d18d6a250f2014fb43e4486",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3DVolume_LockBox": {
+  "address": "824D2620",
+  "instructions": 7,
+  "signature": "1321404cdd88523cf2d3d6944270b0b00da1ee9e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_AlignTextureDimensions": {
+  "address": "824D08A8",
+  "instructions": 72,
+  "signature": "94cc6d725125ba90acdb7a93cb8dbb0e506e82ff",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_BlockSizeOfGpuFormat": {
+  "address": "824D0788",
+  "instructions": 38,
+  "signature": "61b570ddbd71c29b5a16f8db1a3b1a2cf0f860ab",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_CBlocker_Check": {
+  "address": "824D0290",
+  "instructions": 53,
+  "signature": "2f1f31cfb956675a740038eafe0c78d1bcfe0014",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_CDevice_BeginRingBig": {
+  "address": "824E04B0",
+  "instructions": 26,
+  "signature": "0338f07bfd26756ed1f8a7af6e4284a648944221",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_CDevice_BeginRingManual": {
+  "address": "8255A200",
+  "instructions": 2,
+  "signature": "6e3fa172c6ee4dc5de2d14ef22b6f88b3e3aee5b",
+  "mask": "struct",
+  "unique": false,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_CDevice_BlockOnFence": {
+  "address": "824DFC48",
+  "instructions": 49,
+  "signature": "541a34ab9c12b6305425fc99ba00b9e8a08420e0",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_CDevice_KickOff": {
+  "address": "824E0298",
+  "instructions": 63,
+  "signature": "5c5fe3e4be785f800d24e7a8e817feea56ef6a2d",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_CDevice_KickOffSegment": {
+  "address": "824E0110",
+  "instructions": 97,
+  "signature": "7ccfb8509069d4ce8f56db260cb2cc850331748c",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_CDevice_Uninitialize": {
+  "address": "824E1B50",
+  "instructions": 111,
+  "signature": "9e8aa234fbf3e4d2995708735f5578024fe06ae9",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_CleanupGprAllocationSetup": {
+  "address": "824D3FE0",
+  "instructions": 69,
+  "signature": "6c01ec231f6766d3ea1de2a20334d0941e7e8619",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_FindTextureSize": {
+  "address": "824D09C8",
+  "instructions": 220,
+  "signature": "b2d5061ed0c98fe74805a78bb90cb27a090fd727",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_Get2DSurfaceDesc": {
+  "address": "824D1258",
+  "instructions": 64,
+  "signature": "344a4d05dde58cc062604c891855b978b4caf8fa",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_Get3DSurfaceDesc": {
+  "address": "824D1358",
+  "instructions": 64,
+  "signature": "b915290ce574e1c181025cf24462986c3cd90b79",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_GetLevelLayout": {
+  "address": "824D0E90",
+  "instructions": 241,
+  "signature": "5b6ae479a6baa72e36670f0617d1f082ceba9dcb",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_GetMaxMipLevels": {
+  "address": "824D0820",
+  "instructions": 33,
+  "signature": "beaff9e9d28eacc7f3a49488dbec5ed6538b1244",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_GetMipTailLevelOffsetCoords": {
+  "address": "824D0D38",
+  "instructions": 86,
+  "signature": "dd8d579fa2a5d356995a4634a0518ffdf539f96a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_GetSubresourceLayout": {
+  "address": "824D1458",
+  "instructions": 303,
+  "signature": "02bcccd0df2ca3f06ab15804ffcd60dd5d0b25fa",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_GetTextureDimensions": {
+  "address": "824D0650",
+  "instructions": 38,
+  "signature": "79b000cbe75af8aa6400f971fdfc6e144467d3d0",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_InitializeApiState": {
+  "address": "824E11A0",
+  "instructions": 154,
+  "signature": "94d02e38ee4142775648a02e0b426986cd7c6f94",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_InitializePresentationParameters": {
+  "address": "824E1408",
+  "instructions": 143,
+  "signature": "3e5246ed5547b8e8325b0d9672289bbe5f09aa7c",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_Lock2DSurface": {
+  "address": "824D19E0",
+  "instructions": 35,
+  "signature": "f4295ee8b886ab26767091ec5357584b8255d694",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_Lock3DSurface": {
+  "address": "824D1A70",
+  "instructions": 42,
+  "signature": "caf18ae14f06cc8d29ac70f96c4ea163ca3a7f2c",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_LockResource": {
+  "address": "824DB210",
+  "instructions": 141,
+  "signature": "e99c39499dd680eaa071f43936a418fa88edfcf9",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_LockSurface": {
+  "address": "824D1918",
+  "instructions": 50,
+  "signature": "bd956964601585593d3118a3e11d1ca46770477e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_ResetAllState": {
+  "address": "824DE3C0",
+  "instructions": 61,
+  "signature": "3ae66938c890f25f237cf2dbe31f9efe087e308f",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_RingBufferDeviceAllocate": {
+  "address": "824DF3F0",
+  "instructions": 129,
+  "signature": "f6b1bf10d9649ffdb3922d3c6f94e3ddd1994170",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_SetSurfaceClip": {
+  "address": "824DB8C8",
+  "instructions": 184,
+  "signature": "f14499dd8e0dda43c84539bbdbf29361125be832",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_SetSurfaceInfo": {
+  "address": "824DE7D0",
+  "instructions": 38,
+  "signature": "66636a767d8187c9e0d3e8cce6cdec8732aff354",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_SetTextureHeader": {
+  "address": "824D1B18",
+  "instructions": 196,
+  "signature": "3d8dcedb1aea968c7ae191a5aa56ac935e4ae643",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_SetViewport": {
+  "address": "824DE4B8",
+  "instructions": 153,
+  "signature": "62f34b94e31a5d31155bb6cdba6fa805db54d8c0",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_SynchronizeToPresentationInterval": {
+  "address": "824E89E8",
+  "instructions": 106,
+  "signature": "8e657701b79ae7fe42e5b34b85ead2b7bd94adaf",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_UnlockResource": {
+  "address": "824DB448",
+  "instructions": 65,
+  "signature": "3f10ab68e330fce87da6e81abb4f900ef61503b9",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "D3D_XenonGpu_Initialize": {
+  "address": "824ED278",
+  "instructions": 116,
+  "signature": "bf8b979e6d3ae525fb716fcc6f11d263f030a29e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "Direct3D_CreateDevice": {
+  "address": "824D0598",
+  "instructions": 45,
+  "signature": "e25bc7200fc7ea0a52460ea18088662e0f695c0a",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ },
+ "XGRegisterVertexShader": {
+  "address": "824D4838",
+  "instructions": 62,
+  "signature": "afe03010634880735de03ed53c8c72f4c7e28e3e",
+  "mask": "struct",
+  "unique": true,
+  "xdk": "2.0.5632",
+  "game": "Beautiful Katamari (renut-ultimate base d57ad235)"
+ }
+}
