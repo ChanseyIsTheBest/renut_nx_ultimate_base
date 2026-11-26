@@ -1732,6 +1732,7 @@ def survey(index, hooks, reach, names):
 
 
 def main():
+    global GEN
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('names', nargs='*')
     ap.add_argument('--gen', default=GEN)
@@ -1741,6 +1742,10 @@ def main():
     ap.add_argument('--survey', action='store_true', help='only say what a copy of each name would contain')
     ap.add_argument('--what', default='')
     a = ap.parse_args()
+    if os.path.abspath(a.gen) != os.path.abspath(GEN):
+        GEN = a.gen
+        if '--out' not in sys.argv:
+            a.out = os.path.join(a.gen, 'hot')
     entries = list_entries(a.list or LIST)
     index = Index(a.gen)
     hand = hand_entries()
@@ -1748,6 +1753,23 @@ def main():
     bulk = [e for e in list_entries(a.bulk) if e[0] not in listed and e[0] not in hand] if a.bulk else []
     # A bulk function is a native too: its copy touches no more than its original (and it is not an app hook).
     hooks = Hooks([e[0] for e in entries] + [e[0] for e in bulk])
+    # ilomilo-nx's trap (2026-11-25; renut-ultimate port 291): a bulk entry an app or SDK source names (a hook, most
+    # likely) got a shard copy beside the hook, and the PC link failed with "duplicate symbol" (ilomilo's hand-made
+    # list had Renut's hooked sub_8220F0A8). switch_hot_bulk.py leaves such addresses out when it writes the list; a
+    # list made or edited by hand did not. They are left out here, with a line naming them. Only addresses a source
+    # really defines as a hook (tools/hook_bypass_check.py's parser: REX_HOOK*, REX_FUNC, BANJO_RENUT_HOOK*,
+    # BANJO_HOT_HOOK*, not the UNHOOKED forms, not under #if 0) are taken: a data address that happens to equal a
+    # function's is not a reason to drop its copy.
+    import hook_bypass_check
+    defined = {}
+    for src in (os.path.join(APP, 'src'), os.path.join(ROOT, 'sdk', 'src')):
+        defined.update(hook_bypass_check.hooked(src))
+    named = {e[0] for e in bulk if re.fullmatch(r'sub_[0-9A-F]{8}', e[0]) and e[0][4:] in defined}
+    if named:
+        print(f'localize_native: {len(named)} bulk entries a source defines as a hook left out: '
+              + ', '.join(f'{n} ({defined[n[4:]]})' for n in sorted(named)[:12]) + (' ...' if len(named) > 12 else ''))
+        bulk = [e for e in bulk if e[0] not in named]
+        hooks.natives -= named
     reach = Reach(index, hooks)
     for name in hand:
         if name not in index.funcs:

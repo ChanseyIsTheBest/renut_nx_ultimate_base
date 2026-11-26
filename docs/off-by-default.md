@@ -241,9 +241,74 @@ so the base's default stays; a port that sees the same turns the key off in its 
 | `banjo_renut_stream_redeem` (on) | banjo-nx (2026-11-20): off for N&B | 0-1 streams made cacheable again in 12 min of the game (render-thread-turn-offs.md's rule) |
 | `dishonored_renut_vertex_readable_check` (on) | banjo-nx (2b6ff1dc, 2026-11-20): off for N&B (the user's) | None given |
 | `sasrt_gpu_vs_input_mask` (on) | banjo-nx (2026-11-21, port 251's handoff): off for N&B | Two in-run A/Bs of 122 in Showdown Town (console c28, c34): on, render thread +0.6 % and +0.8 % a frame, fps -1.1 % and -0.8 %, GPU +0.3 % |
+| `rr6_frames_ahead` (1) | ilomilo-nx (b2594c77, 2026-11-25): 0. Vertex explosions in the animated backdrop behind its menus and loading cards, on the console every time and in Ryujinx under load: with one frame ahead the game rewrites a dynamic vertex buffer for frame N+1 while the render thread still reads it for frame N (Renut reads a draw's vertices when the render thread reaches it). sasrt-nx's skinned models exploded the same way. The fix that keeps a frame ahead (copy such buffers when the draw is queued) is not written | The user on the console: "Frames ahead 0 fixes it performance is still good" |
+| `blur_guest_cas_relaxed`, `blur_guest_fences_split`, `banjo_deko3d_compile_wait_boost` (on) | deadpool-nx (v1.0.1-1.0.2): off for Deadpool | None given |
+| `kernel_scatter_read_offset_zero` (off) | deadpool-nx: on for Deadpool | None given |
+| `banjo_deko3d_color_handover`, `banjo_deko3d_scanout_handover`, `banjo_deko3d_depth_handover`, `banjo_deko3d_draw_resolves` (on) | S4ep2-XBLA-nx (1753fa18, 0.5.1): all four off together for the special-stage pause and results screens' garbage (GitHub issue 1), on a renderer older than ports 198-318; which one was never isolated | Its own console and frame captures, before the base's hand-over fixes (ports 279, 281) |
 
 deadpool-nx also turned on `blur_renut_edram_inherit` (off here, port 86), `audio_xma_output_done_when_drained` and
 `audio_xma_kick_wake_idle_only` (off here) for Deadpool.
+
+## 8. ilomilo-nx's fixes and options (ports 284-291), off by the same rule
+
+| Key | Port | What it does when on |
+|---|---|---|
+| `ilomilo_renut_clip_disable` | 289 | a draw whose PA_CL_CLIP_CNTL has clip_disable gets depth clamping instead of clipping |
+| `ilomilo_renut_rect_depth_clamp` | 289 | rectangle lists clamp depth instead of being clipped |
+| `xam_guest_signin_on_connect` | 290 | a further controller signs in as a guest when it connects (Hexic 2 and ilomilo need it: their lobbies never open the sign-in screen) |
+| `xam_guest_profiles` | 290 | players 2-4 are local profiles of their own, not guests (ilomilo's multiplayer takes no guest) |
+| `ilomilo_physical_census` | 288 | a diagnostic: the live D3D physical allocations by size and caller, every 10 s |
+
+On here: `ilomilo_renut_gs_no_clip` (port 284: the console's pixels cannot change) and `input_switch_player_numbers`
+(port 290: the Switch's own numbering, checked with two players on the console).
+
+## 9. asura-nx's and deadpool-nx's fixes and options (ports 292-318), off by the same rule
+
+| Key | Port | What it does when on |
+|---|---|---|
+| `asura_vd_interrupt_fallback` | 295 | a 60 Hz host thread calls the guest's graphics interrupt callback |
+| `asura_switch_keep_system_core_threads`, `asura_switch_ui_thread_off_core0`, `asura_guest_main_priority_30`, `asura_guest_workers_round_robin` | 296 | asura-nx's thread layout |
+| `asura_renut_view_sync_32bpp` | 297 | every 32bpp EDRAM view pair converted, a pre-draw sync |
+| `asura_renut_clear_aliases_32bpp`, `asura_renut_clear_binds_cleared_only` | 298 | clears through aliases; clears bind only what they clear |
+| `asura_renut_stacked_resolve_alias` | 299 | a 2D-array texture over a resolve's slices copied from it (UE3's LUT) |
+| `asura_renut_fixed16_bias` | 301 | the fixed16 bias clamp (with the package's `ASURA_GLSL_FIXED16_BIAS=1`) |
+| `asura_renut_hw_srgb` | 302 | BC1-3 with gamma signs through sRGB views |
+| `asura_renut_null_texel_opaque`, `asura_renut_set_texture_null_clears_fetch` | 303 | opaque black null textures; SetTexture(NULL) clears the fetch type |
+| `asura_shadow_dirty_rect` | 304 | depth dirty rectangles (not exact) |
+| `RENUT_VERTEX_INPUTS_POSITION5_7` (define), `ASURA_LOG_RSQ_ABS` (env) | 306 | POSITION5-7 inputs; LOG/RSQ of |x| |
+| `asura_deko3d_vtx_state_dedupe`, `asura_deko3d_vtx_slot_bound` | 308 | plume's vertex state dedupe; slot 16 attributes left constant |
+| `asura_renut_scale_without_composite_list` | 310 | the render height without a composite list |
+| `deadpool_wildcard_star_dot_star` | 312 | `*.*` matches names without a dot |
+| `deadpool_dlc_license_nonzero` | 313 | DLC with licence mask 0 reports 1 |
+| `deadpool_frame_diag_at_s` (0), `system_core_duty_cap_pct` (0) | 314 | a frame diagnostic; the system core's duty cap |
+| `deadpool_whole_sparse_streams`, `deadpool_edram_inherit_view_sync`, `deadpool_drop_unused_depth` | 317 | sparse whole-buffer streams; the inherit through a view; drop unused depth |
+| `deadpool_switch_profiler_counters` | 318 | Renut's counters for the Switch profiler |
+
+On here, each with a key to turn it off: 293's menu combo, 300's spec words and generic clamps, 307's fetch forms
+(`ASURA_GLSL_FETCH_FORMS=0`), 312's file fixes (`*.*` apart), 313's content I/O, 315, 316's speed-ups, 317's capture reset,
+318's FPS window. Left out on purpose: asura-nx's quiet report skip (and deadpool-nx's, the same): the 10 s report path
+also runs banjo::hot::Report (the hot-count files), record::Report, ReportNvk and CodegenChecksReport, which logging off
+would have stopped; its copy-tool change that ignores renut_config.toml's keep list (Katamari's copies would change);
+deadpool-nx's TimerQueue rewrite, its streaming LZX helper (no caller without its own hook) and two tools.
+
+## 10. S4ep2-XBLA-nx's fixes and options (ports 320-328), off by the same rule
+
+| Key | Port | What it does when on |
+|---|---|---|
+| `s4ep2_deko3d_log_every_compile` | 320 | every deko3d shader compile's memory line |
+| `s4ep2_view_sync_32float` | 321 | 7e3 and 32_FLOAT views of one EDRAM range carry their bits (with port 297's key) |
+| `s4ep2_resolve_clamp_7e3` | 322 | 7e3 resolves with the exponent bias, clamped 0..31.875, no NaN |
+| `S4EP2_GLSL_RCPZERO` (env, package time) | 323 | the waterfall pass: 1 / w gives 0 for w = 0 |
+| `s4ep2_frame_capture`, `s4ep2_capture_auto_s`, `s4ep2_capture_combo` | 324 | frame captures |
+| `s4ep2_prepare_shaders_list` | 325 | listed shader variants prepared before the game |
+| `s4ep2_merge_shader_inputs` | 327 | vertex inputs missing from the declaration taken from the shader's vfetch |
+
+On: `s4ep2_bad_call_registers` (320), CMake `S4EP2_HOT_SOURCES_WAIT_CODEGEN` (326). Not taken: S4ep2 turned off the four
+deko3d resolve shortcuts together for its special-stage pause garbage (`banjo_deko3d_color_handover`,
+`banjo_deko3d_scanout_handover`, `banjo_deko3d_depth_handover`, `banjo_deko3d_draw_resolves`: its 1753fa18) on a renderer older than
+ports 198-318 (the hand-over fixes of ports 279 and 281 among them), never isolating which; section 7 lists it until a
+port shows which one breaks a picture on the current renderer. Its `sasrt_renut_depth_restore` on (the sun glow hidden
+by the scene again) stays a toml setting: the base keeps it off (port 202: Sonic 4 Episode I's white sky with it on).
 
 ## Keeping this page
 

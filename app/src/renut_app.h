@@ -21,6 +21,7 @@
 #include "profiler/profiler.h"
 #include "profiler/profiler_overlay.h"
 #include "game_menu.h"  // blur-nx (2026-11-18): the game menu (A+B+X+Y+L+R, F8)
+#include "shader_prep_screen.h"  // S4ep2-XBLA-nx: the "Preparing shaders" screen (s4ep2_prepare_shaders_list)
 #include "me/me_native_system.h"
 // banjo-nx (2026-10-16): Renut's Direct3D-level renderer, the boot choice banjo_renderer = "renut"
 // (app/src/renut_engine/gpu, tools/renut_gpu_import.py, docs/renut-renderer-port.md).
@@ -51,6 +52,14 @@ void Enable();  // blur-nx (2026-11-17, #220; renut-ultimate port 151): src/blur
 #include <string>
 
 REXCVAR_DECLARE(bool, banjo_show_fps);  // banjo-nx (2026-10-21): profiler/profiler.cpp
+// S4ep2-XBLA-nx (s4ep2_frame_capture, s4ep2_capture_combo): the frame captures' request (render/draw.cpp) and the
+// Switch input driver's L3 + R3 hook (sdk/src/input/switch/switch_input_driver.cpp).
+namespace renut::gpu {
+void S4CaptureRequest(int delay_ms, const char *why);
+}
+#if REX_PLATFORM_SWITCH
+extern void (*rex_switch_capture_combo)();
+#endif
 
 REXCVAR_DECLARE(bool, banjo_mesa_disk_cache_off);
 REXCVAR_DECLARE(bool, masseffect_nvk_cache_per_stage);
@@ -129,9 +138,17 @@ public:
         fpsManager.GetCreateCounter("Shown");  // port 196 (S4ep1-nx's): made here, before the display thread ticks it
         drawer->AddDialog(fps_dialog_.get());
         drawer->AddDialog(new RenuLogOverlayDialog(drawer));
+#if REX_PLATFORM_SWITCH
+        // S4ep2-XBLA-nx (s4ep2_capture_combo): L3 + R3 asks for a frame capture (nothing without s4ep2_frame_capture).
+        if (REXCVAR_QUERY(bool, s4ep2_capture_combo) && REXCVAR_QUERY(bool, s4ep2_frame_capture))
+          rex_switch_capture_combo = [] { renut::gpu::S4CaptureRequest(0, "button (L3 + R3)"); };
+#endif
         // CPU/GPU profiler window ported from UnleashedRecomp (F5 / banjo_show_profiler).
         profiler_dialog_ = std::make_unique<ProfilerOverlayDialog>(drawer);
         drawer->AddDialog(profiler_dialog_.get());
+        // S4ep2-XBLA-nx (2026-11-19): the shaders prepared before the game (s4ep2_prepare_shaders_list); no frame asked
+        // for unless that runs (Switch builds only).
+        RegisterShaderPrepScreen(drawer);
         // blur-nx (2026-11-18, the user's request): the game menu. Attached for good (its constructor adds it), it
         // asks for no ImGui frame while closed (WantsFrame), so the drawer builds none for it then.
         game_menu_ = std::make_unique<blur::GameMenuDialog>(drawer, config_path(), [this] { return runtime(); },

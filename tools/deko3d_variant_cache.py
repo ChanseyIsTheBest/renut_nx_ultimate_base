@@ -69,19 +69,40 @@ def variant_text(glsl, defines):
     return glsl[:nl + 1] + defines + glsl[nl + 1:]
 
 
+import threading
+
+THREAD_DIRS = {}
+THREAD_LOCK = threading.Lock()
+
+def get_thread_dir():
+    tid = threading.get_ident()
+    with THREAD_LOCK:
+        if tid not in THREAD_DIRS:
+            base = os.environ.get('TEMP') or tempfile.gettempdir()
+            td = os.path.join(base, f'uam_worker_{os.getpid()}_{tid}')  # renut-ultimate: per process too
+            os.makedirs(td, exist_ok=True)
+            THREAD_DIRS[tid] = td
+        return THREAD_DIRS[tid]
+
+
 def compile_one(item):
     key, stage, text = item
     if callable(text):
         text = text()
-    with tempfile.TemporaryDirectory() as tmp:
-        src = os.path.join(tmp, 'v.glsl')
-        out = os.path.join(tmp, 'v.dksh')
-        with open(src, 'wb') as f:
-            f.write(text)
-        r = subprocess.run([UAM, '-s', stage, '-o', out, src], capture_output=True, text=True)
-        if r.returncode != 0 or not os.path.isfile(out):
-            return key, None, (r.stdout + r.stderr).strip()[:300]
-        return key, open(out, 'rb').read(), ''
+    tmp = get_thread_dir()
+    src = os.path.join(tmp, 'v.glsl')
+    out = os.path.join(tmp, 'v.dksh')
+    try:
+        if os.path.isfile(out):
+            os.remove(out)
+    except OSError:
+        pass
+    with open(src, 'wb') as f:
+        f.write(text)
+    r = subprocess.run([UAM, '-s', stage, '-o', out, src], capture_output=True, text=True)
+    if r.returncode != 0 or not os.path.isfile(out):
+        return key, None, (r.stdout + r.stderr).strip()[:300]
+    return key, open(out, 'rb').read(), ''
 
 
 def read_cache(path):

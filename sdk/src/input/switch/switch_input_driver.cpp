@@ -83,6 +83,13 @@ REXCVAR_DEFINE_STRING(input_menu_combo, "A+B+X+Y+L+R", "Input",
                       "not known, or a single button, keeps A+B+X+Y+L+R. While two or more of its L, R, ZL and ZR are "
                       "held, its other buttons do not reach the game");
 
+// asura-nx (v1.0.0): while the whole game-menu combo is held, none of its buttons reach the game (a combo with fewer than
+// two of L, R, ZL and ZR, PLUS+MINUS for example, reached it while it opened the menu). false: only blur-nx's shoulder
+// rule below, as before.
+REXCVAR_DEFINE_BOOL(asura_input_menu_combo_whole_hidden, true, "Input",
+                    "While every button of input_menu_combo is held, none of them reach the game (asura-nx). false: "
+                    "only the shoulder rule (two or more of L, R, ZL, ZR held first), as before. Read at start")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 // Single Joy-Cons (one per player, for multiplayer) are held sideways: the system is told so (it then turns the
 // stick for that grip), and the four buttons under the player's right thumb become the face buttons. SL and SR are
 // the triggers (ZL / ZR), the minus or plus button is Start, the stick is the left
@@ -113,6 +120,13 @@ REXCVAR_DEFINE_INT32(input_switch_disconnect_grace_ms, 1000, "Input",
                      "the game is told it is gone (a Bluetooth hiccup or a layout change clears in well under a "
                      "second); a controller that connects meanwhile (the handheld's Joy-Cons taken off, a new pad) ends "
                      "it at once. 0: reported at once, as before");
+// ilomilo-nx (2026-11-25, the user's console: in ilomilo's multiplayer player 1's controller was "not signed in", player
+// 2's could start it): by connection order, a controller that connected or woke after another was a later player than
+// its lights say, and only player 1 has the profile.
+REXCVAR_DEFINE_BOOL(input_switch_player_numbers, true, "Input",
+                    "The Switch's controllers are the players the Switch numbers them (the handheld and No1 player 1, "
+                    "No2 player 2, ...: the number on the controller's lights, which the controller applet changes), "
+                    "whenever they connected. false: by connection order (the first to connect is player 1), as before");
 
 // Route recording for unattended test runs: the game's own pad input, written and played back here.
 // MINUS on pad 1 marks the start (and, while recording, the end), so the load time before the route does not
@@ -121,6 +135,10 @@ REXCVAR_DEFINE_STRING(input_record, "", "Input",
                       "Record pad 1 to this file (e.g. sdmc:/switch/banjo-nx/route.tsv) between two MINUS presses");
 REXCVAR_DEFINE_STRING(input_play, "", "Input",
                       "Play this recorded file (input_record) back as pad 1, starting at the next MINUS press");
+
+// S4ep2-XBLA-nx (its ab828155, after its 0.5.1): the frame capture button (both sticks in, L3 + R3), set by the app with
+// s4ep2_capture_combo (app/src/renut_app.h); null: the combo is not looked at.
+void (*rex_switch_capture_combo)() = nullptr;
 
 namespace rex::ui {
 // rex/ui/overlay/debug_overlay.h (not included here because it pulls in ImGui).
@@ -873,6 +891,9 @@ void SwitchInputDriver::Poll(size_t index) {
   {
     constexpr uint64_t kHeldFirst = HidNpadButton_L | HidNpadButton_R | HidNpadButton_ZL | HidNpadButton_ZR;
     const uint64_t combo = g_game_menu_combo.load(std::memory_order_relaxed);
+    static const bool whole_hidden = REXCVAR_GET(asura_input_menu_combo_whole_hidden);  // asura-nx
+    if (whole_hidden && combo != 0 && (held & combo) == combo)
+      held &= ~combo;
     const uint64_t first = combo & kHeldFirst;
     if (std::popcount(first) >= 2 && (held & first) == first)
       held &= ~(combo & ~first);
@@ -996,6 +1017,23 @@ void SwitchInputDriver::DispatchMenuShortcuts(Slot& slot, uint64_t held) {
   }
 
   /*
+   * S4ep2-XBLA-nx (2026-11-22, its tester: a frame capture on a button, not through a menu, whose opening and closing
+   * reach the game as presses): both sticks pressed in together (L3 + R3) asks the app for a frame capture, on the next
+   * frame. Only with the app's hook set (s4ep2_capture_combo); the presses still reach the game.
+   */
+  if (rex_switch_capture_combo) [[unlikely]] {
+    const uint64_t kBitCapture = uint64_t(1) << 20;  // a bit no other shortcut uses
+    constexpr uint64_t kSticks = HidNpadButton_StickL | HidNpadButton_StickR;
+    const bool now = (held & kSticks) == kSticks;
+    const bool before = (slot.menu_shortcuts & kBitCapture) != 0;
+    if (now && !before) {
+      rex_switch_capture_combo();
+      REXLOG_INFO("menu shortcut: frame capture (L3 + R3)");
+    }
+    slot.menu_shortcuts = now ? (slot.menu_shortcuts | kBitCapture) : (slot.menu_shortcuts & ~kBitCapture);
+  }
+
+  /*
    * L+R+ZL starts the A/B test lap (switch_perf.cpp; it talks to the profiler, no key to the game); L+R+ZR opens the
    * system's controller applet (connect a second controller, change the player order, split a Joy-Con pair; on the UI
    * thread, like the menus). renut-ultimate (2026-11-20, port 206; sims3-nx's): both fire when the trigger is let go,
@@ -1114,6 +1152,9 @@ void SwitchInputDriver::EnumerateDevices(std::vector<DeviceInfo>& out) {
     }
     info.guid = i == 0 ? std::string("switch-handheld") : "switch-npad-" + std::to_string(i);
     info.synthetic = false;
+    // ilomilo-nx (2026-11-25): the Switch's own player number (the handheld and No1 player 1, NoN player N), which
+    // InputSystem makes the guest user (input_switch_player_numbers).
+    if (REXCVAR_GET(input_switch_player_numbers)) info.player_number = i == 0 ? 0u : uint32_t(i - 1);
     out.push_back(std::move(info));
   }
 }

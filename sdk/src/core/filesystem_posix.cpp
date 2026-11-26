@@ -14,7 +14,9 @@
 #include <string.h>
 
 #include <algorithm>
+#include <atomic>  // blur-nx 1.0.2: the host buffer's reserve
 #include <cerrno>  // port 203
+#include <new>     // blur-nx 1.0.2: the host buffer asked for without a throw
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -57,6 +59,12 @@ REXCVAR_DEFINE_BOOL(filesystem_shared_handles, true, "Filesystem",
                     "Switch: every guest handle on a file outside the game's own (saves, profiles) shares one Horizon "
                     "descriptor, reopened read-write for the first writer: Horizon refuses a write open while another "
                     "open exists (The Sims 3's saves failed). false = a descriptor per handle, as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// deadpool-nx (v1.0.1, 25a2e309).
+REXCVAR_DEFINE_BOOL(deadpool_listfiles_stat_type, true, "Filesystem",
+                    "deadpool-nx: a folder listing checks stat's result and tells folders by stat's mode (d_type only "
+                    "when stat fails: it can be DT_UNKNOWN, or DT_LNK for a link to a folder). false: d_type alone, and "
+                    "a failed stat's fields used as they are, as before")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(filesystem_bounce_guest_only, true, "Filesystem",
                     "tw2de_nx: only a buffer in the guest's memory goes through the host buffer (the file system refuses "
@@ -382,10 +390,58 @@ class PosixFileHandle : public FileHandle {
     static const size_t piece = size_t(std::clamp(REXCVAR_GET(filesystem_bounce_piece_mb), 1, 16)) << 20;
     return piece;
   }
-  static uint8_t* Bounce() {
+  /*
+   * blur-nx 1.0.2 (2026-11-26, GitHub issue #9; for every port): a player's game closed as it saved after a race. The
+   * thread that wrote the save made its host buffer then, with std::make_unique (filesystem_bounce_piece_mb: 4 MB in
+   * one piece), and newlib could not give 4 MB in one piece any more: the throw ended the game with the save's file
+   * already emptied by its container's create. The buffer is now asked for without a throw, halving down to 64 KB when
+   * a size cannot be had; with none at all, a reserve of 256 KB set aside at the start serves, one transfer at a time
+   * (BounceLease). A smaller buffer only means more pieces; the results are the same.
+   */
+  static constexpr size_t kBounceMin = size_t(64) << 10;
+  static constexpr size_t kReserveBytes = size_t(256) << 10;
+  static uint8_t* Reserve() {
+    alignas(64) static uint8_t reserve[kReserveBytes];
+    return reserve;
+  }
+  static std::mutex& ReserveMutex() {
+    static std::mutex m;
+    return m;
+  }
+  struct BounceLease {
+    uint8_t* data = nullptr;
+    size_t size = 0;
+    std::unique_lock<std::mutex> reserve_lock;  // held while the reserve is in use
+  };
+  static BounceLease Bounce() {
     static thread_local std::unique_ptr<uint8_t[]> bounce;
-    if (!bounce) bounce = std::make_unique<uint8_t[]>(PieceBytes());
-    return bounce.get();
+    static thread_local size_t bounce_size = 0;
+    if (!bounce) {
+      for (size_t n = PieceBytes(); n >= kBounceMin; n >>= 1) {
+        bounce.reset(new (std::nothrow) uint8_t[n]);
+        if (bounce) {
+          bounce_size = n;
+          if (n != PieceBytes())
+            REXLOG_WARN("filesystem: a thread's host buffer is {} KB ({} MB could not be had in one piece)", n >> 10,
+                        PieceBytes() >> 20);
+          break;
+        }
+      }
+    }
+    BounceLease lease;
+    if (bounce) {
+      lease.data = bounce.get();
+      lease.size = bounce_size;
+    } else {
+      static std::atomic<uint32_t> reserve_uses{0};
+      if (reserve_uses.fetch_add(1, std::memory_order_relaxed) < 8)
+        REXLOG_WARN("filesystem: no host buffer could be had (not even {} KB): the {} KB reserve serves this transfer",
+                    kBounceMin >> 10, kReserveBytes >> 10);
+      lease.reserve_lock = std::unique_lock<std::mutex>(ReserveMutex());
+      lease.data = Reserve();
+      lease.size = kReserveBytes;
+    }
+    return lease;
   }
   // Whether [p, p + n) is a host buffer the file system may take directly (filesystem_bounce_guest_only).
   static bool DirectOk(const void* p, size_t n) {
@@ -407,8 +463,9 @@ class PosixFileHandle : public FileHandle {
       *out_bytes_read = size_t(got);
       return true;
     }
-    const size_t kPiece = PieceBytes();
-    uint8_t* const bounce = Bounce();
+    BounceLease lease = Bounce();  // 1.0.2 (issue #9): the buffer's size is the lease's
+    const size_t kPiece = lease.size;
+    uint8_t* const bounce = lease.data;
     auto* out = static_cast<uint8_t*>(buffer);
     size_t total = 0;
     while (total < buffer_length) {
@@ -439,8 +496,9 @@ class PosixFileHandle : public FileHandle {
       *out_bytes_written = size_t(put);
       return true;
     }
-    const size_t kPiece = PieceBytes();
-    uint8_t* const bounce = Bounce();
+    BounceLease lease = Bounce();  // 1.0.2 (issue #9): the buffer's size is the lease's
+    const size_t kPiece = lease.size;
+    uint8_t* const bounce = lease.data;
     const auto* in = static_cast<const uint8_t*>(buffer);
     size_t total = 0;
     while (total < buffer_length) {
@@ -621,13 +679,22 @@ std::vector<FileInfo> ListFiles(const std::filesystem::path& path) {
     FileInfo info;
 
     info.name = ent->d_name;
+    static const bool stat_type = REXCVAR_GET(deadpool_listfiles_stat_type);
     struct stat st;
-    stat((path / info.name).c_str(), &st);
+    bool is_dir;
+    if (stat_type) {
+      st = {};
+      const bool stat_ok = stat((path / info.name).c_str(), &st) == 0;
+      is_dir = stat_ok ? S_ISDIR(st.st_mode) : (ent->d_type == DT_DIR);
+    } else {
+      stat((path / info.name).c_str(), &st);
+      is_dir = ent->d_type == DT_DIR;
+    }
     info.create_timestamp = convertUnixtimeToWinFiletime(st.st_ctime);
     info.access_timestamp = convertUnixtimeToWinFiletime(st.st_atime);
     info.write_timestamp = convertUnixtimeToWinFiletime(st.st_mtime);
     info.path = path;
-    if (ent->d_type == DT_DIR) {
+    if (is_dir) {
       info.type = FileInfo::Type::kDirectory;
       info.total_size = 0;
     } else {

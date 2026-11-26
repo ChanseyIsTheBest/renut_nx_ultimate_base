@@ -14,6 +14,7 @@
  */
 
 #include <rex/assert.h>
+#include <rex/cvar.h>
 #include <rex/dbg.h>
 #include <rex/logging.h>
 #include <rex/perf/counter.h>
@@ -34,7 +35,25 @@ FunctionDispatcher* GetBoundFunctionDispatcher() {
 
 }  // namespace
 
-static void InvalidFunctionTrap(PPCContext& ctx, uint8_t* /*base*/) {
+// S4ep2-XBLA-nx (github.com/FurryLilManChild/S4ep2-XBLA-nx, GPL-3.0, 0.5.0; its c81b202b and 25c48cea): "Mark's first
+// boot stopped right after the device was created on a call to 0x80C10054 (an instruction word, not a function) with
+// no sign of the caller." The registers the context holds at the bad call go to the log before the stop; that line
+// placed the caller (a device setter table filled from the other episode's address). Log only: the stop is the same.
+// The generated code keeps some registers in locals, so a few can be stale. No stack walk (its first try read past the
+// stack's top).
+REXCVAR_DEFINE_BOOL(s4ep2_bad_call_registers, true, "Kernel",
+                    "A call to an invalid or unregistered guest function logs the target, lr, ctr and r1, r3-r5, r9-r12, "
+                    "r30, r31 as the context holds them before the stop (S4ep2-XBLA-nx). false: the stop alone, as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
+static void InvalidFunctionTrap(PPCContext& ctx, uint8_t* base) {
+  static const bool registers = REXCVAR_GET(s4ep2_bad_call_registers);
+  if (registers && base) {
+    REXLOG_ERROR("[bad call] target {:08X} lr {:08X} ctr {:08X} r1 {:08X} r3 {:08X} r4 {:08X} r5 {:08X} r9 {:08X} "
+                 "r10 {:08X} r11 {:08X} r12 {:08X} r30 {:08X} r31 {:08X}",
+                 ctx.last_indirect_target, uint32_t(ctx.lr), ctx.ctr.u32, ctx.r1.u32, ctx.r3.u32, ctx.r4.u32,
+                 ctx.r5.u32, ctx.r9.u32, ctx.r10.u32, ctx.r11.u32, ctx.r12.u32, ctx.r30.u32, ctx.r31.u32);
+  }
   REX_FATAL("Call to invalid or unregistered function at guest address 0x{:08X}",
             ctx.last_indirect_target);
 }

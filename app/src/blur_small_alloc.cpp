@@ -394,7 +394,10 @@ void Enable() {
   const int mb = REXCVAR_GET(blur_small_alloc_mb);
   if (mb <= 0 || g_begin.load(std::memory_order_acquire)) return;
   const size_t bytes = std::min(size_t(mb) << 20, kMaxArena);
-  void* arena = std::aligned_alloc(kPiece, bytes);
+  void* arena = nullptr;
+  if (posix_memalign(&arena, kPiece, bytes) != 0) {
+    arena = nullptr;
+  }
   if (!arena) {
     REXLOG_WARN("[alloc] blur_small_alloc_mb: {} MB not available; the system allocator stays", mb);
     return;

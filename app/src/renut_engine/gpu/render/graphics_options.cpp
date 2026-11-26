@@ -209,6 +209,11 @@ RenderScale SurfaceRenderScale(const d3d::SurfaceDesc &desc, RenderScale resolut
     return resolution.Times(2);
   if (IsPostProcessBuffer(desc, width, height))
     return {};  // the console's
+  // asura-nx (asura_renut_stacked_resolve_alias, textures.cpp): colour-grading LUT targets (e.g. UE3 16x512 tiled
+  // stacked-slice resolve target) kept at exact 1x guest texels so the stacked 2D array slice copies align 1:1.
+  static const bool lut_targets_1x = REXCVAR_QUERY(bool, asura_renut_stacked_resolve_alias);
+  if (lut_targets_1x && !d3d::IsDepthFormat(desc.Format) && width <= 32 && height >= 256)
+    return {};
   // banjo-nx (2026-10-21, package 36z2): a depth target of a quarter of the screen or less goes with the colour targets
   // of that size (the post-processing buffers' rule, which takes colour only): a 128x128 one at 0.9x under its 128x128
   // colour target at 1x cut its draws to 115x115 (console log of 36z: ten draws a frame).

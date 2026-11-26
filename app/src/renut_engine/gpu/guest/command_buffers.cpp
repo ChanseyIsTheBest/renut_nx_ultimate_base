@@ -3962,16 +3962,23 @@ void RecordDraw(u32 device_va, const DrawCall &call, u32 up_vertex_bytes, u32 up
     op->call.up_indices = u32(CopyIn(*buffer, call.up_indices, up_index_bytes));
 }
 
-void RecordDeferredDraw(u32 device_va, const DrawCall &call, const u8 *scratch, u32 bytes) {
+void RecordDeferredDraw(u32 device_va, const DrawCall &call, const u8 *scratch, u32 bytes,
+                        const u8 *index_scratch, u32 index_bytes) {
   HostCommandBuffer *buffer = nullptr;
   Op *op = NewOp(device_va, OpKind::Draw, &buffer);
   if (!op)
     return;
   SetOpCall(op->call, call, GuestPtr<const u8>(device_va));
-  op->call.up_vertices = u32(Reserve(*buffer, bytes));  // (Begin*Vertices draws have no indices)
+  op->call.up_vertices = u32(Reserve(*buffer, bytes));  // (BeginVertices draws have no indices)
+  // deadpool-nx: BeginIndexedVertices' indices, copied with the vertices (none from BeginVertices: as before).
+  if (index_scratch && index_bytes)
+    op->call.up_indices = u32(Reserve(*buffer, index_bytes));
   std::lock_guard lock(g_record_mutex);
   g_pending_vertices.push_back(
       {device_va, RecordingBuffer(device_va), op->call.up_vertices, scratch, bytes});
+  if (index_scratch && index_bytes)
+    g_pending_vertices.push_back(
+        {device_va, RecordingBuffer(device_va), op->call.up_indices, index_scratch, index_bytes});
   g_recording_devices[device_va].pending.fetch_add(1, std::memory_order_acq_rel);  // blur-nx (2026-11-17)
   PendingOf(device_va).fetch_add(1, std::memory_order_acq_rel);
   SyncPendingCount();

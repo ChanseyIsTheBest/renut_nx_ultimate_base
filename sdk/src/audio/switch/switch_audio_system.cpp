@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <malloc.h>
 
 #include <rex/assert.h>
 #include <rex/audio/conversion.h>
@@ -285,7 +286,7 @@ bool SwitchAudioSystem::StartOutput() {
   }
 
   for (size_t i = 0; i < kBufferCount; ++i) {
-    output->samples[i] = static_cast<s16*>(std::aligned_alloc(0x1000, kBufferAllocBytes));
+    output->samples[i] = static_cast<s16*>(memalign(0x1000, kBufferAllocBytes));
     if (!output->samples[i]) {
       REXLOG_ERROR("SwitchAudioSystem: out of memory for audio buffers");
       output_ = std::move(output);

@@ -27,6 +27,10 @@ bool DepthCoversColourOn();  // rr6_depth_covers_colour (rr6-nx)
 bool MissingInputW1On();  // keflings_renut_missing_input_w1 (keflings-nx)
 bool LoopConstantsOn();  // halo3_renut_loop_constants (halo3-nx)
 bool UserClipPlaneOn();  // rr6_user_clip_plane (rr6-nx, vivapinata-nx)
+bool XmaCacheGovernorOn();  // blur_xma_cache_governor (blur-nx): the XMA frame cache under the memory governor
+bool IlomiloClipDisableOn();  // ilomilo_renut_clip_disable (ilomilo-nx): PA_CL_CLIP_CNTL clip_disable -> depth clamp
+bool IlomiloRectDepthClampOn();  // ilomilo_renut_rect_depth_clamp (ilomilo-nx): rectangle lists clamp depth
+bool IlomiloGsNoClipOn();  // ilomilo_renut_gs_no_clip (ilomilo-nx): the geometry shaders without the clip distance
 bool TextureSignsOn();     // sasrt_renut_texture_signs (sasrt-nx)
 bool TextureExpAdjustOn(); // sasrt_renut_texture_exp_adjust (sasrt-nx)
 bool TextureIntFormatOn(); // sasrt_renut_texture_int_format (sasrt-nx)

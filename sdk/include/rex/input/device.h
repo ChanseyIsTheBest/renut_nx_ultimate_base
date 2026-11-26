@@ -28,6 +28,11 @@ struct DeviceInfo {
   std::string name;
   std::string guid;
   bool synthetic = false;  // keyboard/mouse emulation or the NOP stand-in
+  // ilomilo-nx (2026-11-25): the platform's own player number for this device, 0-based (the Switch's: the handheld
+  // and No1 player 1, No2 player 2, ...), which InputSystem then gives it in place of the connection order.
+  // kNoPlayerNumber: none (connection order).
+  static constexpr uint32_t kNoPlayerNumber = UINT32_MAX;
+  uint32_t player_number = kNoPlayerNumber;
 };
 
 }  // namespace rex::input

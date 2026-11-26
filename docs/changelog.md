@@ -419,3 +419,34 @@ Ports 1-43 are the first round: the universal fixes of the other ports' renderer
 - Port 282 (blur-nx's): a refused GPU pin or mapping is tried again for up to 10 s, and deko3d's aborts write
   rex_crash.log; the nv failure-injection and stress tests (off).
 - Port 283 (blur-nx's): audout's refused buffers are appended again instead of lost.
+- Port 284 (ilomilo-nx's): the host geometry shaders write no clip distance where the vertex shader writes none
+  (Ryujinx clipped rectangle lists on an undefined value: wedges; the console was unaffected).
+- Port 285 (ilomilo-nx's): the tile-twin merge's literal check reads the active shader table.
+- Port 286 (ilomilo-nx's): Katamari's SetGammaRamp / SetPWLGamma take Flags; port 173's Flags hooks bound.
+- Port 287 (ilomilo-nx's): the lock hooks' later-XDK forms with the unused second argument (not bound here).
+- Port 288 (ilomilo-nx's): `ilomilo_physical_census`, live D3D physical allocations by size and caller (off).
+- Port 289 (ilomilo-nx's): PA_CL_CLIP_CNTL's clip_disable and rectangle-list depth clamping, as keys (off).
+- Port 290 (ilomilo-nx's): the Switch's player numbers (on), sign-in on connect and local profiles for players 2-4
+  (off), a player's own gamer picture (ilomilo's two-player leak).
+- Port 291 (ilomilo-nx's): its tools (hook bypass check, the Ryujinx rexglue logs, RenderDoc geometry-stage tools and
+  more); the copy tool leaves out a bulk entry a source names.
+- Ports 292-311 (asura-nx's, hardened: every behaviour change keyed): SDK safety fixes (UTF-8 never throws, bounded
+  content names, XamContentCreate's root name), Switch input and paths, XMA inline mode 3, guest thread layout options,
+  EDRAM 32bpp view sync and alias clears, the stacked resolve alias, spec words only for written targets, the fixed16
+  bias clamp, hardware sRGB, null textures, depth dirty rectangles, BeginIndexedVertices, POSITION5-7 (opt-in),
+  LOG/RSQ of |x|, newer fetch forms, deko3d vertex state, tools, sampler descriptors, hitch windows and the pacing
+  panel. Picture changes are off by default.
+- Ports 312-318 (deadpool-nx's, hardened): NtOpenFile's ShareAccess, the read position, the overlapped result last,
+  ListFiles, the content manager's I/O, DLC keys, a frame diagnostic, a system-core duty cap, render-thread speed-ups
+  (on, keyed), sparse streams and drop unused depth (off), small items.
+- Hardening of ports 284-291 and two base gaps found by the audits: the fast path's render-state words include
+  clip_disable (port 289's key) and its number keys on the targets' gamma and bias bits.
+- Port 319 (deadpool-nx's, found by the audit): TryCustomOverride, a port's hand-written native ahead of a copy.
+- Ports 320-328 (S4ep2-XBLA-nx 0.5.1's, hardened): diagnostics, 32_FLOAT view pairs and 7e3 resolves (off), the
+  waterfall GLSL pass (opt-in), frame captures (off), shader variants prepared before the game (off), build order, merged
+  vertex inputs (off), XDK tools.
+- Ports 329-331 (blur-nx 1.0.2's save-crash fixes, GitHub issue #9, hardened): the XMA frame cache under the memory
+  governor, atomic saves (a save written again set aside until the new one closes, put back after a crash mid-write), a
+  bounce buffer that falls back instead of throwing, the APM hint without Mass Effect's key.
+- Port 332 (blur-nx's): content_backup_root's copies one folder per profile.
+- Port 333 (blur-nx's advice): content_backup_root copies saved games only, not DLC folders.

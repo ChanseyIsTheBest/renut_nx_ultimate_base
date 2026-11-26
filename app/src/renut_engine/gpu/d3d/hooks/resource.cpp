@@ -24,6 +24,15 @@
 #include <cstring>
 #include <mutex>
 #include <unordered_set>
+// ilomilo-nx (2026-11-25): ilomilo_physical_census
+#include <chrono>
+#include <map>
+#include <string>
+#include <unordered_map>
+#include <vector>
+#include <fmt/format.h>
+#include <rex/cvar.h>
+#include <rex/runtime.h>
 
 #include <rex/hook.h>
 
@@ -55,7 +64,57 @@ REX_IMPORT(__imp__MmAllocatePhysicalMemoryEx, MmAllocatePhysicalMemoryEx,
            u32(u32, u32, u32, u32, u32, u32));
 REX_IMPORT(__imp__MmFreePhysicalMemory, MmFreePhysicalMemory, void(u32, u32));
 
+// ilomilo-nx (2026-11-25, two players: guest physical memory ran out after two minutes on the menus): the live D3D
+// physical allocations by size and the game's caller (the hooked call's LR), the largest groups logged every 10 s.
+REXCVAR_DEFINE_BOOL(ilomilo_physical_census, false, "Nuts&Bolts/Debug",
+                    "Diagnostic: every 10 s, the D3D physical allocations still live, by size and the game's caller "
+                    "(a leak's caller grows)");
+
 namespace {
+
+namespace census {
+std::mutex g_mutex;
+std::unordered_map<u32, std::pair<u32, u32>> g_live;            // va -> (size, caller)
+std::map<std::pair<u32, u32>, std::pair<int64_t, uint64_t>> g_by;  // (size, caller) -> (live, made)
+int64_t g_next_ms = 0;
+
+void Add(u32 va, u32 size) {
+  // renut-ultimate (port 288's hardening): a call from a host thread (no guest context) is counted with caller 0.
+  const auto *ctx = rex::runtime::current_ppc_context();
+  const u32 caller = ctx ? u32(ctx->lr) : 0u;
+  const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now().time_since_epoch()).count();
+  std::lock_guard lock(g_mutex);
+  g_live[va] = {size, caller};
+  auto &group = g_by[{size, caller}];
+  ++group.first;
+  ++group.second;
+  if (now < g_next_ms)
+    return;
+  g_next_ms = now + 10000;
+  std::vector<std::pair<std::pair<u32, u32>, std::pair<int64_t, uint64_t>>> groups(g_by.begin(), g_by.end());
+  std::sort(groups.begin(), groups.end(), [](const auto &a, const auto &b) {
+    return int64_t(a.first.first) * a.second.first > int64_t(b.first.first) * b.second.first;
+  });
+  uint64_t total = 0;
+  for (const auto &[va_, item] : g_live)
+    total += item.first;
+  std::string line;
+  for (size_t i = 0; i < groups.size() && i < 8; ++i)
+    line += fmt::format("{}{} B from {:08X}: {} live ({} made)", i ? "; " : "", groups[i].first.first,
+                        groups[i].first.second, groups[i].second.first, groups[i].second.second);
+  RGPU_INFO("[physical census] {} live, {:.1f} MB: {}", g_live.size(), total / 1048576.0, line);
+}
+
+void Remove(u32 va) {
+  std::lock_guard lock(g_mutex);
+  const auto it = g_live.find(va);
+  if (it == g_live.end())
+    return;
+  --g_by[it->second].first;
+  g_live.erase(it);
+}
+}  // namespace census
 
 constexpr u32 kAllocPhysical = 0xB1800000u;  // XMemFree attributes of resource data
 constexpr u32 kAllocHeader = 0x24800000u;    // ... of resource headers
@@ -114,11 +173,15 @@ u32 AllocPhysical(u32 size, u32 attributes) {
   const u32 va = MmAllocatePhysicalMemoryEx(0, size, protect, 0, ~0u, kAlignment[(attributes >> 24) & 0xF]);
   if (!va)
     RGPU_ERROR("D3D: {} bytes of physical memory not available", size);
+  else if (REXCVAR_GET(ilomilo_physical_census))
+    census::Add(va, size);
   return va;
 }
 
 // XPhysicalFree (0x826F2048).
 void FreePhysical(u32 va) {
+  if (va && REXCVAR_GET(ilomilo_physical_census))
+    census::Remove(va);
   if (va)
     MmFreePhysicalMemory(0, va);
 }
@@ -777,6 +840,28 @@ void D3D_Lock3DSurface_hook(u32 texture, u32 level, mapped_u32 locked_box, mappe
     locked_box[1] = slice_bytes;  // SlicePitch
     locked_box[2] = address;      // pBits
   }
+}
+
+// ilomilo-nx (2026-11-24; renut-ultimate port 287): the forms of a later XDK, which keep the first release's unused
+// second argument (docs/xdk-notes.md: there at 11164, 20209 and 21250). Not bound here (Katamari's XDK 2.0.5632 has
+// the base's forms); a port at such an XDK binds these at the three functions' addresses in place of the base's hooks
+// (BANJO_RENUT_HOOK(sub_<address>, LockResource_unused_hook), and the two surface locks), after checking the registers
+// each reads (tools/arg_regs_compare.py). ilomilo's (XDK 2.0.20209): D3D_Lock2DSurface reads r3 and r5-r9 (r4 unused)
+// and calls D3D_LockSurface with (texture, r4, slice r5, level r6, flags r7, the four outputs r8-r10 and +84 on the
+// stack); D3D_LockResource reads r3-r10, one more than the base's form. Lock3DSurface keeps the base's form (it calls
+// LockSurface with 0, 0 for the unused argument and the slice).
+[[maybe_unused]] u32 LockResource_unused_hook(u32 resource, u32 /*unused*/, u32 type, u32 mip_lock, u32 base_address,
+                                              u32 mip_address, u32 address, u32 size, u32 flags, u32 cache_flags) {
+  return LockResource_hook(resource, type, mip_lock, base_address, mip_address, address, size, flags, cache_flags);
+}
+[[maybe_unused]] void D3D_LockSurface_unused_hook(u32 texture, u32 /*unused*/, u32 slice, u32 level, u32 flags,
+                                                  mapped_u32 address, mapped_u32 row_pitch, mapped_u32 slice_bytes,
+                                                  mapped_u32 tail_offset) {
+  D3D_LockSurface_hook(texture, slice, level, flags, address, row_pitch, slice_bytes, tail_offset);
+}
+[[maybe_unused]] void D3D_Lock2DSurface_unused_hook(u32 texture, u32 /*unused*/, u32 slice, u32 level,
+                                                    mapped_u32 locked_rect, mapped_u32 rect, u32 flags) {
+  D3D_Lock2DSurface_hook(texture, slice, level, locked_rect, rect, flags);
 }
 
 // The lock entry points, which only pick the texture, slice and level.

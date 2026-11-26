@@ -27,7 +27,14 @@ namespace renut::gpu {
 
 constexpr uint32_t kFramesInFlight = 2;
 constexpr uint32_t kTextureDescriptorCount = 8192;
-constexpr uint32_t kSamplerDescriptorCount = 1024;  // vivapinata-nx: 256 before the families below
+// vivapinata-nx: 256 before the families below; asura-nx: 1024 before.
+#if defined(PLUME_DEKO3D)
+constexpr uint32_t kSamplerDescriptorCount = 4096;  // Maxwell TSC max (12-bit sampler ID in DkResHandle)
+#else
+// renut-ultimate (port 310's hardening): 1024 as before off deko3d: plume_d3d12.cpp's sampler heap holds 1024
+// (SamplerDescriptorHeapSize), and 2048 stopped the PC's D3D12 start ("Allocator was unable to find free space").
+constexpr uint32_t kSamplerDescriptorCount = 1024;
+#endif
 constexpr uint32_t kInvalidDescriptor = UINT32_MAX;
 
 // Fixed bindless slots. The table is shared by the 2D, 3D and cube arrays the
@@ -202,6 +209,18 @@ struct VideoState {
   // halo3-nx (2026-11-03): SyncColorViewLocked's, by the target's format.
   std::unique_ptr<plume::RenderShader> view_fp10_encode_ps;
   std::unordered_map<uint32_t, std::unique_ptr<plume::RenderPipeline>> view_fp10_encode_pipelines;
+  // asura-nx (asura_renut_view_sync_32bpp): the other 32bpp EDRAM pairs, by the target's format; made only with the
+  // key on.
+  std::unique_ptr<plume::RenderShader> view_fp10_encode_1x_ps;
+  std::unordered_map<uint32_t, std::unique_ptr<plume::RenderPipeline>> view_fp10_encode_1x_pipelines;
+  std::unique_ptr<plume::RenderShader> view_fp10_decode_ps;
+  std::unordered_map<uint32_t, std::unique_ptr<plume::RenderPipeline>> view_fp10_decode_pipelines;
+  std::unique_ptr<plume::RenderShader> view_fp10_decode_m0_ps;
+  std::unordered_map<uint32_t, std::unique_ptr<plume::RenderPipeline>> view_fp10_decode_m0_pipelines;
+  // S4ep2-XBLA-nx (s4ep2_view_sync_32float, with asura_renut_view_sync_32bpp): the 32_FLOAT pairs, by the target's
+  // format; made only with both keys on.
+  std::unique_ptr<plume::RenderShader> s4ep2_view_bits_ps;
+  std::unordered_map<uint32_t, std::unique_ptr<plume::RenderPipeline>> s4ep2_view_bits_pipelines;
   // blur-nx (2026-11-10, port 76; its key 216: blur_renut_sample_grid_resolve) and its pipelines by destination format.
   std::unique_ptr<plume::RenderShader> sample_grid_resolve_ps;
   std::unordered_map<uint32_t, std::unique_ptr<plume::RenderPipeline>> sample_grid_pipelines;
@@ -228,6 +247,10 @@ struct VideoState {
   // Expands point-list draws into point sprites (pipeline.cpp); null like
   // rectangle_list_gs, which leaves them single-pixel points.
   std::unique_ptr<plume::RenderShader> point_sprite_gs;
+  // ilomilo-nx (2026-11-25, ilomilo_renut_gs_no_clip): the two without the clip distance, for the draws whose vertex
+  // shader writes none (pipeline.cpp); null when the key is off or without geometry shader support.
+  std::unique_ptr<plume::RenderShader> rectangle_list_noclip_gs;
+  std::unique_ptr<plume::RenderShader> point_sprite_noclip_gs;
 
   // Layout of the recompiled guest shaders (see pipeline.h).
   std::unique_ptr<plume::RenderPipelineLayout> draw_layout;

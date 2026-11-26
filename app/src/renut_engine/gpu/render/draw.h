@@ -499,6 +499,7 @@ inline uint64_t RenderTicks() {
 #endif
 }
 void InvalidateFastDrawLocked();
+void ForgetBoundGraphicsStateLocked();  // asura-nx (textures.cpp CopyStackedResolve)
 // banjo-nx (2026-10-28, per-draw night): a shader or vertex declaration record about to go (or a vertex shader's bound
 // declaration about to be replaced): the fast path's state only when it holds that record, and the stream memo (it names
 // records). The pipeline choices (cache entries, built pipelines: KeepShader keeps a record's host shader) stay.

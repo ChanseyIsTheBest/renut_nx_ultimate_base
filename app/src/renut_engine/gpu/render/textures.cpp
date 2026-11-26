@@ -291,19 +291,52 @@ plume::RenderComponentMapping SwizzleMapping(u32 swizzle, bool swap_red_blue,
   return plume::RenderComponentMapping(component(0), component(1), component(2), component(3));
 }
 
+// asura-nx (v1.0.0): on deko3d, a BC1-3 texture whose colour channels are gamma (and alpha not) sampled through an
+// sRGB view, the hardware's decode before filtering in place of the shader's after it (sRGB, not the Xenos
+// piecewise-linear curve the shader decodes). Off: the shader's decode, as before.
+REXCVAR_DEFINE_BOOL(asura_renut_hw_srgb, false, "Banjo/Renut",
+                    "From asura-nx: deko3d samples BC1-BC3 textures with gamma colour signs through an sRGB view and "
+                    "the shader leaves those channels alone (the sRGB curve, not the Xenos one). false: as before. "
+                    "Read at start")
+    .lifecycle(::rex::cvar::Lifecycle::kInitOnly);
+plume::RenderFormat SrgbFormatFor(plume::RenderFormat f) {
+  switch (f) {
+  case plume::RenderFormat::BC1_UNORM:
+    return plume::RenderFormat::BC1_UNORM_SRGB;
+  case plume::RenderFormat::BC2_UNORM:
+    return plume::RenderFormat::BC2_UNORM_SRGB;
+  case plume::RenderFormat::BC3_UNORM:
+    return plume::RenderFormat::BC3_UNORM_SRGB;
+  default:
+    return plume::RenderFormat::UNKNOWN;
+  }
+}
+
+bool WantHardwareSrgb(const TextureFetch &fetch, plume::RenderFormat host_format) {
+  static const bool on = REXCVAR_GET(asura_renut_hw_srgb);
+  return on && IsDeko3D() && banjo::renut_gpu::TextureSignsOn() &&
+         SrgbFormatFor(host_format) != plume::RenderFormat::UNKNOWN && fetch.Sign(0) == TextureSign::Gamma &&
+         fetch.Sign(1) == TextureSign::Gamma && fetch.Sign(2) == TextureSign::Gamma &&
+         fetch.Sign(3) != TextureSign::Gamma;
+}
+
 // The bindless slot of 't' seen through 'swizzle': its own view's when that is
-// the swizzle it was made with, else a view made for it (kept with 't').
-uint32_t SlotForSwizzle(HostTexture &t, u32 swizzle) {
-  if (swizzle == t.view_swizzle || !t.texture)
+// the swizzle it was made with, else a view made for it (kept with 't'); asura-nx: 'srgb', an sRGB view (kept
+// under the swizzle with bit 12 set). With srgb false exactly as before.
+uint32_t SlotForSwizzle(HostTexture &t, u32 swizzle, bool srgb = false) {
+  if ((!srgb && swizzle == t.view_swizzle) || !t.texture)
     return t.slot;
+  const u32 key = srgb ? ((swizzle & 0xFFFu) | 0x1000u) : swizzle;
   for (const HostTexture::SwizzleView &v : t.swizzle_views) {
-    if (v.swizzle == swizzle)
+    if (v.swizzle == key)
       return v.slot;
   }
   plume::RenderTextureViewDesc desc = t.view_desc;
+  if (srgb)
+    desc.format = SrgbFormatFor(t.host_format);
   desc.componentMapping = SwizzleMapping(swizzle, t.view_swap_red_blue, t.host_format);
   HostTexture::SwizzleView v;
-  v.swizzle = swizzle;
+  v.swizzle = key;
   v.view = t.texture->createTextureView(desc);
   if (!v.view)
     return t.slot;
@@ -664,6 +697,7 @@ bool Upload(HostTexture &t, const TextureFetch &fetch, bool defer_read) {
   // layer (StackedLayers) repeats its last one.
   const uint32_t slices = is_3d_data ? 1 : t.stacked ? StackedLayers(t) : t.depth;
   const uint32_t bs = t.info.block_size;
+  uint64_t total_upload_bytes = 0;  // deadpool-nx (deadpool_switch_profiler_counters)
   for (uint32_t level = 0; level < t.mip_levels; ++level) {
     const uint32_t w = std::max(1u, t.width >> level);
     const uint32_t h = std::max(1u, t.height >> level);
@@ -697,6 +731,7 @@ bool Upload(HostTexture &t, const TextureFetch &fetch, bool defer_read) {
       UploadAllocation staging = s.uploads[s.frame].Allocate(uint64_t(slice_pitch) * d, 512);
       if (!staging)
         return false;
+      total_upload_bytes += uint64_t(slice_pitch) * d;
       auto *dst = static_cast<uint8_t *>(staging.cpu);
       if (defer_read)
         g_pending_fills.push_back({t.info, fetch, src, blocks_w, blocks_h, d, dst, row_pitch, slice_pitch});
@@ -758,6 +793,7 @@ bool Upload(HostTexture &t, const TextureFetch &fetch, bool defer_read) {
     if (!was_zero)
       ++g_zero_marked;
   }
+  banjo::renut_gpu::NoteWorkloadTexUpload(total_upload_bytes);  // deadpool-nx (deadpool_switch_profiler_counters)
   return true;
 }
 
@@ -768,6 +804,20 @@ uint32_t ExtraLevels(RenderScale scale) {
   return factor > 4.0f ? 3 : factor > 2.0f ? 2 : factor > 1.0f ? 1 : 0;
 }
 
+// asura-nx (v1.0.0): a stacked 2D-array texture over a colour resolve destination's tiled 2D slices ("e.g. UE3
+// FLUTBlender 16x512 -> 16x16x16", the colour-grading LUT) copied from the resolve, layer by layer (StackedResolveSource,
+// CopyStackedResolve); colour targets 32 or less wide and 256 or more tall at 1x (graphics_options.cpp). Off: the texture
+// made from guest memory, as before.
+REXCVAR_DEFINE_BOOL(asura_renut_stacked_resolve_alias, false, "Banjo/Renut",
+                    "From asura-nx: a stacked texture over a colour resolve's tiled slices takes them from the resolve "
+                    "(UE3's colour-grading LUT), and tall 32-wide colour targets stay at 1x. false: as before. Read at "
+                    "start")
+    .lifecycle(::rex::cvar::Lifecycle::kInitOnly);
+inline bool AsuraStackedResolveAliasOn() {
+  static const bool on = REXCVAR_GET(asura_renut_stacked_resolve_alias);
+  return on;
+}
+
 // swap_red_blue: the content was stored with X and Z exchanged (a guest
 // resolve does that when the destination's X swizzle is not X). 'scale': see
 // HostTexture::scale (content the GPU writes only). host_levels: a color
@@ -776,6 +826,8 @@ uint32_t ExtraLevels(RenderScale scale) {
 bool Create(HostTexture &t, const TextureFetch &fetch, bool render_target,
             plume::RenderFormat rt_format, bool swap_red_blue = false, RenderScale scale = {},
             bool host_levels = false) {
+  const bool own_format =  // asura-nx
+      render_target || (AsuraStackedResolveAliasOn() && rt_format != plume::RenderFormat::UNKNOWN);
   ++g_texture_epoch;  // banjo-nx (CPU proposal 2)
   t.base_page = fetch.BasePage();  // banjo-nx (2026-10-27)
   BumpTextureBindings(t);
@@ -788,7 +840,7 @@ bool Create(HostTexture &t, const TextureFetch &fetch, bool render_target,
   // guest format / host format.
   if (banjo::renut_gpu::DiagFormatsOn()) {
     static std::vector<uint32_t> seen;
-    const plume::RenderFormat host = render_target ? rt_format : t.info.host;  // a resolve destination's: the target's
+    const plume::RenderFormat host = own_format ? rt_format : t.info.host;  // a resolve destination's: the target's
     const uint32_t key = u32(fetch.Format()) << 16 | u32(host) << 1 | (render_target ? 1u : 0u);
     if (seen.size() < 96 && std::find(seen.begin(), seen.end(), key) == seen.end()) {
       seen.push_back(key);
@@ -804,9 +856,9 @@ bool Create(HostTexture &t, const TextureFetch &fetch, bool render_target,
   // No more levels than the size has (GetMaxMipLevels, 0x8263DC20).
   const u32 largest = std::max({width, height, fetch.Dimension() == TextureDimension::Tex3D ? depth : 1u});
   const u32 size_levels = 32 - u32(std::countl_zero(largest));
-  t.mip_levels = render_target ? 1 : std::min(fetch.MaxMipLevel() + 1, size_levels);
+  t.mip_levels = own_format ? 1 : std::min(fetch.MaxMipLevel() + 1, size_levels);
   t.render_target = render_target;
-  plume::RenderFormat format = render_target ? rt_format : t.info.host;
+  plume::RenderFormat format = own_format ? rt_format : t.info.host;
   if (format == plume::RenderFormat::UNKNOWN)
     return false;
 
@@ -856,7 +908,7 @@ bool Create(HostTexture &t, const TextureFetch &fetch, bool render_target,
     t.depth = 1;
     break;
   }
-  if (render_target)
+  if (render_target || (own_format && IsDeko3D() && t.stacked))  // asura-nx
     desc.flags |= plume::RenderTextureFlag::RENDER_TARGET;
   // banjo-nx (2026-10-20): whether the game uses stacked (2D array) or volume textures at all, once each (SASRT's
   // deko3d findings: plume's 2D view of a 2D array, and 3D images; docs/deko3d-port-faq.md).
@@ -935,6 +987,14 @@ void Retire(HostTexture &t) {
   t.level0_slot = UINT32_MAX;
   Video::RetireLocked(std::move(t.level0_view));
   Video::RetireLocked(std::move(t.copy_framebuffer));  // banjo-nx (2026-10-18)
+  if (!t.stacked_layer_framebuffers.empty() || !t.stacked_layer_views.empty()) [[unlikely]] {  // asura-nx
+    for (auto &fb : t.stacked_layer_framebuffers)
+      Video::RetireLocked(std::move(fb));
+    t.stacked_layer_framebuffers.clear();
+    for (auto &lv : t.stacked_layer_views)
+      Video::RetireLocked(std::move(lv));
+    t.stacked_layer_views.clear();
+  }
   Video::RetireLocked(std::move(t.view));
   // blur-nx (2026-11-17, audit #4, blur_renut_texture_pool): the image Create made for it, back to the pool.
   if (t.texture && t.pool_texture == t.texture.get())
@@ -1131,6 +1191,182 @@ void CopyDepthWords(HostTexture &t, HostTexture &source) {
   t.uploaded = true;
 }
 
+// asura-nx (asura_renut_stacked_resolve_alias):
+// Color resolve destination whose tiled 2D slices a stacked 2D array texture
+// aliases at the same physical base page (e.g. UE3 FLUTBlender 16x512 ->
+// 16x16x16).
+HostTexture *StackedResolveSource(const TextureFetch &fetch) {
+  if (fetch.Dimension() != TextureDimension::Tex2D || !fetch.Stacked() ||
+      !fetch.Tiled() || g_resolve_targets.empty())
+    return nullptr;
+  auto it = g_resolve_targets.find(fetch.BasePage());
+  if (it == g_resolve_targets.end() || !it->second)
+    return nullptr;
+  HostTexture *source = it->second;
+  if (!source->texture || source->dimension != TextureDimension::Tex2D ||
+      source->stacked || source->words ||
+      source->guest_format != fetch.Format())
+    return nullptr;
+  u32 width, height, depth;
+  fetch.Size(width, height, depth);
+  const u32 slice_stride = (height + 31u) & ~31u;
+  if (width == 0 || height == 0 || depth < 2 || source->width != width ||
+      source->height < slice_stride * (depth - 1u) + height)
+    return nullptr;
+  return source;
+}
+
+uint32_t Level0Slot(HostTexture &t);
+
+void CopyStackedResolve(HostTexture &t, HostTexture &source) {
+  if (source.color_resolve_seq == 0 ||
+      t.copied_resolve == source.color_resolve_seq)
+    return;
+  FlushResolveMipsLocked(source);
+  auto &s = State();
+  plume::RenderCommandList *cmd = s.command_list;
+  if (!cmd || !t.texture || !source.texture)
+    return;
+  const uint32_t slice_stride = (t.height + 31u) & ~31u;
+  const uint32_t copy_w =
+      std::min({t.scale.Size(t.width), t.alloc_width, source.alloc_width});
+  const uint32_t copy_h = std::min(t.scale.Size(t.height), t.alloc_height);
+  const uint32_t layers = StackedLayers(t);
+  if (IsDeko3D() && s.resolve_copy_ps && s.present_vs && t.stacked &&
+      t.host_format == source.host_format && layers > 0 && copy_w > 0 &&
+      copy_h > 0) {
+    auto &pipeline = s.resolve_copy_pipelines[uint32_t(t.host_format)];
+    if (!pipeline) {
+      plume::RenderGraphicsPipelineDesc pdesc;
+      pdesc.pipelineLayout = s.utility_layout.get();
+      pdesc.vertexShader = s.present_vs.get();
+      pdesc.pixelShader = s.resolve_copy_ps.get();
+      pdesc.primitiveTopology = plume::RenderPrimitiveTopology::TRIANGLE_LIST;
+      pdesc.cullMode = plume::RenderCullMode::NONE;
+      pdesc.renderTargetCount = 1;
+      pdesc.renderTargetFormat[0] = t.host_format;
+      pdesc.renderTargetBlend[0] = plume::RenderBlendDesc::Copy();
+      pdesc.depthTargetFormat = plume::RenderFormat::UNKNOWN;
+      pipeline = s.device->createGraphicsPipeline(pdesc);
+      if (pipeline)
+        pipeline->setName("renut resolve copy");
+    }
+    const uint32_t source_slot = Level0Slot(source);
+    bool ready = pipeline != nullptr && source_slot != kInvalidDescriptor;
+    if (ready && t.stacked_layer_framebuffers.size() < layers) {
+      t.stacked_layer_views.reserve(layers);
+      t.stacked_layer_framebuffers.reserve(layers);
+      for (uint32_t z = uint32_t(t.stacked_layer_framebuffers.size());
+           z < layers; ++z) {
+        plume::RenderTextureViewDesc vdesc =
+            plume::RenderTextureViewDesc::Texture2D(t.host_format);
+        vdesc.mipSlice = 0;
+        vdesc.mipLevels = 1;
+        vdesc.arrayIndex = z;
+        vdesc.arraySize = 1;
+        auto lv = t.texture->createTextureView(vdesc);
+        if (!lv) {
+          ready = false;
+          break;
+        }
+        const plume::RenderTexture *att = t.texture.get();
+        const plume::RenderTextureView *att_view = lv.get();
+        plume::RenderFramebufferDesc fbdesc(&att, 1);
+        fbdesc.colorAttachmentViews = &att_view;
+        auto fb = s.device->createFramebuffer(fbdesc);
+        if (!fb) {
+          Video::RetireLocked(std::move(lv));
+          ready = false;
+          break;
+        }
+        t.stacked_layer_views.push_back(std::move(lv));
+        t.stacked_layer_framebuffers.push_back(std::move(fb));
+      }
+    }
+    if (ready) {
+      static uint32_t kCopyStackedLabel = UINT32_MAX;
+      const bool timed = gpu_profile::Timed();
+      if (timed) {
+        if (kCopyStackedLabel == UINT32_MAX)
+          kCopyStackedLabel = gpu_profile::Label("CopyStackedResolve (3D)");
+        gpu_profile::Mark(s, kCopyStackedLabel);
+      }
+      TransitionTextureLocked(&source, plume::RenderTextureLayout::SHADER_READ);
+      TransitionTextureLocked(&t, plume::RenderTextureLayout::COLOR_WRITE);
+      bool bound = false;
+      for (uint32_t z = 0; z < layers; ++z) {
+        const uint32_t src_z = std::min(z, t.depth - 1u);
+        const uint32_t src_y = source.scale.Size(src_z * slice_stride);
+        if (src_y >= source.alloc_height)
+          break;
+        const uint32_t h = std::min(copy_h, source.alloc_height - src_y);
+        if (h == 0)
+          break;
+        cmd->setFramebuffer(t.stacked_layer_framebuffers[z].get());
+        if (!bound) {
+          cmd->setViewports(plume::RenderViewport(
+              0.0f, 0.0f, float(t.alloc_width), float(t.alloc_height)));
+          cmd->setGraphicsPipelineLayout(s.utility_layout.get());
+          cmd->setPipeline(pipeline.get());
+          cmd->setGraphicsDescriptorSet(s.texture_set.get(), 0);
+          cmd->setGraphicsDescriptorSet(s.sampler_set.get(), 1);
+          bound = true;
+        }
+        cmd->setScissors(plume::RenderRect(0, 0, int32_t(copy_w), int32_t(h)));
+        UtilityPush push{};
+        push.scale[0] = 1.0f;
+        push.scale[1] = 1.0f;
+        push.translate[0] = 0.0f;
+        push.translate[1] = float(src_y);
+        push.texture_index = source_slot;
+        push.sampler_index = kPointClampSamplerSlot;
+        cmd->setGraphicsPushConstants(0, &push, 0, sizeof(push));
+        if (timed)
+          gpu_profile::CountDraw(s, kCopyStackedLabel);
+        cmd->drawInstanced(3, 1, 0, 0);
+      }
+      TransitionTextureLocked(&t, plume::RenderTextureLayout::SHADER_READ);
+      if (bound)
+        ForgetBoundGraphicsStateLocked();
+      t.copied_resolve = source.color_resolve_seq;
+      t.uploaded = true;
+      static uint32_t logged_3d = 0;
+      if (logged_3d++ < 8)
+        RGPU_INFO("[renut] copied {} slices ({}x{}, stride {}) via 3D draw "
+                  "from 2D resolve {:08X} ({}x{}) into stacked {:08X}",
+                  t.depth, copy_w, copy_h, slice_stride, source.guest_va,
+                  source.width, source.height, t.guest_va);
+      return;
+    }
+  }
+  TransitionTextureLocked(&source, plume::RenderTextureLayout::COPY_SOURCE);
+  TransitionTextureLocked(&t, plume::RenderTextureLayout::COPY_DEST);
+  for (uint32_t z = 0; z < layers; ++z) {
+    const uint32_t src_z = std::min(z, t.depth - 1u);
+    const uint32_t src_y = source.scale.Size(src_z * slice_stride);
+    if (src_y >= source.alloc_height)
+      break;
+    const uint32_t h = std::min(copy_h, source.alloc_height - src_y);
+    if (h == 0 || copy_w == 0)
+      break;
+    const plume::RenderBox box(0, int32_t(src_y), int32_t(copy_w),
+                               int32_t(src_y + h));
+    cmd->copyTextureRegion(
+        plume::RenderTextureCopyLocation::Subresource(t.texture.get(), 0, z),
+        plume::RenderTextureCopyLocation::Subresource(source.texture.get(), 0,
+                                                      0),
+        0, 0, 0, &box);
+  }
+  t.copied_resolve = source.color_resolve_seq;
+  t.uploaded = true;
+  static uint32_t logged = 0;
+  if (logged++ < 8)
+    RGPU_INFO("[renut] copied {} slices ({}x{}, stride {}) from 2D resolve "
+              "{:08X} ({}x{}) into stacked {:08X}",
+              t.depth, copy_w, copy_h, slice_stride, source.guest_va,
+              source.width, source.height, t.guest_va);
+}
+
 // blur-nx (2026-11-10, port 76; its key 212: blur_renut_resolve_keep_dest): colour formats a converting draw writes and
 // reads exactly (render/draw.cpp has the same list). renut-ultimate (port 76): with R10G10B10A2_UNORM, 2_10_10_10's host
 // format since port 75 (renut_format_10bit_exact; R16G16B16A16_UNORM, in blur-nx's list, before it).
@@ -1147,6 +1383,10 @@ bool ConvertibleResolveFormat(plume::RenderFormat f) {
   case plume::RenderFormat::R32_FLOAT:
   case plume::RenderFormat::R32G32_FLOAT:
     return true;
+  case plume::RenderFormat::R11G11B10_FLOAT: {  // asura-nx (asura_renut_fixed16_bias, draw.cpp)
+    static const bool on = REXCVAR_QUERY(bool, asura_renut_fixed16_bias);
+    return on;
+  }
   default:
     return false;
   }
@@ -2107,7 +2347,17 @@ TextureBinding BindTextureLocked(u32 texture_va, const TextureFetch &device_fetc
     if (fx)
       fx->depth_source = true;  // banjo-nx (2026-10-19, render-thread proposal 3)
   }
-  const RenderScale scale = depth_source ? depth_source->scale : RenderScale{};
+  // asura-nx (asura_renut_stacked_resolve_alias): a stacked 2D array over a colour resolve destination's tiled 2D
+  // slices (UE3's colour-grading LUT: a 16x512 resolve sampled as 16x16x16) is copied from the resolve, layer by
+  // layer. None with the key off: everything below as before.
+  HostTexture *stacked_source = AsuraStackedResolveAliasOn() && !depth_source && !(slot && slot->gpu_written)
+                                    ? StackedResolveSource(fetch)
+                                    : nullptr;
+  if (stacked_source)
+    stacked_source->has_stacked_alias = true;
+  const RenderScale scale = depth_source     ? depth_source->scale
+                            : stacked_source ? stacked_source->scale
+                                             : RenderScale{};
   if (slot && !slot->gpu_written && slot->scale != scale) {
     Retire(*slot);
     slot.reset();
@@ -2129,11 +2379,18 @@ TextureBinding BindTextureLocked(u32 texture_va, const TextureFetch &device_fetc
     Retire(*slot);
     slot.reset();
   }
+  if (stacked_source && slot && !slot->gpu_written &&  // asura-nx
+      (slot->host_format != stacked_source->host_format ||
+       slot->view_swap_red_blue != stacked_source->view_swap_red_blue || slot->mip_levels != 1 ||
+       slot->alloc_width != scale.Size(slot->width) || slot->alloc_height != scale.Size(slot->height))) {
+    Retire(*slot);
+    slot.reset();
+  }
   if (!slot) {
     // banjo-nx (2026-10-18, the colour flashes): memory a resolve wrote, sampled as other data than the resolve's
     // (ResolvedAlias said no) and not as its depth words: this texture is made from guest memory, which only has what
     // the CPU wrote there.
-    if (!depth_source) {
+    if (!depth_source && !stacked_source) {
       auto it = g_resolve_targets.find(fetch.BasePage());
       if (it != g_resolve_targets.end() && it->second && it->second->texture) {
         static uint32_t logged = 0;
@@ -2148,7 +2405,8 @@ TextureBinding BindTextureLocked(u32 texture_va, const TextureFetch &device_fetc
     slot = std::make_unique<HostTexture>();
     slot->guest_va = texture_va;
     std::memcpy(slot->desc, desc, sizeof(desc));
-    if (!Create(*slot, fetch, false, plume::RenderFormat::UNKNOWN, false, scale)) {
+    if (!Create(*slot, fetch, false, stacked_source ? stacked_source->host_format : plume::RenderFormat::UNKNOWN,
+                stacked_source ? stacked_source->view_swap_red_blue : false, scale)) {
       static uint32_t logged = 0;
       if (logged++ < 16) {
         RGPU_WARN("Texture {:08X}: format {} {}x{}x{} not supported", texture_va,
@@ -2199,6 +2457,8 @@ TextureBinding BindTextureLocked(u32 texture_va, const TextureFetch &device_fetc
                 depth_source->guest_va);
     }
     CopyDepthWords(t, *depth_source);
+  } else if (stacked_source && !t.gpu_written) {
+    CopyStackedResolve(t, *stacked_source);  // asura-nx
   } else if (!t.gpu_written && t.checked_frame != g_frame) {
     t.checked_frame = g_frame;
     if (!fetch.Tiled()) {
@@ -2259,16 +2519,20 @@ TextureBinding BindTextureLocked(u32 texture_va, const TextureFetch &device_fetc
   if (fx) {
     fx->transition[0] = &t;
     fx->float_sampled = t.words != nullptr;
-    fx->slot_texture = !depth_source;  // banjo-nx (2026-10-27): RefreshBindingLocked's
+    fx->slot_texture = !depth_source && !stacked_source;  // banjo-nx (2026-10-27): RefreshBindingLocked's
   }
   binding.dimension = t.dimension;
-  binding.slot = SlotForSwizzle(t, swizzle);
+  const bool want_srgb = !(t.handed_from || t.held_current) && WantHardwareSrgb(fetch, t.host_format);  // asura-nx
+  binding.slot = SlotForSwizzle(t, swizzle, want_srgb);
+  binding.hw_srgb = want_srgb && binding.slot != t.slot;
   // banjo-nx (2026-10-19, banjo_deko3d_depth_handover): its content where it is.
   if (t.handed_from || t.held_current) {
     const uint32_t handed = DepthHandOverSlotLocked(
         t, SwizzleMapping(swizzle, t.view_swap_red_blue, t.host_format), fx);
-    if (handed != UINT32_MAX)
+    if (handed != UINT32_MAX) {
       binding.slot = handed;
+      binding.hw_srgb = false;
+    }
   }
   binding.stacked = t.stacked;
   binding.scale = t.scale;
@@ -2892,5 +3156,43 @@ uint32_t SamplerSlotUncached(const TextureFetch &fetch, RenderScale lod_scale) {
 }
 
 } // namespace
+
+// S4ep2-XBLA-nx (s4ep2_frame_capture): the texture that owns a bindless slot, and what the slot shows of it (draw.cpp's
+// capture names every sampled slot by its owner). A walk over every texture: a capture frame only.
+HostTexture *S4TextureBySlotLocked(uint32_t slot, const char **what) {
+  for (auto &[va, t] : g_textures) {
+    if (!t)
+      continue;
+    if (t->slot == slot) {
+      *what = "texture";
+      return t.get();
+    }
+    if (t->level0_slot == slot) {
+      *what = "texture level 0 view";
+      return t.get();
+    }
+    for (const auto &v : t->swizzle_views)
+      if (v.slot == slot) {
+        *what = "texture swizzle view";
+        return t.get();
+      }
+    for (const auto &v : t->words_views)
+      if (v.slot == slot) {
+        *what = "depth words view";
+        return t.get();
+      }
+    if (t->words && t->words->slot == slot) {
+      *what = "depth words";
+      return t.get();
+    }
+  }
+  return nullptr;
+}
+
+// The resolve destination a texture header's memory is (by its base page), for the capture's after-resolve image.
+HostTexture *S4ResolveTargetByPageLocked(uint32_t base_page) {
+  auto it = g_resolve_targets.find(base_page);
+  return it != g_resolve_targets.end() ? it->second : nullptr;
+}
 
 } // namespace renut::gpu

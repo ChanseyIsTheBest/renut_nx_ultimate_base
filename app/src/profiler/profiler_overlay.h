@@ -12,12 +12,18 @@
 #include <string>
 
 #include <rex/cvar.h>
+#include <rex/platform.h>
 #include <rex/ui/imgui_dialog.h>
 #include <rex/ui/keybinds.h>
 
 #include "imgui.h"
 #include "renut_engine/overlays/app_imgui.h"  // renut-ultimate (port 66)
+#include "renut_engine/perf/frame_stats.h"
 #include "profiler/profiler.h"
+#if REX_PLATFORM_SWITCH
+#include "profiler/switch_cpu_profiler.h"
+extern "C" bool RexSwitchPerfStacksActive(void);
+#endif
 
 REXCVAR_DECLARE(bool, banjo_show_profiler);
 
@@ -93,6 +99,64 @@ class ProfilerOverlayDialog : public rex::ui::ImGuiDialog {
     }
     ImGui::End();
     if (!open) rex::cvar::SetFlagByName("banjo_show_profiler", "false");
+
+    // Bottom-left detailed frame pacing / vblanks / process CPU / waits panel (NFSMW-NX / LMNX style)
+    ImGui::SetNextWindowSize(ImVec2(680.0f, 0.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(20.0f, std::max(20.0f, io.DisplaySize.y - 315.0f)), ImGuiCond_FirstUseEver);
+    bool pacing_open = true;
+    if (ImGui::Begin("Profiler (Renut)", &pacing_open)) {
+      if (io.DeltaTime > 0.0f) pacing_age_ += io.DeltaTime;
+      if (pacing_age_ >= 0.25f) {
+        pacing_age_ = 0.0f;
+        last_pacing_ = renut::frame_stats::GetPacingSnapshot();
+      }
+      const auto& p = last_pacing_;
+      ImGui::Text("Frame pacing (last %d game frames): best %.1f ms, worst %.1f ms, median %.1f ms",
+                  p.count, p.best_ms, p.worst_ms, p.median_ms);
+      ImGui::Text("  average %.1f FPS, 1%% low %.1f FPS (average of the %d slowest), stutters (> 2x median): %d",
+                  p.avg_fps, p.low1_fps, p.low1_count, p.stutters);
+      ImGui::Text("  vblanks per frame:  1: %3d%%   2: %3d%%   3: %3d%%   4: %3d%%   5+: %3d%%",
+                  p.vblank_pct[0], p.vblank_pct[1], p.vblank_pct[2], p.vblank_pct[3], p.vblank_pct[4]);
+#if REX_PLATFORM_SWITCH
+      if (io.DeltaTime > 0.0f) cpu_age_ += io.DeltaTime;
+      if (cpu_age_ >= 1.0f || last_sys_tick_ == 0) {
+        cpu_age_ = 0.0f;
+        uint64_t now_tick;
+        __asm__ __volatile__("mrs %x0, cntpct_el0" : "=r"(now_tick));
+        const uint64_t cur_ticks = os::switch_cpu_profiler::TotalThreadTicks();
+        if (last_sys_tick_ != 0 && now_tick > last_sys_tick_ && cur_ticks >= last_cpu_ticks_) {
+          process_cpu_one_core_pct_ = double(cur_ticks - last_cpu_ticks_) * 100.0 / double(now_tick - last_sys_tick_);
+        }
+        last_sys_tick_ = now_tick;
+        last_cpu_ticks_ = cur_ticks;
+      }
+      ImGui::Text("Process CPU (all threads): %.0f%% of one core, %.0f%% of the four",
+                  process_cpu_one_core_pct_, process_cpu_one_core_pct_ / 4.0);
+#endif
+      ImGui::Separator();
+      auto row = [](const char* label, const ImVec4& col, double cur_ms, double avg_ms) {
+        ImGui::TextColored(col, "%-34s", label);
+        ImGui::SameLine();
+        ImGui::Text("%6.2f ms  (avg %6.2f ms)", cur_ms, avg_ms);
+      };
+      row("Game thread CPU (active)",   ImVec4(0.35f, 0.75f, 1.00f, 1.0f), p.cur_cpu_active_ms,  p.avg_cpu_active_ms);
+      row("Game waiting for fences",    ImVec4(0.70f, 0.55f, 1.00f, 1.0f), p.cur_wait_fence_ms,  p.avg_wait_fence_ms);
+      row("Game waiting for Swap (ahead)", ImVec4(1.00f, 0.65f, 0.25f, 1.0f), p.cur_wait_swap_ms, p.avg_wait_swap_ms);
+      row("Game waiting for display",   ImVec4(0.65f, 0.65f, 0.65f, 1.0f), p.cur_wait_display_ms, p.avg_wait_display_ms);
+      row("Game waiting for limiter",   ImVec4(0.55f, 0.55f, 0.55f, 1.0f), p.cur_wait_limiter_ms, p.avg_wait_limiter_ms);
+      row("Render thread (Renut)",      ImVec4(1.00f, 0.90f, 0.30f, 1.0f), p.cur_render_ms,      p.avg_render_ms);
+      row("GPU Frame",                  ImVec4(0.40f, 1.00f, 0.40f, 1.0f), p.cur_gpu_ms,         p.avg_gpu_ms);
+      ImGui::Separator();
+#if REX_PLATFORM_SWITCH
+      ImGui::Text("Hitches (> 45 ms): %d   |   Stack profiler (perfil_pilas.flag): %s",
+                  p.hitches_45ms, RexSwitchPerfStacksActive() ? "ON" : "off");
+#else
+      ImGui::Text("Hitches (> 45 ms): %d   |   Stack profiler (perfil_pilas.flag): n/a",
+                  p.hitches_45ms);
+#endif
+    }
+    ImGui::End();
+    if (!pacing_open) rex::cvar::SetFlagByName("banjo_show_profiler", "false");
   }
 
  private:
@@ -148,13 +212,12 @@ class ProfilerOverlayDialog : public rex::ui::ImGuiDialog {
     for (size_t s = 0; s < kSeriesCount; ++s) {
       if (!banjo::profiler::HasValue(static_cast<banjo::profiler::Series>(s))) continue;
       const ImU32 col = ImGui::ColorConvertFloat4ToU32(Color(s));
-      ImVec2 prev{};
+      ImVec2 pts[kHistoryCount];
       for (size_t i = 0; i < kHistoryCount; ++i) {
         const float v = std::min(history_[s][(index_ + i) % kHistoryCount], top);
-        const ImVec2 pt(p0.x + size.x * float(i) / float(kHistoryCount - 1), p1.y - (v / top) * size.y);
-        if (i) dl->AddLine(prev, pt, col, 1.5f);
-        prev = pt;
+        pts[i] = ImVec2(p0.x + size.x * float(i) / float(kHistoryCount - 1), p1.y - (v / top) * size.y);
       }
+      dl->AddPolyline(pts, int(kHistoryCount), col, 0, 1.5f);
     }
     ImGui::Dummy(size);
   }
@@ -163,4 +226,10 @@ class ProfilerOverlayDialog : public rex::ui::ImGuiDialog {
   size_t index_ = 0;
   std::string last_threads_;
   float threads_age_ = 0.0f;
+  float cpu_age_ = 0.0f;
+  float pacing_age_ = 1.0f;
+  renut::frame_stats::PacingSnapshot last_pacing_{};
+  uint64_t last_sys_tick_ = 0;
+  uint64_t last_cpu_ticks_ = 0;
+  double process_cpu_one_core_pct_ = 0.0;
 };

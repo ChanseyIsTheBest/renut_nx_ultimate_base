@@ -37,6 +37,7 @@
 #include "renut_engine/gpu/backend/render_thread.h"
 #include "renut_engine/gpu/backend/video_internal.h"
 #include "renut_engine/gpu/banjo_renut_tuning.h"
+#include "renut_engine/gpu/ultimate.h"  // ilomilo-nx (2026-11-25): IlomiloGsNoClipOn
 #include "renut_engine/gpu/banjo_renut_record.h"  // banjo-nx (package 28b): banjo_renut_record_worker
 #include "renut_engine/gpu/render/surfaces.h"  // banjo-nx (2026-10-28): NoteGpuFrameForDynamicResolution
 #include <rex/frame_latency.h>  // banjo-nx (2026-10-20): the latency probe's "input -> GPU done"
@@ -53,6 +54,8 @@
 #include "host_shaders/present_vs.spirv.h"
 #include "host_shaders/rectangle_list_gs.spirv.h"
 #include "host_shaders/point_sprite_gs.spirv.h"
+#include "host_shaders/rectangle_list_noclip_gs.spirv.h"  // ilomilo-nx (2026-11-25)
+#include "host_shaders/point_sprite_noclip_gs.spirv.h"    // ilomilo-nx (2026-11-25)
 #include "host_shaders/stream_convert_cs.spirv.h"
 #include "host_shaders/fetch_copy_cs.spirv.h"  // sasrt-nx (2026-11-08)
 #include "host_shaders/texel_readback_cs.spirv.h"  // sasrt-nx (2026-11-08)
@@ -60,6 +63,10 @@
 #include "host_shaders/texture_mip_ps.spirv.h"
 #include "host_shaders/resolve_copy_ps.spirv.h"
 #include "host_shaders/view_fp10_encode_ps.spirv.h"  // halo3-nx
+#include "host_shaders/view_fp10_encode_1x_ps.spirv.h"  // asura-nx
+#include "host_shaders/view_fp10_decode_ps.spirv.h"  // asura-nx
+#include "host_shaders/view_fp10_decode_m0_ps.spirv.h"  // asura-nx
+#include "host_shaders/s4ep2_view_bits_ps.spirv.h"  // S4ep2-XBLA-nx
 #include "host_shaders/sample_grid_resolve_ps.spirv.h"  // blur-nx (port 76)
 #include "host_shaders/edram_inherit_ps.spirv.h"  // blur-nx (port 76)
 #include "host_shaders/edram_inherit_src_ms_ps.spirv.h"  // blur-nx (port 76)
@@ -74,6 +81,8 @@
 #include "host_shaders/present_vs.deko3d.h"
 #include "host_shaders/rectangle_list_gs.deko3d.h"
 #include "host_shaders/point_sprite_gs.deko3d.h"
+#include "host_shaders/rectangle_list_noclip_gs.deko3d.h"  // ilomilo-nx (2026-11-25)
+#include "host_shaders/point_sprite_noclip_gs.deko3d.h"    // ilomilo-nx (2026-11-25)
 #include "host_shaders/stream_convert_cs.deko3d.h"
 #include "host_shaders/fetch_copy_cs.deko3d.h"  // sasrt-nx (2026-11-08)
 #include "host_shaders/texel_readback_cs.deko3d.h"  // sasrt-nx (2026-11-08)
@@ -81,6 +90,10 @@
 #include "host_shaders/texture_mip_ps.deko3d.h"
 #include "host_shaders/resolve_copy_ps.deko3d.h"
 #include "host_shaders/view_fp10_encode_ps.deko3d.h"  // halo3-nx
+#include "host_shaders/view_fp10_encode_1x_ps.deko3d.h"  // asura-nx
+#include "host_shaders/view_fp10_decode_ps.deko3d.h"  // asura-nx
+#include "host_shaders/view_fp10_decode_m0_ps.deko3d.h"  // asura-nx
+#include "host_shaders/s4ep2_view_bits_ps.deko3d.h"  // S4ep2-XBLA-nx
 #include "host_shaders/sample_grid_resolve_ps.deko3d.h"  // blur-nx (port 76)
 #include "host_shaders/edram_inherit_ps.deko3d.h"  // blur-nx (port 76)
 #include "host_shaders/edram_inherit_src_ms_ps.deko3d.h"  // blur-nx (port 76)
@@ -96,6 +109,8 @@
 #include "host_shaders/present_vs.dxil.h"
 #include "host_shaders/rectangle_list_gs.dxil.h"
 #include "host_shaders/point_sprite_gs.dxil.h"
+#include "host_shaders/rectangle_list_noclip_gs.dxil.h"  // ilomilo-nx (2026-11-25)
+#include "host_shaders/point_sprite_noclip_gs.dxil.h"    // ilomilo-nx (2026-11-25)
 #include "host_shaders/stream_convert_cs.dxil.h"
 #include "host_shaders/fetch_copy_cs.dxil.h"  // sasrt-nx (2026-11-08)
 #include "host_shaders/texel_readback_cs.dxil.h"  // sasrt-nx (2026-11-08)
@@ -103,6 +118,10 @@
 #include "host_shaders/texture_mip_ps.dxil.h"
 #include "host_shaders/resolve_copy_ps.dxil.h"
 #include "host_shaders/view_fp10_encode_ps.dxil.h"  // halo3-nx
+#include "host_shaders/view_fp10_encode_1x_ps.dxil.h"  // asura-nx
+#include "host_shaders/view_fp10_decode_ps.dxil.h"  // asura-nx
+#include "host_shaders/view_fp10_decode_m0_ps.dxil.h"  // asura-nx
+#include "host_shaders/s4ep2_view_bits_ps.dxil.h"  // S4ep2-XBLA-nx
 #include "host_shaders/sample_grid_resolve_ps.dxil.h"  // blur-nx (port 76)
 #include "host_shaders/edram_inherit_ps.dxil.h"  // blur-nx (port 76)
 #include "host_shaders/edram_inherit_src_ms_ps.dxil.h"  // blur-nx (port 76)
@@ -128,6 +147,21 @@ REXCVAR_DEFINE_BOOL(sasrt_ring_cleaner_take_over, true, "Banjo/Enhancements",
                     "cache clean by address, repeatable) instead of waiting for the thread, which runs at the lowest "
                     "priority on the system core and was kept off it for 280-350 ms at SASRT's race start")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// asura-nx (v1.0.0), two keys, off by default:
+// asura_renut_null_texel_opaque: "Xbox 360 D3D unbound texture reads opaque black (0, 0, 0, 1); alpha 0 kills UE3 shadow
+// frustum stencil alpha-test" (the null textures' texel, made once at the start). Not verified on hardware.
+// asura_renut_set_texture_null_clears_fetch (d3d/d3d_native_state.cpp): SetTexture(NULL) clears the slot's fetch
+// constant type, so the slot reads as unbound. It undoes rr6_fetch_over_pointer's rule (rr6-nx found that the GPU keeps
+// sampling the fetch constant SetTexture(NULL) leaves as it was) for the games that turn it on.
+REXCVAR_DEFINE_BOOL(asura_renut_null_texel_opaque, false, "Banjo/Renut",
+                    "From asura-nx: an unbound texture reads (0, 0, 0, 1), not (0, 0, 0, 0). false: as before. Read at "
+                    "start")
+    .lifecycle(::rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(asura_renut_set_texture_null_clears_fetch, false, "Banjo/Renut",
+                    "From asura-nx: SetTexture(NULL) clears the slot's fetch constant type (an unbound slot); this "
+                    "overrides rr6_fetch_over_pointer for SetTexture(NULL). false: the fetch constant left as it was, as "
+                    "before. Read at start")
+    .lifecycle(::rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(pacman_renut_double_buffer, false, "PacMan/Renderer",
                     "Renut's renderer: a swapchain of 2 images instead of 3 (input latency: a finished frame is shown at "
                     "the next refresh instead of queueing behind one already waiting). A frame that misses a refresh then "
@@ -135,6 +169,14 @@ REXCVAR_DEFINE_BOOL(pacman_renut_double_buffer, false, "PacMan/Renderer",
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 namespace renut::gpu {
+
+// S4ep2-XBLA-nx (s4ep2_frame_capture): the texture each bindless slot was last given (render/draw.cpp reads a sampled
+// slot's image from it); kept only with the key on (a freed slot is cleared in DrainSlot).
+plume::RenderTexture *g_s4_slot_textures[kTextureDescriptorCount] = {};
+static bool S4SlotTableOn() {
+  static const bool on = REXCVAR_QUERY(bool, s4ep2_frame_capture);
+  return on;
+}
 
 // banjo-nx (2026-10-19, CPU proposal 5): State() is inline (video.h): a load of this pointer, set by the first call.
 VideoState *g_state = nullptr;
@@ -273,6 +315,8 @@ bool InitializeNullTextures(VideoState &s) {
   if (!zero)
     return false;
   std::memset(zero.cpu, 0, 256);
+  if (REXCVAR_GET(asura_renut_null_texel_opaque))  // asura-nx: (0, 0, 0, 1)
+    static_cast<uint8_t *>(zero.cpu)[3] = 0xFF;
   plume::RenderCommandList *cmd = s.command_list;
   plume::RenderTexture *textures[] = {s.null_texture.get(), s.null_texture_3d.get(),
                                       s.null_texture_cube.get()};
@@ -349,6 +393,18 @@ bool BuildDepthResolvePipelines(VideoState &s) {
   s.resolve_copy_ps = CreateHostShader(s.device.get(), RENUT_HOST_SHADER(resolve_copy_ps), "resolve_copy_ps");
   // halo3-nx (2026-11-03): one EDRAM view read through another (SyncColorViewLocked).
   s.view_fp10_encode_ps = CreateHostShader(s.device.get(), RENUT_HOST_SHADER(view_fp10_encode_ps), "view_fp10_encode_ps");
+  // asura-nx: the other 32bpp EDRAM view pairs, only with asura_renut_view_sync_32bpp (draw.cpp).
+  if (REXCVAR_QUERY(bool, asura_renut_view_sync_32bpp)) {
+    s.view_fp10_encode_1x_ps =
+        CreateHostShader(s.device.get(), RENUT_HOST_SHADER(view_fp10_encode_1x_ps), "view_fp10_encode_1x_ps");
+    s.view_fp10_decode_ps =
+        CreateHostShader(s.device.get(), RENUT_HOST_SHADER(view_fp10_decode_ps), "view_fp10_decode_ps");
+    s.view_fp10_decode_m0_ps =
+        CreateHostShader(s.device.get(), RENUT_HOST_SHADER(view_fp10_decode_m0_ps), "view_fp10_decode_m0_ps");
+    // S4ep2-XBLA-nx: the 32_FLOAT pairs too, only with s4ep2_view_sync_32float (draw.cpp).
+    if (REXCVAR_QUERY(bool, s4ep2_view_sync_32float))
+      s.s4ep2_view_bits_ps = CreateHostShader(s.device.get(), RENUT_HOST_SHADER(s4ep2_view_bits_ps), "s4ep2_view_bits_ps");
+  }
   // blur-nx (2026-11-10, port 76; its key 216: blur_renut_sample_grid_resolve): a multisampled view resolved from its
   // sample grid's 1x target. Optional: without it the view's own target is resolved.
   s.sample_grid_resolve_ps =
@@ -420,6 +476,13 @@ void BuildRectangleListShader(VideoState &s) {
       CreateHostShader(s.device.get(), RENUT_HOST_SHADER(rectangle_list_gs), "rectangle_list_gs");
   s.point_sprite_gs =
       CreateHostShader(s.device.get(), RENUT_HOST_SHADER(point_sprite_gs), "point_sprite_gs");
+  // ilomilo-nx (2026-11-25, ilomilo_renut_gs_no_clip): see shaders/host/rectangle_list_gs.hlsl.
+  if (banjo::renut_gpu::IlomiloGsNoClipOn()) {
+    s.rectangle_list_noclip_gs = CreateHostShader(s.device.get(), RENUT_HOST_SHADER(rectangle_list_noclip_gs),
+                                                  "rectangle_list_noclip_gs");
+    s.point_sprite_noclip_gs =
+        CreateHostShader(s.device.get(), RENUT_HOST_SHADER(point_sprite_noclip_gs), "point_sprite_noclip_gs");
+  }
 }
 
 // See shaders/host/stream_convert_cs.hlsl.
@@ -616,6 +679,8 @@ void DrainSlot(VideoState &s, uint32_t slot) {
   s.memexport_scratch_used[slot] = 0;
   for (uint32_t index : s.retired_texture_slots[slot]) {
     if (index >= kFirstDynamicTextureSlot && index < kTextureDescriptorCount) {
+      if (S4SlotTableOn()) [[unlikely]]
+        g_s4_slot_textures[index] = nullptr;  // S4ep2-XBLA-nx: the frame captures' table
       // banjo-nx: banjo_renut_diag_poison_slots points it at magenta instead.
       const bool poison = s.poison_texture != nullptr;
       s.texture_set->setTexture(index, poison ? s.poison_texture.get() : s.null_texture.get(),
@@ -813,9 +878,19 @@ void StageSubmitCall(const void *a) {
                                   args.signal ? signals : nullptr, args.signal ? 1 : 0, args.fence);
 }
 
+// deadpool-nx (2026-11-17, its checkpoint 8c90b5ca): PublishAll.
+REXCVAR_DEFINE_BOOL(deadpool_publish_all_direct, true, "Banjo/Enhancements",
+                    "deadpool-nx (exact): at a submit the upload ranges written since the last hand-off are cleaned by "
+                    "the submitting thread (UploadRing::Publish) once the ring cleaner has the ones handed to it, "
+                    "instead of being queued to the cleaner only to be waited for (RingCleaner::Wait takes queued ranges "
+                    "over anyway): no queue lock, no wake of the cleaner. The same ranges cleaned. false: the base's")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 // Every range written so far is clean (handed to the cleaner and waited for, the rest by Publish).
 void PublishAll(VideoState &s, uint32_t slot) {
-  if (UseRingCleaner()) {
+  static const bool direct = REXCVAR_GET(deadpool_publish_all_direct);
+  if (UseRingCleaner() && direct) {
+    RingCleaner::Instance().Wait(UINT64_MAX);  // deadpool-nx: the handed-off ones; Publish cleans the rest here
+  } else if (UseRingCleaner()) {
     std::vector<UploadRing::Range> ranges;
     s.uploads[slot].HandOff(ranges);
     RingCleaner::Instance().Enqueue(std::move(ranges));
@@ -1050,6 +1125,7 @@ void SubmitAndWaitLocked(VideoState &s) {
   const uint32_t count = s.pending_list ? 2 : 1;
   s.pending_list = nullptr;
   s.queue->executeCommandLists(lists, count, nullptr, 0, nullptr, 0, s.fences[cur].get());
+  banjo::renut_gpu::NoteWorkloadSubmit();  // deadpool-nx (deadpool_switch_profiler_counters)
   {
     render_thread::WaitScope wait;
     s.queue->waitForCommandFence(s.fences[cur].get());
@@ -1091,6 +1167,7 @@ void SubmitAndAdvance(VideoState &s, plume::RenderCommandSemaphore *wait,
     banjo::renut_gpu::record::Hand();
     s.list_open = false;
     s.command_list = nullptr;
+    banjo::renut_gpu::NoteWorkloadSubmit();  // deadpool-nx: the frame's list handed to the command stage's submit
     s.submitted[cur] = true;
     g_slot_swap[cur] = g_presenting_swap;
     g_gpu_done_noted[cur] = g_presenting_swap == 0;
@@ -1114,6 +1191,7 @@ void SubmitAndAdvance(VideoState &s, plume::RenderCommandSemaphore *wait,
     s.queue->executeCommandLists(lists, count, wait ? waits : nullptr, wait ? 1 : 0,
                                  signal ? signals : nullptr, signal ? 1 : 0,
                                  s.fences[cur].get());
+    banjo::renut_gpu::NoteWorkloadSubmit();  // deadpool-nx (deadpool_switch_profiler_counters)
     s.submitted[cur] = true;
     // banjo-nx (2026-10-20, input latency): the guest Swap this frame ends, for the probe's "input -> GPU done".
     g_slot_swap[cur] = g_presenting_swap;
@@ -1362,6 +1440,7 @@ void Video::KickLocked() {
     }
 #endif
     s.queue->executeCommandLists(lists, 1, nullptr, 0, nullptr, 0, fence);
+    banjo::renut_gpu::NoteWorkloadSubmit();  // deadpool-nx (deadpool_switch_profiler_counters)
 #if defined(PLUME_DEKO3D)
     if (fence) {
       t.last_kick[cur] = plume::Deko3DCopyFence(fence);
@@ -1422,6 +1501,7 @@ void Video::KickLocked() {
     }
     const plume::RenderCommandList *lists[] = {s.pending_list};
     s.queue->executeCommandLists(lists, 1, nullptr, 0, nullptr, 0, fence);
+    banjo::renut_gpu::NoteWorkloadSubmit();  // deadpool-nx (deadpool_switch_profiler_counters)
     if (fence) {
       t.last_kick[cur] = plume::Deko3DCopyFence(fence);
       ++t.kick_submits[cur];
@@ -1459,6 +1539,8 @@ void Video::SetTextureSlotLocked(uint32_t slot, plume::RenderTexture *texture,
                                  plume::RenderTextureView *view) {
   if (slot >= kTextureDescriptorCount)
     return;
+  if (S4SlotTableOn()) [[unlikely]]
+    g_s4_slot_textures[slot] = texture;  // S4ep2-XBLA-nx: the frame captures' table
   State().texture_set->setTexture(slot, texture, plume::RenderTextureLayout::SHADER_READ, view);
 }
 

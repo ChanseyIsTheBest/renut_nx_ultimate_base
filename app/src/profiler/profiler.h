@@ -53,4 +53,12 @@ std::string RendererDevice();
 // Per-thread CPU use ("name 12.3%" entries) on the Switch; empty elsewhere.
 std::string ThreadCpuUsage();
 
+// deadpool-nx (v1.0.2): the process's CPU use across all registered Switch threads (updated about once a second).
+struct ProcessCpuUsage {
+  bool valid = false;
+  double pct_one_core = 0.0;
+  double pct_four_cores = 0.0;
+};
+ProcessCpuUsage QueryProcessCpuUsage();
+
 }  // namespace banjo::profiler

@@ -301,6 +301,20 @@ bool Runtime::SetupVfs() {
     REXSYS_WARN("Runtime::SetupVfs: No game_data_root specified, skipping VFS setup");
     return true;
   }
+#if defined(__SWITCH__)
+  {
+    std::string g_str = game_data_root_.string();
+    if (g_str.rfind("sdmc:/", 0) == 0) {
+      game_data_root_ = g_str.substr(5);
+    }
+    if (!update_data_root_.empty()) {
+      std::string u_str = update_data_root_.string();
+      if (u_str.rfind("sdmc:/", 0) == 0) {
+        update_data_root_ = u_str.substr(5);
+      }
+    }
+  }
+#endif
 
   auto abs_game_root = std::filesystem::absolute(game_data_root_);
   if (!std::filesystem::exists(abs_game_root)) {

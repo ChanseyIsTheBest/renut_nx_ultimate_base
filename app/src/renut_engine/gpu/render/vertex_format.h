@@ -89,6 +89,8 @@ struct HostVertexElement {
 struct HostVertexStream {
   bool used = false;
   u32 host_stride = 0;
+  u32 location_mask = 0;       // deadpool-nx: a bit for each element's location in this stream
+  u32 guest_vertex_bytes = 0;  // deadpool-nx: the largest guest_offset + element size of one vertex
   std::vector<HostVertexElement> elements;
 };
 
@@ -119,5 +121,6 @@ void ConvertVertices(const HostVertexElement *elements, u32 element_count, u32 h
                      u32 guest_stride, u32 vertex_count, u32 endian, u8 *host);
 
 const char *UsageSemantic(u8 usage);
+bool VertexInputLocation(u8 usage, u8 usage_index, u32 &location);  // deadpool-nx
 
 } // namespace renut::gpu

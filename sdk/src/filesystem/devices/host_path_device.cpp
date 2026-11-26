@@ -28,6 +28,11 @@
 #include <rex/string/utf8.h>
 
 REXCVAR_DECLARE(bool, vfs_redo_index);
+// deadpool-nx (v1.0.1, 25a2e309): the error_code forms (Horizon's file system throws on an I/O error, port 203).
+REXCVAR_DEFINE_BOOL(deadpool_host_path_device_no_throw, true, "Filesystem",
+                    "deadpool-nx: a host folder's device checks and makes its folder with the error_code forms, so an "
+                    "I/O error is a missing folder, not an exception. false: the throwing forms, as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 namespace rex::filesystem {
 
@@ -76,7 +81,20 @@ HostPathDevice::HostPathDevice(const std::string_view mount_path,
 HostPathDevice::~HostPathDevice() = default;
 
 bool HostPathDevice::Initialize() {
-  if (!std::filesystem::exists(host_path_)) {
+  static const bool no_throw = REXCVAR_GET(deadpool_host_path_device_no_throw);
+  if (no_throw) {
+    std::error_code ec;
+    if (!std::filesystem::exists(host_path_, ec) || ec) {
+      if (!read_only_) {
+        // Create the path.
+        ec.clear();
+        std::filesystem::create_directories(host_path_, ec);
+      } else {
+        REXFS_ERROR("Host path does not exist");
+        return false;
+      }
+    }
+  } else if (!std::filesystem::exists(host_path_)) {
     if (!read_only_) {
       // Create the path.
       std::filesystem::create_directories(host_path_);

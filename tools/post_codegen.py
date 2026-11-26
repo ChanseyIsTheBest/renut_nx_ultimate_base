@@ -222,15 +222,19 @@ def main():
         # step above, so each copy matches the function the build compiles. The list is app/src/cpu/hot/localized.txt;
         # direct_calls.py (above) has already sent the callers of those functions through their hooks.
         # 2026-10-22: and the bulk list (app/src/cpu/hot/localized_bulk.txt, from the console profiles: tools/switch_hot_bulk.py).
-        run(tool('localize_native.py'), '--list', '--bulk')
+        run(tool('localize_native.py'), '--gen', gen, '--list', '--bulk')
         # cpu_aggressive B: the XAudio limiter's copy computes log10 only where the dB value is read (the recompiled
         # original stays as it is: the hook's guard compares the two). Switch back: BANJO_HOT_LAZY_LOG10=OFF
         # (-DBANJO_LAZY_LOG10_ON=0) or the key banjo_cpu_native_sub_82B6A678.
-        run(tool('limiter_lazy_log10.py'), '--hot', os.path.join(gen, 'hot'))
+        if os.path.isfile(os.path.join(gen, 'hot', 'n_82B6A678.h')):
+            run(tool('limiter_lazy_log10.py'), '--hot', os.path.join(gen, 'hot'))
     # cpu_aggressive C: the script interpreters' jump-table dispatch threaded into each handler (computed gotos, GCC
     # cross-jumping off for these functions only). Switch back: REX_SWITCH_THREAD_OFF / REX_SWITCH_GOTO_OFF.
-    run(tool('switch_goto.py'), '--gen', gen, '--thread', '--only',
-        'sub_8299D480,sub_829A75E8,sub_8299E2E8,sub_82C3D4E8,sub_829AA068')
+    init_cpp = gen_file(gen, 'init.cpp')
+    init_text = open(init_cpp, encoding='utf-8', errors='ignore').read() if os.path.isfile(init_cpp) else ''
+    if 'sub_8299D480' in init_text:
+        run(tool('switch_goto.py'), '--gen', gen, '--thread', '--only',
+            'sub_8299D480,sub_829A75E8,sub_8299E2E8,sub_82C3D4E8,sub_829AA068')
     # cpu_aggressive D: proven link-register write-backs (the value ctx.lr already holds) compile to nothing on the
     # Switch; REX_LR_WRITE_SAME_CHECK (PC verify) tests every one. Before r1_local.py (its patterns name ctx.r1).
     proofs = os.path.join(ROOT, 'out', 'cpu_aggressive_proofs')
@@ -291,7 +295,7 @@ def main():
     if old_text != text:
         with open(path, 'w', encoding='utf-8', newline='\n') as f:
             f.write(text)
-    keep_unchanged_times(GEN)
+    keep_unchanged_times(gen)
     print('post_codegen: optimised codegen steps done')
 
 

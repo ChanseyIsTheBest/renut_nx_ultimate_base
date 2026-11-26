@@ -3,7 +3,9 @@
 # a new game, move the save out of out/pc_user first (it changes the menu path; run_pc.ps1's --user_data_root comes first
 # and wins over a second one).
 #   powershell -File tools/run_pc_verify.ps1 [-Seconds 300] [-Name verify1] [-Every 15] [-Script "20:START,24:A"] [-Sticks 240]
-param([int]$Seconds = 300, [string]$Name = "verify1", [int]$Every = 15, [string]$Script = "", [int]$Sticks = 0)
+# -Extra (ilomilo-nx; renut-ultimate port 291): the run's own further keys.
+param([int]$Seconds = 300, [string]$Name = "verify1", [int]$Every = 15, [string]$Script = "", [int]$Sticks = 0,
+      [string]$Extra = "")
 $root = Split-Path -Parent $PSScriptRoot
 # renut-ultimate (2026-11-11, port 78; sasrt-nx's idea 27): the guard runs the copies' logged forms (CMake
 # SASRT_HOT_GUARD_FORMS, ON by default on the PC). A PC build configured without them would check no native copy.
@@ -26,6 +28,7 @@ $extra = "--banjo_cpu_verify=true --banjo_hot_guard_calls=4000 --banjo_hot_guard
          "--katamari_hand_transform_chain_verify=true --katamari_hand_sphere_box=true"
 # renut-ultimate (port 70, 2026-11-10): an empty --input_script= stopped the run at the command line ("1 required TEXT
 # missing"), so the documented command without -Script never started.
+if ($Extra) { $extra += " $Extra" }
 if ($Script) { $extra += " --input_script=$Script" }
 if ($Sticks -gt 0) { $extra += " --input_script_sticks=$Sticks" }
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root "tools\run_pc.ps1") -Seconds $Seconds -Name $Name -Every $Every -Visible -Extra $extra

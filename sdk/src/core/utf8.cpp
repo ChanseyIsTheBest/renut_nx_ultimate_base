@@ -10,72 +10,226 @@
  */
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <locale>
 #include <numeric>
 #include <tuple>
+#include <utility>
 
 #include <rex/logging.h>
 #include <rex/string/utf8.h>
 
-#define UTF_CPP_CPLUSPLUS 201703L
-#include <utf8.h>
-
-namespace utfcpp = utf8;
-
 using citer = std::string_view::const_iterator;
-using utf8_citer = utfcpp::iterator<std::string_view::const_iterator>;
+
+namespace {
+
+inline bool is_utf8_cont(uint8_t b) noexcept {
+  return (b & 0xC0u) == 0x80u;
+}
+
+// Decodes one UTF-8 sequence at [p, end). Never throws: invalid or truncated
+// bytes yield PEP-383 surrogate-escaped 0xDC00 | byte with length 1.
+inline std::pair<uint32_t, std::ptrdiff_t> decode_utf8_at(citer p, citer end) noexcept {
+  if (p >= end) {
+    return {0u, 0};
+  }
+  const uint8_t b0 = static_cast<uint8_t>(*p);
+  if (b0 <= 0x7Fu) {
+    return {uint32_t(b0), 1};
+  }
+  const std::ptrdiff_t avail = end - p;
+  if (b0 >= 0xC2u && b0 <= 0xDFu) {
+    if (avail >= 2) {
+      const uint8_t b1 = static_cast<uint8_t>(p[1]);
+      if (is_utf8_cont(b1)) {
+        const uint32_t cp = ((uint32_t(b0) & 0x1Fu) << 6) | (uint32_t(b1) & 0x3Fu);
+        return {cp, 2};
+      }
+    }
+  } else if (b0 >= 0xE0u && b0 <= 0xEFu) {
+    if (avail >= 3) {
+      const uint8_t b1 = static_cast<uint8_t>(p[1]);
+      const uint8_t b2 = static_cast<uint8_t>(p[2]);
+      if (is_utf8_cont(b1) && is_utf8_cont(b2)) {
+        const uint32_t cp = ((uint32_t(b0) & 0x0Fu) << 12) | ((uint32_t(b1) & 0x3Fu) << 6) |
+                            (uint32_t(b2) & 0x3Fu);
+        if (cp >= 0x800u && !(cp >= 0xD800u && cp <= 0xDFFFu)) {
+          return {cp, 3};
+        }
+      }
+    }
+  } else if (b0 >= 0xF0u && b0 <= 0xF4u) {
+    if (avail >= 4) {
+      const uint8_t b1 = static_cast<uint8_t>(p[1]);
+      const uint8_t b2 = static_cast<uint8_t>(p[2]);
+      const uint8_t b3 = static_cast<uint8_t>(p[3]);
+      if (is_utf8_cont(b1) && is_utf8_cont(b2) && is_utf8_cont(b3)) {
+        const uint32_t cp = ((uint32_t(b0) & 0x07u) << 18) | ((uint32_t(b1) & 0x3Fu) << 12) |
+                            ((uint32_t(b2) & 0x3Fu) << 6) | (uint32_t(b3) & 0x3Fu);
+        if (cp >= 0x10000u && cp <= 0x10FFFFu) {
+          return {cp, 4};
+        }
+      }
+    }
+  }
+  return {0xDC00u | uint32_t(b0), 1};
+}
+
+class SafeUtf8Iter {
+ public:
+  using iterator_category = std::bidirectional_iterator_tag;
+  using value_type = uint32_t;
+  using difference_type = std::ptrdiff_t;
+  using pointer = const uint32_t*;
+  using reference = uint32_t;
+
+  SafeUtf8Iter() = default;
+  SafeUtf8Iter(citer it, citer begin, citer end) noexcept : it_(it), begin_(begin), end_(end) {}
+
+  citer base() const noexcept { return it_; }
+
+  uint32_t operator*() const noexcept { return decode_utf8_at(it_, end_).first; }
+
+  SafeUtf8Iter& operator++() noexcept {
+    if (it_ < end_) {
+      it_ += decode_utf8_at(it_, end_).second;
+    }
+    return *this;
+  }
+
+  SafeUtf8Iter operator++(int) noexcept {
+    SafeUtf8Iter tmp(*this);
+    ++(*this);
+    return tmp;
+  }
+
+  SafeUtf8Iter& operator--() noexcept {
+    if (it_ <= begin_) {
+      return *this;
+    }
+    const std::ptrdiff_t max_back = std::min<std::ptrdiff_t>(it_ - begin_, 4);
+    for (std::ptrdiff_t len = max_back; len >= 2; --len) {
+      if (decode_utf8_at(it_ - len, it_).second == len) {
+        it_ -= len;
+        return *this;
+      }
+    }
+    --it_;
+    return *this;
+  }
+
+  SafeUtf8Iter operator--(int) noexcept {
+    SafeUtf8Iter tmp(*this);
+    --(*this);
+    return tmp;
+  }
+
+  bool operator==(const SafeUtf8Iter& other) const noexcept { return it_ == other.it_; }
+  bool operator!=(const SafeUtf8Iter& other) const noexcept { return it_ != other.it_; }
+
+ private:
+  citer it_{};
+  citer begin_{};
+  citer end_{};
+};
+
+void append_safe(uint32_t cp, std::string& out) {
+  if (cp >= 0xDC80u && cp <= 0xDCFFu) {
+    out.push_back(static_cast<char>(cp & 0xFFu));
+  } else if (cp <= 0x7Fu) {
+    out.push_back(static_cast<char>(cp));
+  } else if (cp <= 0x7FFu) {
+    out.push_back(static_cast<char>(0xC0u | (cp >> 6)));
+    out.push_back(static_cast<char>(0x80u | (cp & 0x3Fu)));
+  } else if (cp <= 0xFFFFu && !(cp >= 0xD800u && cp <= 0xDFFFu)) {
+    out.push_back(static_cast<char>(0xE0u | (cp >> 12)));
+    out.push_back(static_cast<char>(0x80u | ((cp >> 6) & 0x3Fu)));
+    out.push_back(static_cast<char>(0x80u | (cp & 0x3Fu)));
+  } else if (cp <= 0x10FFFFu && !(cp >= 0xD800u && cp <= 0xDFFFu)) {
+    out.push_back(static_cast<char>(0xF0u | (cp >> 18)));
+    out.push_back(static_cast<char>(0x80u | ((cp >> 12) & 0x3Fu)));
+    out.push_back(static_cast<char>(0x80u | ((cp >> 6) & 0x3Fu)));
+    out.push_back(static_cast<char>(0x80u | (cp & 0x3Fu)));
+  } else {
+    out.append("\xEF\xBF\xBD", 3);
+  }
+}
+
+}  // namespace
+
+using utf8_citer = SafeUtf8Iter;
 
 namespace rex::string {
 
 // Guest strings are not guaranteed to be well-formed (unpaired surrogates,
-// unterminated buffers), and the Xbox/Windows APIs they come from tolerate that.
-// Replace invalid sequences with U+FFFD instead of letting utfcpp throw an
-// exception that no caller handles.
+// invalid UTF-8 bytes, unterminated buffers), and Xbox/Windows APIs tolerate
+// that. Replace malformed code units with U+FFFD (or preserve raw bytes on
+// UTF-8 helpers) instead of ever throwing an unhandled exception.
 std::string to_utf8(const std::u16string_view source) {
-  try {
-    return utfcpp::utf16to8(source);
-  } catch (const utfcpp::exception&) {
-  }
   std::string result;
   result.reserve(source.size());
+  bool saw_invalid = false;
   for (size_t i = 0; i < source.size(); ++i) {
-    char32_t c = source[i];
-    if (c >= 0xD800 && c <= 0xDBFF && i + 1 < source.size() && source[i + 1] >= 0xDC00 &&
-        source[i + 1] <= 0xDFFF) {
-      c = 0x10000 + ((c - 0xD800) << 10) + (source[i + 1] - 0xDC00);
+    uint32_t c = source[i];
+    if (c >= 0xD800u && c <= 0xDBFFu && i + 1 < source.size() && source[i + 1] >= 0xDC00u &&
+        source[i + 1] <= 0xDFFFu) {
+      c = 0x10000u + ((c - 0xD800u) << 10) + (uint32_t(source[i + 1]) - 0xDC00u);
       ++i;
-    } else if (c >= 0xD800 && c <= 0xDFFF) {
-      c = 0xFFFD;
+    } else if (c >= 0xD800u && c <= 0xDFFFu) {
+      c = 0xFFFDu;
+      saw_invalid = true;
     }
-    utfcpp::append(c, result);
+    append_safe(c, result);
   }
-  static bool warned = false;
-  if (!warned) {
-    warned = true;
-    REXLOG_WARN("to_utf8: replaced invalid UTF-16 in guest string (first unit {:04X}, length {})",
-                source.empty() ? 0u : uint32_t(source[0]), source.size());
+  if (saw_invalid) {
+    static bool warned = false;
+    if (!warned) {
+      warned = true;
+      REXLOG_WARN("to_utf8: replaced invalid UTF-16 in guest string (first unit {:04X}, length {})",
+                  source.empty() ? 0u : uint32_t(source[0]), source.size());
+    }
   }
   return result;
 }
 
 std::u16string to_utf16(const std::string_view source) {
-  try {
-    return utfcpp::utf8to16(source);
-  } catch (const utfcpp::exception&) {
+  std::u16string result;
+  result.reserve(source.size());
+  bool saw_invalid = false;
+  citer p = source.cbegin();
+  citer end = source.cend();
+  while (p < end) {
+    auto [cp, len] = decode_utf8_at(p, end);
+    p += len;
+    if (cp >= 0xDC80u && cp <= 0xDCFFu) {
+      result.push_back(u'\uFFFD');
+      saw_invalid = true;
+    } else if (cp <= 0xFFFFu) {
+      result.push_back(static_cast<char16_t>(cp));
+    } else if (cp <= 0x10FFFFu) {
+      const uint32_t v = cp - 0x10000u;
+      result.push_back(static_cast<char16_t>(0xD800u + (v >> 10)));
+      result.push_back(static_cast<char16_t>(0xDC00u + (v & 0x3FFu)));
+    } else {
+      result.push_back(u'\uFFFD');
+      saw_invalid = true;
+    }
   }
-  std::string valid = utfcpp::replace_invalid(source);
-  static bool warned = false;
-  if (!warned) {
-    warned = true;
-    REXLOG_WARN("to_utf16: replaced invalid UTF-8 in string (length {})", source.size());
+  if (saw_invalid) {
+    static bool warned = false;
+    if (!warned) {
+      warned = true;
+      REXLOG_WARN("to_utf16: replaced invalid UTF-8 in string (length {})", source.size());
+    }
   }
-  return utfcpp::utf8to16(valid);
+  return result;
 }
 
 std::string to_string(char32_t c) {
   std::string result;
-  utfcpp::append(c, result);
+  append_safe(static_cast<uint32_t>(c), result);
   return result;
 }
 
@@ -106,14 +260,15 @@ size_t byte_length(utf8_citer begin, utf8_citer end) {
 }
 
 size_t utf8_count(const std::string_view view) {
-  return size_t(utfcpp::distance(view.cbegin(), view.cend()));
+  auto [begin, end] = make_citer(view);
+  return static_cast<size_t>(std::distance(begin, end));
 }
 
 std::string utf8_lower_ascii(const std::string_view view) {
   auto [begin, end] = make_citer(view);
   std::string result;
   for (auto it = begin; it != end; ++it) {
-    utfcpp::append(char32_t(lower_ascii(*it)), result);
+    append_safe(lower_ascii(*it), result);
   }
   return result;
 }
@@ -122,7 +277,7 @@ std::string utf8_upper_ascii(const std::string_view view) {
   auto [begin, end] = make_citer(view);
   std::string result;
   for (auto it = begin; it != end; ++it) {
-    utfcpp::append(char32_t(upper_ascii(*it)), result);
+    append_safe(upper_ascii(*it), result);
   }
   return result;
 }
@@ -516,7 +671,7 @@ std::string utf8_join_paths(const std::string_view left_path, const std::string_
 
   std::string result = std::string(left_path);
   if (*it != static_cast<uint32_t>(separator)) {
-    utfcpp::append(separator, result);
+    append_safe(static_cast<uint32_t>(separator), result);
   }
   return result + std::string(right_path);
 }
@@ -565,7 +720,7 @@ std::string utf8_fix_path_separators(const std::string_view path, char32_t new_s
 
   // Begins with a separator
   if (is_separator(*it)) {
-    utfcpp::append(new_separator, result);
+    append_safe(static_cast<uint32_t>(new_separator), result);
     ++it;
     last = it;
   }
@@ -580,7 +735,7 @@ std::string utf8_fix_path_separators(const std::string_view path, char32_t new_s
       auto offset = byte_length(path_begin, last);
       auto length = byte_length(path_begin, it) - offset;
       result += path.substr(offset, length);
-      utfcpp::append(new_separator, result);
+      append_safe(static_cast<uint32_t>(new_separator), result);
     }
 
     ++it;

@@ -312,8 +312,10 @@ extern "C" void RexSwitchApmApply(void) {
     std::fprintf(stderr,
                  "[apm] this firmware has NO %d MHz configuration that leaves the memory "
                  "at %.1f MHz; going back to the original 0x%08X (GPU %.1f MHz, memory %.1f MHz).\n"
-                 "[apm] IF YOU PREFER THE HIGH GPU CLOCK EVEN IF THE RAM GOES UP TO 1600: set "
-                 "masseffect_switch_ram_1600 = true in masseffect.toml\n",
+                 // blur-nx 1.0.2 (2026-11-26, GitHub issue #9's log): the hint named Mass Effect's own key and toml in
+                 // every port's crash report; the trade is a port's to offer (RexSwitchApmAllowRam1600).
+                 "[apm] the high GPU clock with the RAM at 1600 MHz is a port's choice to allow "
+                 "(RexSwitchApmAllowRam1600; masseffect-nx: masseffect_switch_ram_1600)\n",
                  mhz, double(emc0) / 1e6, config_original, double(gpu2) / 1e6, double(emc2) / 1e6);
   } else {
     std::fprintf(stderr, "[apm] no %d MHz configuration worked and the original could NOT be restored: "

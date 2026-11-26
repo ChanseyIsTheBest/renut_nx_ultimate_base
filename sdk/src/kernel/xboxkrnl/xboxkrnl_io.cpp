@@ -60,6 +60,12 @@ REXCVAR_DEFINE_INT32(masseffect_io_us_per_kb, 0, "Filesystem",
                      "emulate the Switch SD card (~100 = 13 ms per 128 KiB); 0 = off.");
 REXCVAR_DEFINE_INT32(masseffect_io_summary_s, 15, "Filesystem",
                      "How many seconds between [io] summaries (0 = never).");
+// deadpool-nx (v1.0.1, 25a2e309): NtOpenFile is (handle, access, attributes, io status, ShareAccess, OpenOptions).
+REXCVAR_DEFINE_BOOL(deadpool_ntopenfile_share_access, true, "Kernel",
+                    "deadpool-nx: NtOpenFile reads its six arguments: the fifth is the share access, the sixth the open "
+                    "options. false: the fifth taken as the open options and the sixth not read, as before (a "
+                    "FILE_SHARE_READ of 1 then reads as FILE_DIRECTORY_FILE)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 namespace rex::kernel::xboxkrnl {
 using namespace rex::system;
@@ -529,9 +535,18 @@ u32 NtCreateFile_entry(mapped_u32 handle_out, u32 desired_access,
 
 u32 NtOpenFile_entry(mapped_u32 handle_out, u32 desired_access,
                      ppc_ptr_t<X_OBJECT_ATTRIBUTES> object_attributes,
-                     ppc_ptr_t<X_IO_STATUS_BLOCK> io_status_block, u32 open_options) {
+                     ppc_ptr_t<X_IO_STATUS_BLOCK> io_status_block, u32 share_access,
+                     u32 open_options) {
+  static const bool six_args = REXCVAR_GET(deadpool_ntopenfile_share_access);
+  if (!six_args) {
+    // The reading before deadpool-nx's fix: the fifth argument (the game's ShareAccess) as the open options.
+    return NtCreateFile_entry(handle_out, desired_access, object_attributes, io_status_block, nullptr,
+                              0, 0, static_cast<uint32_t>(rex::filesystem::FileDisposition::kOpen),
+                              share_access);
+  }
   return NtCreateFile_entry(handle_out, desired_access, object_attributes, io_status_block, nullptr,
-                            0, 0, static_cast<uint32_t>(rex::filesystem::FileDisposition::kOpen),
+                            0, share_access,
+                            static_cast<uint32_t>(rex::filesystem::FileDisposition::kOpen),
                             open_options);
 }
 

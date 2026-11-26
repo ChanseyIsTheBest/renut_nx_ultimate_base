@@ -18,7 +18,10 @@ if (Get-Process -Name Ryujinx -ErrorAction SilentlyContinue) { Write-Output "a R
 $os = Get-CimInstance Win32_OperatingSystem
 $freeCommit = $os.FreeVirtualMemory / 1MB
 if ($freeCommit -lt $MinCommitGB) { Write-Output ("free commit memory {0:N1} GB < {1} GB: not starting" -f $freeCommit, $MinCommitGB); exit 3 }
-if ($Toml) { Copy-Item $Toml (Join-Path $sd "katamari.toml") -Force }
+# ilomilo-nx (2026-11-25; renut-ultimate port 291): the SD's own toml is saved and put back after the run.
+$sdToml = Join-Path $sd "katamari.toml"
+$savedToml = Join-Path $sd "katamari.toml.saved"
+if ($Toml) { if (Test-Path $sdToml) { Copy-Item $sdToml $savedToml -Force }; Copy-Item $Toml $sdToml -Force }
 New-Item -ItemType Directory -Force $out | Out-Null
 $logs = Join-Path $sd "logs"
 if (Test-Path $logs) { Remove-Item -Recurse -Force $logs }
@@ -42,6 +45,7 @@ if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force; Write-Output "stopped Ry
 Start-Sleep -Seconds 3
 if (-not $q.HasExited) { Stop-Process -Id $q.Id -Force; Write-Output "stopped qrenderdoc pid $($q.Id)" }
 if (Test-Path $logs) { Copy-Item -Recurse $logs (Join-Path $out "logs") -Force }
+if ($Toml) { if (Test-Path $savedToml) { Copy-Item $savedToml $sdToml -Force; Remove-Item $savedToml } else { Remove-Item $sdToml -ErrorAction SilentlyContinue } }
 $caps = Join-Path $sd "capturas"
 if (Test-Path $caps) { Get-ChildItem $caps -Filter *.png | Move-Item -Destination $out -Force -ErrorAction SilentlyContinue }
 Get-Content (Join-Path $out "trigger.txt") -ErrorAction SilentlyContinue

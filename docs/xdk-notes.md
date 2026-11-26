@@ -31,8 +31,9 @@ What rehatched-nx found moving Renut's Direct3D hooks to this XDK (its docs/reha
 address below is Angry Birds'; a port finds its own (tools/xdk_sigmatch.py, the hook maps).
 
 - **After any change to a hook address, run `tools/post_codegen.py` in full** (until `direct_calls.py --check`
-  reports 0). Otherwise the calls to the moved functions stay direct `__imp__sub_X` calls that skip the hooks:
-  rehatched-nx's device was made the XDK's way and its Swap waited forever for a ring pointer no GPU moves.
+  reports 0, and `tools/hook_bypass_check.py` (port 291) reports 0 bypassed). Otherwise the calls to the moved
+  functions stay direct `__imp__sub_X` calls that skip the hooks: rehatched-nx's device was made the XDK's way and
+  its Swap waited forever for a ring pointer no GPU moves.
 - **Forms with Flags.** D3DVertexShader_Bind is the first release's (pShader, Flags, pDecl, pStreamStrides, Index):
   bind `D3DVertexShader_Bind_flags_hook` (port 173), not the three-argument hook. SetGammaRamp and SetPWLGamma keep
   Flags, (D3DDevice*, Flags, ramp): bind `D3DDevice_SetGammaRamp_flags_hook` and `D3DDevice_SetPWLGamma_flags_hook`.
@@ -108,3 +109,71 @@ the other offsets in d3d.h / d3d_native.h one day):
 - `guest/command_buffers.cpp` `kLastChunkBytes` (port 196's `TakeLastChunk`): 32 at 2.0.5632, 48 at N&B's update.
 - d3d.h `kDeviceOffsetViewport` (port 138): Katamari 0x3160, N&B 0x3170.
 - Port 87's tiles-once check had vivapinata-nx's 2.0.3529 offsets written in; port 223 reads native::off's.
+
+## XDK 2.0.20209 (ilomilo-nx, 2026-11-24 to 11-25; ports 284-291)
+
+Evidence: ilomilo-nx's `docs/ilomilo-notes.md` ("Renut's Direct3D hooks at ilomilo's addresses", "The device layout"),
+D:\ilomilo\ilomilo-nx, with its tools. Bangai-O HD's port (bangaio-nx) is the same XDK build; ilomilo moved the
+base's hooks by the route N&B -> Bangai-O (bangaio-nx's three-port map) -> ilomilo (its tools/d3d_propagate_ilomilo.py:
+functions paired by shape and call sites), then checked every hook's argument registers with tools/arg_regs_compare.py
+(port 291).
+
+- **SetGammaRamp and SetPWLGamma take Flags at 2.0.5632 too.** Katamari's own begin `mr r4,r5; li r5,0`: the base binds
+  port 173's Flags forms since port 286, so the line above (11164) is not a later-XDK difference.
+- **The lock forms** with the unused second argument (D3D_LockResource, D3D_LockSurface, D3D_Lock2DSurface; not
+  Lock3DSurface): port 287's `_unused_hook` forms.
+- **The device layout.** ilomilo's zones from Katamari's offsets (its tools/device_offset_votes.py: the aligned
+  load/store displacements of the 313 paired hooks): 0 below 10944, then +12, the declaration +180, +184 to the clear
+  colour, +192 to the ring words, then +216 / +220 / +224 / +232 word by word, +236 from the command buffer, +240 after
+  the gamma ramp, +244 / +248 at the display mode, +1928 / +1936 at the end. Every value equals bangaio-nx's own
+  measurement where both have it. Moved fields, Katamari -> ilomilo: the device's own declaration
+  (`kDeviceDeclarationOffset`) 0x2F98 -> 0x3050, the viewport 0x3160 -> 0x3218, the depth target 0x31AC -> 0x3264, the
+  resolve flags 0x337C -> 0x3434, the clear colour 0x3380 -> 0x3440, ClearZ 0x3390 -> 0x3450, the export count 0x34A8
+  -> 0x3590 (Sonic 4's 2.0.11626 values in the section above are the same). The delta capture reads 40 chunks
+  (`kDeltaPrivateUnreadEnd` 11776 -> 11904); draw.h's FieldOfOffset bounds 0x2DF8 / 0x2EF8 / 0x317C -> 0x2EAC / 0x2FB0
+  / 0x3234.
+- **Tiling.** BeginTiling stores the count at +12924, the rects at +12928, Flags at +13364 and the extents at +13356 /
+  +13360 (Katamari's fields plus 184); BeginTiling and EndTiling read Katamari's registers exactly. ilomilo draws its
+  720 lines with 4x MSAA in predicated tiles of 1280x256: before the hooks were placed only the top 256 lines showed.
+- **Memexport.** 2.0.20209 has N&B's two GPU workaround switches (d3d_native_state.cpp `kSkipExportNanVertex` /
+  `kSkipExport512Pixels`, 0 at Katamari's XDK): find them by their readers.
+- **GetCurrentThreadId** and **XMemFree** are found by shape (`lwz r11,256(r13); lwz r3,332(r11); blr`; XMemFree's
+  unique shape against Bangai-O's).
+- After placing hooks, `tools/hook_bypass_check.py` (port 291) must say 0 bypassed: `direct_calls.py --check` does not
+  see a direct call of a hooked function (ilomilo's first tiled frame drew only its first tile that way).
+- `tools/hook_collisions.py` lists the base's hooks whose Katamari address happens to be a function start of the new
+  game: each silently replaces an unrelated function until moved or unhooked.
+
+## XDK 2.0.20871 (asura-nx, Asura's Wrath, LTCG; 2026-11-26, ports 292-311)
+
+Evidence: asura-nx's d3d.h, d3d_native.h, d3d_native_state.cpp, hooks/*.cpp, draw.cpp and queued.cpp at 8c329d36
+(github.com/BanhMi93P/asura-nx). Every address is Asura's.
+
+- **LTCG wrappers.** Direct3D_CreateDevice takes only pPresentParameters (r3) and stores the device in a global;
+  DrawIndexedVertices (device, type, start index, index count) has no BaseVertexIndex; DrawTessellatedVertices takes 4
+  arguments; Resolve is (device, flags, rect, dest texture, dest point, dest slice): level, clear colour, Z, stencil
+  and parameters dropped; Begin/EndExport are (device, resource); ClearF is (device, flags, rect, colour, Z in f1) with
+  no stencil; D3DVertexShader_Bind is (shader, declaration, strides, pixel shader). As TFU and Sonic 4 found: list each
+  hooked function's argument registers (tools/arg_regs_compare.py, port 291) before the first build.
+- **No CreateVertexShader / CreatePixelShader / CreateVertexDeclaration.** Shaders come through XGRegisterVertexShader /
+  XGRegisterPixelShader; the game builds its declarations itself and calls XGSetVertexDeclarationHeader(elements,
+  declaration), which asura-nx hooks raw to make a Renut record from the elements.
+- **Other forms.** D3D_UnlockResource (resource, base address, mip address); D3DDevice_CreateTexture 8 arguments (type
+  last); D3D_SetSurfaceHeader 8 arguments with the EDRAM bytes and Hi-Z tiles written out; D3D_FindTextureSize 14
+  arguments; D3D_AlignTextureDimensions 7; D3DQuery_GetData hooked raw.
+- **Device layout.** The allocation is 0x6080 (as rehatched-nx's 9407). The vertex declaration 0x2FD0, index buffer
+  0x320C, render targets 0x3210, depth 0x3220, stream sources 0x3224, strides 0x3268, textures 0x3278, pixel / vertex
+  shader 0x330C / 0x3310, viewport 0x32E0, scissor 0x32FC, predication 0x331C, RunPredicationState 0x3320, tiling
+  surfaces 0x3330, tile count / rects 0x3344 / 0x3348, the command buffer 0x3660; the snapshot 0x3320.
+  `kDeviceDeclarationOffset` 0x3118; the census and delta private unread bounds 11008 / 12224 (40 read chunks).
+- **Memexport's** two workaround switches are guest words at this XDK (Asura's 0x83297914 / 0x83297918).
+- asura-nx went back to the rectangle-list shader's run-time corner index (port 164's constant form undone); its reason
+  is not given, and the base keeps port 164.
+
+## XDK 2.0.20871 again (S4ep2-XBLA-nx, Sonic 4 Episode II, 2026-11-26, ports 320-328)
+
+Episode II is Asura's XDK (the section above) by S4ep2-XBLA-nx's own tool, not read from the game image. It moved
+Episode I's (2.0.11626) hooks and device layout by aligning paired functions (tools/d3d_align.py, d3d_field_votes.py,
+port 328) and found the same rule as TFU and Sonic 4: an address one instruction off (its caps table read at 0x820F80E0
+instead of 0x821080E0) made every D3DXCreateTexture fail with E_OUTOFMEMORY and the screen sample never-resolved
+textures: check each moved address by the code that forms it.

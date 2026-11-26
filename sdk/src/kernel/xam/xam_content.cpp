@@ -9,6 +9,8 @@
  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
 
+#include <string>
+
 #include <rex/cvar.h>
 #include <rex/kernel/xam/private.h>
 #include <rex/logging.h>
@@ -141,8 +143,8 @@ u32 xeXamContentCreate(u32 user_index, mapped_string root_name, mapped_void cont
     *disposition_ptr = 0;
   }
 
-  auto run = [content_manager, xuid, root_name = root_name.value(), flags, content_data,
-              disposition_ptr,
+  auto run = [content_manager, xuid, root_name = std::string(root_name.value()), flags,
+              content_data, disposition_ptr,
               license_mask_ptr](uint32_t& extended_error, uint32_t& length) -> X_RESULT {
     X_RESULT result = X_ERROR_INVALID_PARAMETER;
     kDispositionState disposition = kDispositionState::Unknown;
@@ -161,7 +163,9 @@ u32 xeXamContentCreate(u32 user_index, mapped_string root_name, mapped_void cont
         // Games may reuse the same root without explicitly closing.
         content_manager->CloseContent(root_name);
         if (content_manager->ContentExists(xuid, content_data)) {
-          content_manager->DeleteContent(xuid, content_data);
+          // blur-nx 1.0.2 (2026-11-26, GitHub issue #9): set aside until the new one is closed, not deleted (a game
+          // closed while writing it left the save empty); ContentManager::SetAsideContent.
+          content_manager->SetAsideContent(xuid, content_data);
         }
         // Check filesystem state after deletion attempt to decide
         // whether to create fresh or open existing.
@@ -193,7 +197,7 @@ u32 xeXamContentCreate(u32 user_index, mapped_string root_name, mapped_void cont
           result = X_ERROR_PATH_NOT_FOUND;
         } else {
           content_manager->CloseContent(root_name);
-          content_manager->DeleteContent(xuid, content_data);
+          content_manager->SetAsideContent(xuid, content_data);  // blur-nx 1.0.2 (issue #9), as CREATE_ALWAYS
           if (content_manager->ContentExists(xuid, content_data)) {
             disposition = kDispositionState::Open;
           } else {

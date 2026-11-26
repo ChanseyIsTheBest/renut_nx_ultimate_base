@@ -525,6 +525,41 @@ void StatsGameFrame();                     // a D3DDevice_Swap (game thread)
 void StatsRenderThreadFrame(double busy_ms);  // the render thread's frame (render thread)
 void StatsGpuFrame(double ms);             // a frame's GPU time
 
+// deadpool-nx (2026-11-17, deadpool_switch_profiler_counters): the render thread's counts of a frame for the Switch
+// profiler's per-frame line (sdk/src/ui/switch_perf.cpp), plain adds on the render thread, given to it by
+// StatsRenderThreadFrame. Nothing is counted with the key off.
+struct WorkloadFrame {
+  uint64_t draws = 0;
+  uint64_t submits = 0;
+  uint64_t resolves = 0;
+  uint64_t tex_uploads = 0;
+  uint64_t upload_bytes = 0;  // textures uploaded and streams converted
+};
+extern WorkloadFrame g_workload_frame;
+extern bool g_workload_on;  // deadpool_switch_profiler_counters, latched once (BeforeDeviceCreated)
+[[gnu::always_inline]] inline void NoteWorkloadDraw() {
+  if (g_workload_on)
+    ++g_workload_frame.draws;
+}
+[[gnu::always_inline]] inline void NoteWorkloadStreamConvert(uint64_t bytes) {
+  if (g_workload_on)
+    g_workload_frame.upload_bytes += bytes;
+}
+[[gnu::always_inline]] inline void NoteWorkloadSubmit() {
+  if (g_workload_on)
+    ++g_workload_frame.submits;
+}
+[[gnu::always_inline]] inline void NoteWorkloadResolve() {
+  if (g_workload_on)
+    ++g_workload_frame.resolves;
+}
+[[gnu::always_inline]] inline void NoteWorkloadTexUpload(uint64_t bytes) {
+  if (g_workload_on) {
+    ++g_workload_frame.tex_uploads;
+    g_workload_frame.upload_bytes += bytes;
+  }
+}
+
 // banjo_renut_pmull_hash: chosen once, before the renderer's first draw (BeforeDeviceCreated), after a self-test.
 extern bool g_pmull_hash;
 uint64_t PmullHash(const void *data, size_t size, uint64_t seed);

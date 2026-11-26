@@ -46,6 +46,23 @@
     X(Normal,    1, 27)
 #endif
 
+// asura-nx (v1.0.0): POSITION5-7 at locations 29-31 outside the morph set (UE3 vertex shaders read them), which fills
+// the 32 inputs. A compile-time switch for the translator and the host alike, 0 by default here (renut-ultimate's
+// hardening: the host adds every row a shader does not read as a zero-stream input, render/vertex_format.cpp, so the
+// rows on by default would give every pipeline three more attributes); a port whose shaders read them defines it 1
+// (then rebuild the shader cache and the host).
+#ifndef RENUT_VERTEX_INPUTS_POSITION5_7
+#define RENUT_VERTEX_INPUTS_POSITION5_7 0
+#endif
+#if !defined(RENUT_VERTEX_INPUTS_MORPH) && RENUT_VERTEX_INPUTS_POSITION5_7
+#define RENUT_VERTEX_INPUTS_29_31(X) \
+    X(Position,  5, 29) \
+    X(Position,  6, 30) \
+    X(Position,  7, 31)
+#else
+#define RENUT_VERTEX_INPUTS_29_31(X)
+#endif
+
 // SPIR-V vertex input locations for reNut, shared with its host input-layout
 // builder. Covers every vertex element N&B's shaders declare. Like reblue's
 // above, only a define: the recompiler reads it under RENUT_RECOMP.
@@ -74,7 +91,8 @@
     X(TexCoord,  9, 21) \
     X(TexCoord, 10, 22) \
     RENUT_VERTEX_INPUTS_23_27(X) \
-    X(Tangent,   1, 28)  /* rr6-nx (23 there) */
+    X(Tangent,   1, 28)  /* rr6-nx (23 there) */ \
+    RENUT_VERTEX_INPUTS_29_31(X)
 
 // SPEC_CONSTANTS_ONLY keeps the HLSL below out of host C++ TUs, which IntelliSense would otherwise parse.
 #if (!defined(__cplusplus) || defined(__INTELLISENSE__)) && !defined(SHADER_COMMON_SPEC_CONSTANTS_ONLY)

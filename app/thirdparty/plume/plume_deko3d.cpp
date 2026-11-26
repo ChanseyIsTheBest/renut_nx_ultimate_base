@@ -2280,7 +2280,8 @@ namespace plume {
             const uint64_t t0 = armTicksToNs(armGetSystemTick());
             {
                 static uint32_t logged = 0;
-                if (logged < 4) {
+                // S4ep2-XBLA-nx (Deko3DOptions::logEveryCompile): every compile, not the first 4.
+                if (logged < 4 || g_deko3dOptions.logEveryCompile) {
                     logged++;
                     uint64_t hf = 0, pf = 0;
                     memoryFiguresQuick(hf, pf);  // port 161: no heap walk
@@ -2570,6 +2571,22 @@ namespace plume {
 
     bool Deko3DShaderWritesVertexKill(const RenderShader *shader) {
         return shader != nullptr && static_cast<const Deko3DShader *>(shader)->usage.writesVertexKill;
+    }
+
+    // S4ep2-XBLA-nx (github.com/FurryLilManChild/S4ep2-XBLA-nx, GPL-3.0, 0.5.0; its ca03ac30): see plume_deko3d.h.
+    bool Deko3DPrepareVariant(RenderDevice *device, RenderShader *shader, const RenderSpecConstant *specConstants,
+                              uint32_t specConstantsCount, bool *compiled) {
+        auto *d = static_cast<Deko3DDevice *>(device);
+        if (compiled)
+            *compiled = false;
+        if (!d || !shader)
+            return false;
+        const uint64_t before = g_deko3dStats.shaderCompiles.load(std::memory_order_relaxed);
+        const bool ok = d->loadVariant(static_cast<const Deko3DShader *>(shader), specConstants, specConstantsCount,
+                                       nullptr) != nullptr;
+        if (compiled)
+            *compiled = g_deko3dStats.shaderCompiles.load(std::memory_order_relaxed) != before;
+        return ok;
     }
 
     bool Deko3DShaderReadsFragCoord(const RenderShader *shader) {
@@ -3310,6 +3327,10 @@ namespace plume {
                 const RenderInputElement &el = desc.inputElements[e];
                 if (el.location != vin[a])
                     continue;
+                // asura-nx (Deko3DOptions::vtxSlotBound): an element on slot 16 or above (the zero stream's,
+                // kZeroStreamSlot) is left a constant: deko3d configures buffers 0-15 only.
+                if (Deko3DGetOptions().vtxSlotBound && el.slotIndex >= 16)
+                    break;
                 DkVtxAttribSize size;
                 DkVtxAttribType type;
                 bool bgra;

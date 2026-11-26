@@ -59,6 +59,29 @@ REXCVAR_DEFINE_BOOL(xam_guest_signin, true, "Kernel",
                     "When the game opens the sign-in screen, every further connected controller (2 to 4) is signed "
                     "in as a guest of the profile, as choosing a guest on the console does. Off: only controller 1 "
                     "has a profile, and a game that wants one per local player takes no second player");
+// hexic2-nx (2026-11-04); ilomilo-nx (2026-11-25): ilomilo reads a controller's buttons only while its player is signed
+// in and never opens the sign-in screen, so controller 2 could not join "play together". renut-ultimate port 290: off
+// in the base (as before); a game that needs it (Hexic 2, ilomilo) turns it on in its own tomls.
+REXCVAR_DEFINE_BOOL(xam_guest_signin_on_connect, false, "Kernel",
+                    "A further controller signs in as a guest as soon as it connects, with no sign-in screen, for a "
+                    "game whose lobby only takes signed-in players and never opens the sign-in screen (Hexic 2, "
+                    "ilomilo). Off (the default): only once the game opens the sign-in screen");
+// ilomilo-nx (2026-11-25, the user's console: the second player "not signed in", could not join "play together"):
+// ilomilo's multiplayer page (sub_82142428) takes a player's A only when that player is signed in and not a guest
+// (its user record's word 72, from XamUserGetSigninInfo's guest flag); a guest's A shows the sign-in message. On the
+// console each player signs in to a profile of their own. So players 2 to 4 sign in as local profiles of their own:
+// no guest flag, their own XUID (as before) and name "Player N". renut-ultimate port 290: off in the base (as before:
+// a game that takes guests may treat a profile differently, a save or storage choice per player); ilomilo turns it on.
+// renut-ultimate (port 290's hardening): XamReadTileToTexture's answer for a player's own picture, as a key.
+REXCVAR_DEFINE_BOOL(xam_own_gamer_picture, true, "Kernel",
+                    "XamReadTileToTexture gives a signed-in player's own gamer picture (types 2 to 5 with tile 0) as a "
+                    "blank picture. ilomilo's loader asked for it every frame when it was refused and leaked a 16 KB "
+                    "texture each time (guest memory gone after two minutes with two players). Off: refused, as before");
+REXCVAR_DEFINE_BOOL(xam_guest_profiles, false, "Kernel",
+                    "Players 2 to 4 signed in by xam_guest_signin / xam_guest_signin_on_connect are local profiles of "
+                    "their own (named Player 2 to Player 4, no guest flag), for a game that takes no guest as a "
+                    "player (ilomilo's multiplayer). Off (the default): guests of the profile (Name(1), the console's "
+                    "guest flag)");
 // blur-nx (2026-11-18, the user: "language (set it to system language by default)"): the player's setting by name. A
 // game without the language shows its own fallback (Blur, like Beautiful Katamari, English), as on an Xbox 360 set to it.
 REXCVAR_DEFINE_STRING(language, "System", "Kernel",
@@ -153,8 +176,9 @@ uint64_t GuestXuid(uint32_t user_index) {
   return REX_KERNEL_STATE()->user_profile()->xuid() ^ (uint64_t(user_index) << 54);
 }
 
-// "Name(1)", as the console names guests; at most 15 characters.
+// "Name(1)", as the console names guests; at most 15 characters. ilomilo-nx (xam_guest_profiles): "Player 2".
 std::string GuestName(uint32_t user_index) {
+  if (REXCVAR_GET(xam_guest_profiles)) return "Player " + std::to_string(user_index + 1);
   std::string name = REX_KERNEL_STATE()->user_profile()->name();
   if (name.size() > 12) name.resize(12);
   return name + "(" + std::to_string(user_index) + ")";
@@ -215,6 +239,34 @@ void SignInLateGuests() {
   }
 }
 
+// hexic2-nx (2026-11-04, the user's console run): Hexic 2's Local Lobby takes a player only once that player is signed in,
+// and it never opens the sign-in screen for one (so SignInLateGuests above never acts), and controller 2 could not join.
+// On the console the player signs in from the Guide, which does not exist here. So with xam_guest_signin_on_connect a
+// further controller signs in as a guest when it connects, looked at twice a second from the game's own sign-in polls,
+// and the game is told as the sign-in screen would tell it. ilomilo-nx (2026-11-25): ilomilo's "play together" is the
+// same (its controller poll, sub_821C9418, skips a controller whose player is not in the signed-in mask); it asks
+// XamUserGetSigninInfo every frame, so that asks here too.
+void AutoSignInGuests() {
+  if (!REXCVAR_GET(xam_guest_signin_on_connect) || !REXCVAR_GET(xam_guest_signin)) return;
+  static std::atomic<int64_t> next_ms{0};
+  const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now().time_since_epoch()).count();
+  int64_t due = next_ms.load(std::memory_order_relaxed);
+  if (now_ms < due || !next_ms.compare_exchange_strong(due, now_ms + 500, std::memory_order_relaxed)) return;
+  auto* input = static_cast<rex::input::InputSystem*>(REX_KERNEL_STATE()->emulator()->input_system());
+  if (!input) return;
+  const uint32_t guests = g_guests.load(std::memory_order_relaxed);
+  bool any = false;
+  for (uint32_t user = 1; user < 4; ++user) {
+    any = any || (!((guests >> user) & 1) && input->IsUserConnected(user));
+  }
+  if (any) {
+    const uint32_t mask = SignInGuests();
+    REXKRNL_INFO("[XAM] signed in on connect: users {:04b}; the game told (XN_SYS_SIGNINCHANGED)", mask);
+    REX_KERNEL_STATE()->BroadcastNotification(0x0000000A, mask);  // XN_SYS_SIGNINCHANGED
+  }
+}
+
 i32 XamUserGetXUID_entry(u32 user_index, u32 type_mask, mapped_u64 xuid_ptr) {
   assert_true(type_mask == 1 || type_mask == 2 || type_mask == 3 || type_mask == 4 ||
               type_mask == 7);
@@ -254,8 +306,11 @@ u32 XamUserGetSigninState_entry(u32 user_index) {
     if (user_index == 0) {
       const auto& user_profile = REX_KERNEL_STATE()->user_profile();
       signin_state = user_profile->signin_state();
-    } else if (IsGuest(user_index)) {
-      signin_state = 1;  // signed in locally
+    } else {
+      AutoSignInGuests();  // hexic2-nx: xam_guest_signin_on_connect
+      if (IsGuest(user_index)) {
+        signin_state = 1;  // signed in locally
+      }
     }
   }
   if (REXCVAR_GET(xam_user_trace) && user_index < 4) {  // culdcept-nx: the guest caller, once a second per (user, caller)
@@ -288,11 +343,13 @@ i32 XamUserGetSigninInfo_entry(u32 user_index, u32 flags, ppc_ptr_t<X_USER_SIGNI
   }
 
   std::memset(info, 0, sizeof(X_USER_SIGNIN_INFO));
+  if (user_index >= 1 && user_index < 4) AutoSignInGuests();  // ilomilo-nx: its per-frame sign-in poll
   if (IsGuest(user_index)) {
     info->xuid = GuestXuid(user_index);
-    info->unk08 = 2;  // dwInfoFlags: XUSER_INFO_FLAG_GUEST
+    const bool profile = REXCVAR_GET(xam_guest_profiles);  // ilomilo-nx: a local profile of its own, not a guest
+    info->unk08 = profile ? 0 : 2;  // dwInfoFlags: XUSER_INFO_FLAG_GUEST
     info->signin_state = 1;
-    info->unk10 = static_cast<uint32_t>(user_index);  // dwGuestNumber
+    info->unk10 = profile ? 0 : static_cast<uint32_t>(user_index);  // dwGuestNumber
     info->unk14 = 0;                                  // dwSponsorUserIndex
     rex::string::copy_truncating(info->name, GuestName(user_index), rex::countof(info->name));
     TraceUser("XamUserGetSigninInfo", user_index, X_E_SUCCESS, flags);
@@ -533,13 +590,15 @@ u32 XamUserWriteProfileSettings_entry(u32 title_id, u32 user_index, u32 setting_
   }
 
   if (user_index) {
-    // Only support user 0.
+    // Only support user 0. ilomilo-nx (xam_guest_profiles): players 2 to 4 are profiles of their own, so their writes
+    // succeed (not kept: only player 1's profile is stored).
+    const X_RESULT result =
+        IsGuest(user_index) && REXCVAR_GET(xam_guest_profiles) ? X_ERROR_SUCCESS : X_ERROR_NO_SUCH_USER;
     if (overlapped) {
-      REX_KERNEL_STATE()->CompleteOverlappedImmediate(overlapped.guest_address(),
-                                                      X_ERROR_NO_SUCH_USER);
+      REX_KERNEL_STATE()->CompleteOverlappedImmediate(overlapped.guest_address(), result);
       return X_ERROR_IO_PENDING;
     }
-    return X_ERROR_NO_SUCH_USER;
+    return result;
   }
 
   // Update and save settings.
@@ -984,7 +1043,14 @@ u32 XamParseGamerTileKey_entry(mapped_u32 key_ptr, mapped_u32 out1_ptr, mapped_u
 u32 XamReadTileToTexture_entry(u32 unknown, u32 title_id, u64 tile_id, u32 user_index,
                                mapped_void buffer_ptr, u32 stride, u32 height, u32 overlapped_ptr) {
   // TODO(gibbed): unknown=0,2,3,9
-  if (!tile_id) {
+  // ilomilo-nx (2026-11-25, two players: guest physical memory ran out after two minutes on the menus): types 2 to 5
+  // (the gamer picture, large or small, of a signed-in player) with no tile id ask for that player's own picture, as
+  // ilomilo's picture loader (sub_821E4AF8 through sub_822755B8: type 2, title 0, tile 0) does. Refused, the loader
+  // marked the picture not loaded and asked again the next frame, a new 64x64 texture (16 KB of physical memory)
+  // each time and the last one never freed: about 240 a second with both players' pictures wanted.
+  const bool own_picture = REXCVAR_GET(xam_own_gamer_picture) && unknown >= 2 && unknown <= 5 && user_index < 4 &&
+                           (user_index == 0 || IsGuest(user_index));
+  if (!tile_id && !own_picture) {
     return X_ERROR_INVALID_PARAMETER;
   }
 

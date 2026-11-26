@@ -35,6 +35,7 @@
 
 #if REX_PLATFORM_SWITCH
 #include <pthread.h>
+#include <rex/sys_counters.h>  // deadpool-nx (deadpool_switch_profiler_counters): RexSwitchPerfAdd
 #include "profiler/switch_cpu_profiler.h"  // banjo-nx (2026-10-28): the A/B halves' CPU a frame
 #endif
 
@@ -483,6 +484,13 @@ REXCVAR_DEFINE_BOOL(banjo_async_present, true, "Banjo/Enhancements",
                     "one: 2.7 ms a frame in tw2de_nx's heaviest stretch) are made by a helper thread, so the renderer's "
                     "feed thread records the next frame instead of waiting for the compositor's answers. The same calls "
                     "in the same order. false: on the presenting thread, as before");
+// deadpool-nx (2026-11-17, its checkpoint 8c90b5ca): StatsRenderThreadFrame and banjo_renut_tuning.h's NoteWorkload*.
+REXCVAR_DEFINE_BOOL(deadpool_switch_profiler_counters, false, "Banjo/Diagnostics",
+                    "deadpool-nx (a diagnostic): Renut's renderer counts a frame's draws, submits, resolves, texture "
+                    "uploads, uploaded MB (textures and converted streams) and pipelines made for the Switch profiler's "
+                    "per-frame line (counters 5, 7, 9, 14, 15, 16), which only the emulated GPU fed: under Renut it "
+                    "read 0. A plain add a draw on the render thread. Read at the renderer's start")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 // banjo-nx (2026-11-21): off on the Switch (the user, after console c41: with it the render thread +1.7 % a draw, the GPU
 // +1.65 % a draw, -2.3 % fps in Showdown Town; what it buys is input latency).
 REXCVAR_DEFINE_BOOL(banjo_deko3d_kick_submit, BANJO_SWITCH_DEFAULT(false, true), "Banjo/Enhancements",
@@ -970,9 +978,13 @@ int64_t SteadyMs() {
       .count();
 }
 
+std::atomic<uint64_t> g_workload_pipelines{0};  // deadpool-nx (deadpool_switch_profiler_counters): a frame's
+
 void NotePipelineBuilt() {
   g_pipelines_built.fetch_add(1, std::memory_order_relaxed);
   g_last_build_ms.store(SteadyMs(), std::memory_order_relaxed);
+  if (g_workload_on)
+    g_workload_pipelines.fetch_add(1, std::memory_order_relaxed);
 }
 
 // The A/B word (banjo_renut_ab); the header reads it inline.
@@ -1339,6 +1351,9 @@ std::string Report(double seconds) {
   return line;
 }
 }  // namespace renut::gpu::census
+namespace renut::gpu {
+bool S4CaptureFrameBoundaryLocked();  // S4ep2-XBLA-nx (s4ep2_frame_capture): render/draw.cpp
+}  // namespace renut::gpu
 namespace banjo::renut_gpu {
 
 void StatsGameFrame() {
@@ -1758,7 +1773,35 @@ void StatsGameFrame() {
   g_stats.last_report = now;
 }
 
+// deadpool-nx (2026-11-17, its checkpoint 8c90b5ca and v1.0.0): the Switch profiler's per-frame line ("per frame: N
+// draws | N submits | N resolves | N textures loaded | N MB of shared memory uploaded | pipelines created", counters 5,
+// 7, 9, 14, 15, 16) was fed by the emulated GPU only: under Renut's renderer it read 0.
+WorkloadFrame g_workload_frame{};
+bool g_workload_on = false;
+
 void StatsRenderThreadFrame(double busy_ms) {
+  if (g_workload_on) {  // deadpool-nx (deadpool_switch_profiler_counters)
+    const WorkloadFrame wf = g_workload_frame;
+    g_workload_frame = {};
+    const uint64_t pipelines = g_workload_pipelines.exchange(0, std::memory_order_relaxed);
+#if REX_PLATFORM_SWITCH
+    if (wf.draws)
+      RexSwitchPerfAdd(5, wf.draws);
+    if (wf.submits)
+      RexSwitchPerfAdd(7, wf.submits);
+    if (wf.resolves)
+      RexSwitchPerfAdd(9, wf.resolves);
+    if (wf.tex_uploads)
+      RexSwitchPerfAdd(14, wf.tex_uploads);
+    if (wf.upload_bytes)
+      RexSwitchPerfAdd(15, wf.upload_bytes);
+    if (pipelines)
+      RexSwitchPerfAdd(16, pipelines);
+#else
+    (void)wf;
+    (void)pipelines;
+#endif
+  }
   ControlNvkLocked();  // banjo_gpu_nvk_draw_contract (the Switch): requests and guards, once a frame
   int half, target;
   bool apply;
@@ -1970,6 +2013,7 @@ void CountDrawSource(int source, uint64_t draws) {
 
 void CountDrawnResolve() {
   Bump(g_resolves_drawn, 1);
+  NoteWorkloadResolve();  // deadpool-nx (deadpool_switch_profiler_counters)
 }
 void CountSmaa() {
   Bump(g_smaa_runs, 1);
@@ -2525,6 +2569,13 @@ std::chrono::steady_clock::time_point g_trace_last{};
 }  // namespace
 
 void ResolveTraceFrameStart() {
+  // S4ep2-XBLA-nx (s4ep2_frame_capture; render/draw.cpp): a capture frame is a traced frame (the full draw path, the
+  // [trace] lines). Nothing with the key off (the call returns at once).
+  if (::renut::gpu::S4CaptureFrameBoundaryLocked()) [[unlikely]] {
+    g_trace_frame.store(true, std::memory_order_relaxed);
+    REXLOG_INFO("[trace] frame start (capture)");
+    return;
+  }
   if (!REXCVAR_GET(banjo_renut_diag_resolve_trace)) {
     g_trace_frame.store(false, std::memory_order_relaxed);
     return;
@@ -2685,6 +2736,7 @@ bool UploadCached() {
 }
 
 void BeforeDeviceCreated() {
+  g_workload_on = REXCVAR_GET(deadpool_switch_profiler_counters);  // deadpool-nx: latched once, read at every draw
   renut::gpu::native::g_touch_compare = REXCVAR_GET(banjo_renut_touch_compare);  // banjo-nx (2026-10-26)
   renut::gpu::native::g_tags_apart = REXCVAR_GET(banjo_renut_tags_apart);
   // The two rules outside the enhancement table (no master switch), stated once.

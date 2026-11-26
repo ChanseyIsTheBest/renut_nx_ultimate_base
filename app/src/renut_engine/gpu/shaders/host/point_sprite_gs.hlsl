@@ -25,6 +25,44 @@ struct Vertex
     float clipDistance : SV_ClipDistance0;
 };
 
+// ilomilo-nx (2026-11-25, ilomilo_renut_gs_no_clip): point_sprite_noclip_gs.hlsl defines RENUT_GS_NO_CLIP and includes
+// this file: the same sprites with no clip distance written, for the draws whose vertex shader writes none (see
+// rectangle_list_gs.hlsl). The fields are Vertex's, in its order, without clipDistance.
+#if defined(RENUT_GS_NO_CLIP)
+struct OutVertex
+{
+    float4 position : SV_Position;
+    float4 texcoord[16] : TEXCOORD0;
+    float4 color[2] : COLOR0;
+    float4 normal[3] : NORMAL0;
+    float4 tangent : TANGENT0;
+    float4 binormal : BINORMAL0;
+    float4 fog : FOG0;
+    float4 position2 : POSITION2;
+    float2 pointCoord : POINTCOORD;
+    float pointSize : POINTSIZE;
+};
+
+OutVertex Out(Vertex v)
+{
+    OutVertex o;
+    o.position = v.position;
+    o.texcoord = v.texcoord;
+    o.color = v.color;
+    o.normal = v.normal;
+    o.tangent = v.tangent;
+    o.binormal = v.binormal;
+    o.fog = v.fog;
+    o.position2 = v.position2;
+    o.pointCoord = v.pointCoord;
+    o.pointSize = v.pointSize;
+    return o;
+}
+#else
+typedef Vertex OutVertex;
+Vertex Out(Vertex v) { return v; }
+#endif
+
 // SharedConstants (draw.cpp): at 1312 the render state's point width and
 // height and minimum and maximum size, at 1328 the size of the host viewport
 // (what clip space spans), all in guest pixels (the host viewport is the
@@ -67,7 +105,7 @@ static const float kUp = 1.0;
 #endif
 
 [maxvertexcount(4)]
-void main(point Vertex input[1], inout TriangleStream<Vertex> output)
+void main(point Vertex input[1], inout TriangleStream<OutVertex> output)
 {
     const Vertex v = input[0];
     if (v.pointSize < 0.0)
@@ -85,7 +123,7 @@ void main(point Vertex input[1], inout TriangleStream<Vertex> output)
     const float2 coords[4] = { float2(0.0, 0.0), float2(1.0, 0.0), float2(0.0, 1.0), float2(1.0, 1.0) };
     [unroll] for (uint i = 0; i < 4; ++i)
     {
-        Vertex corner = v;
+        OutVertex corner = Out(v);
         corner.position.xy += corners[i] * float2(1.0, kUp) * half_size;
         corner.pointCoord = coords[i];
         output.Append(corner);

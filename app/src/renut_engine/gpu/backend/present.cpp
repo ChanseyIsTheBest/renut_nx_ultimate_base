@@ -11,6 +11,7 @@
 #include "renut_engine/gpu/sasrt_gpu_round.h"  // sasrt-nx (2026-11-08): the GPU round
 #include <condition_variable>
 #include <cstdlib>
+#include <filesystem>  // S4ep2-XBLA-nx: the frame captures' scan-out
 #include <mutex>
 #include <string>
 
@@ -76,6 +77,8 @@ REXCVAR_DEFINE_BOOL(vivapinata_present_lut_check, false, "Banjo/Diagnostics",
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 namespace renut::gpu {
+
+void S4QueueFile(std::filesystem::path path, std::vector<uint8_t> bytes);  // render/draw.cpp (s4ep2_frame_capture)
 
 namespace {
 
@@ -549,9 +552,26 @@ bool CaptureFrameLocked(VideoState &s, const PresentImage &image, rex::ui::RawIm
   return true;
 }
 
+// S4ep2-XBLA-nx (s4ep2_frame_capture): the capture frame's picture as the present scans it out (the game's gamma ramp,
+// the scale and fit applied), RGBX 8-bit after a one-line header; asked for by S4RequestScanOutLocked.
+std::filesystem::path g_s4_scanout_file;
+
 // From PresentLocked: one relaxed load when nobody asked.
 void ServeCaptureLocked(VideoState &s, const PresentImage *image) {
   FrameCapture &c = g_capture;
+  if (!g_s4_scanout_file.empty() && image && image->texture && image->descriptor != kInvalidDescriptor) [[unlikely]] {
+    rex::ui::RawImage out;
+    const bool ok = CaptureFrameLocked(s, *image, out);
+    if (ok) {
+      const std::string head = fmt::format("S4SCAN1 width {} height {} stride {} format RGBX8 (scanned out, gamma ramp {})\n",
+                                           out.width, out.height, out.stride, g_gamma.param != 0.0f ? "applied" : "not applied");
+      std::vector<uint8_t> bytes(head.begin(), head.end());
+      bytes.insert(bytes.end(), out.data.begin(), out.data.end());
+      S4QueueFile(g_s4_scanout_file, std::move(bytes));
+    }
+    REXLOG_INFO("[capture] scanned-out picture {}: {}", ok ? "read" : "NOT read", g_s4_scanout_file.string());
+    g_s4_scanout_file.clear();
+  }
   const uint64_t requested = c.requested.load(std::memory_order_acquire);
   if (requested == c.served_render || !image || !image->texture || image->descriptor == kInvalidDescriptor)
     return;
@@ -706,6 +726,28 @@ void PresentLocked(VideoState &s, const PresentImage *image) {
 }
 
 } // namespace
+
+// S4ep2-XBLA-nx (s4ep2_frame_capture): see ServeCaptureLocked; the render thread, State().mutex held.
+void S4RequestScanOutLocked(const std::filesystem::path &file) {
+  g_s4_scanout_file = file;
+}
+
+// S4ep2-XBLA-nx (s4ep2_frame_capture): the game's gamma ramp as the present has it, every entry.
+std::string S4GammaRampText() {
+  std::array<uint16_t, 3 * 1024> ramp;
+  uint32_t version;
+  {
+    std::lock_guard lock(g_gamma.mutex);
+    ramp = g_gamma.ramp;
+    version = g_gamma.version;
+  }
+  std::string out = fmt::format("version {} (0: the game loaded none), applied {} (banjo_renut_game_gamma {}), identity {}\n"
+                                "entry red green blue (of 1024, by 10-bit value)\n",
+                                version, g_gamma.param != 0.0f, REXCVAR_GET(banjo_renut_game_gamma), g_gamma.identity);
+  for (uint32_t i = 0; i < 1024; ++i)
+    out += fmt::format("{} {} {} {}\n", i, ramp[i], ramp[1024 + i], ramp[2048 + i]);
+  return out;
+}
 
 namespace {
 

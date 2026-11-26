@@ -4,3 +4,4 @@
 
 extern "C" void RexSwitchPerfCount(unsigned) {}
 extern "C" void RexSwitchPerfHitch(uint64_t, uint64_t) {}
+extern "C" bool RexSwitchPerfStacksActive(void) { return false; }

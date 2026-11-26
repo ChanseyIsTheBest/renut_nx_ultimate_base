@@ -138,6 +138,10 @@ struct HostSurface {
   bool clear_depth_known = false, clear_stencil_known = false;
   float clear_depth = 0.0f;
   uint32_t clear_stencil = 0;
+  // asura-nx (asura_shadow_dirty_rect): the dirty guest-pixel bounding box written since the last depth=1.0 whole
+  // clear; never tracked with the key off.
+  bool depth_dirty_tracked = false;
+  int32_t depth_dirty_x1 = 0, depth_dirty_y1 = 0, depth_dirty_x2 = 0, depth_dirty_y2 = 0;
   // vivapinata-nx (2026-11-04, the white fog at the cuts, ColorEdramWipedLocked): a clear through another layout wiped this
   // target's EDRAM on the console. Only a resolve can tell: one before anything writes here clears first (render/draw.cpp).
   bool edram_wiped = false;
@@ -257,6 +261,10 @@ void SweepUnusedTargetsLocked();
 // pitch, samples and scale), in another host format: on the console one
 // memory, so what a clear writes through one is what the others then hold.
 void ColorAliasesLocked(const HostSurface *surface, std::vector<HostSurface *> &out);
+
+// asura-nx: overlapping 32bpp/7e3 colour targets at the same EDRAM base, pitch, sample count and scale as depth target
+// 'depth' (asura_renut_clear_aliases_32bpp).
+void DepthColorAliasesLocked(const HostSurface *depth, std::vector<HostSurface *> &out);
 
 // vivapinata-nx (2026-11-04, the white fog at the cuts): the other color targets at the same EDRAM base in another layout (samples,
 // pitch) whose every tile a clear of 'rect' (guest pixels) of 'surface' covers. On the console that memory then holds the clear.

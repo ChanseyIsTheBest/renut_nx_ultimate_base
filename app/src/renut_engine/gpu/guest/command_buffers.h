@@ -44,9 +44,11 @@ void BeginRecording(u32 device_va, u32 command_buffer_va);
 // copies them into the buffer.
 void RecordDraw(u32 device_va, const DrawCall &call, u32 up_vertex_bytes, u32 up_index_bytes);
 
-// Records a Begin*Vertices draw whose 'bytes' of vertex data the game writes
-// to 'scratch' after the call; copied at the device's next hooked call.
-void RecordDeferredDraw(u32 device_va, const DrawCall &call, const u8 *scratch, u32 bytes);
+// Records a Begin*Vertices draw whose 'bytes' of vertex data (and optional
+// 'index_bytes' of index data, BeginIndexedVertices': deadpool-nx) the game writes
+// to 'scratch' / 'index_scratch' after the call; copied at the device's next hooked call.
+void RecordDeferredDraw(u32 device_va, const DrawCall &call, const u8 *scratch, u32 bytes,
+                        const u8 *index_scratch = nullptr, u32 index_bytes = 0);
 
 void RecordClear(u32 device_va, u32 flags, const ClearRect *rect, const float color[4],
                  float depth, u32 stencil);

@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -68,9 +69,8 @@ struct XCONTENT_DATA {
   }
 
   std::string file_name() const {
-    std::string value;
-    value.assign(file_name_raw, std::min(strlen(file_name_raw), countof(file_name_raw)));
-    return value;
+    const auto* end = std::find(file_name_raw, file_name_raw + countof(file_name_raw), '\0');
+    return std::string(file_name_raw, static_cast<size_t>(end - file_name_raw));
   }
 
   void set_display_name(const std::u16string_view value) {
@@ -169,6 +169,12 @@ class ContentManager {
   X_RESULT SetContentThumbnail(uint64_t xuid, const XCONTENT_AGGREGATE_DATA& data,
                                std::vector<uint8_t> buffer);
   X_RESULT DeleteContent(uint64_t xuid, const XCONTENT_AGGREGATE_DATA& data);
+  // blur-nx 1.0.2 (2026-11-26, GitHub issue #9; for every port): a save written again (XamContentCreate's
+  // CREATE_ALWAYS and TRUNCATE_EXISTING) used to be deleted first, so a game closed while writing it left it empty.
+  // Its folder is moved aside instead (content_root/xuid/title/Rewriting/type/name) until the game closes the new one;
+  // a folder still set aside later (the game closed mid-write) is put back before the save is looked at. Deletes as
+  // before when the move is refused.
+  X_RESULT SetAsideContent(uint64_t xuid, const XCONTENT_AGGREGATE_DATA& data);
   X_RESULT UnmountContent(uint64_t xuid, const XCONTENT_AGGREGATE_DATA& data);
   X_RESULT UnmountAndDeleteContent(uint64_t xuid, const XCONTENT_AGGREGATE_DATA& data);
 
@@ -204,6 +210,12 @@ class ContentManager {
   std::filesystem::path ResolvePackageHeaderPath(const std::string_view file_name, uint64_t xuid,
                                                  uint32_t title_id,
                                                  XContentType content_type) const;
+  // blur-nx 1.0.2 (SetAsideContent): where a save being written again waits, and the putting back of one whose
+  // rewrite never closed (none while a package of that folder is open: its rewrite is still going on).
+  static std::filesystem::path ResolveSetAsidePath(const std::filesystem::path& package_path);
+  bool IsPackagePathOpen(const std::filesystem::path& package_path);
+  void PutBackInterrupted(const std::filesystem::path& package_path);
+  void PutBackInterruptedUnder(const std::filesystem::path& package_root);
 
   std::unordered_map<string::string_key_case, ContentPackage*,
                      string::string_key_case::Hash>::iterator
@@ -220,6 +232,9 @@ class ContentManager {
       open_packages_;
   // rr6-nx (2026-11-18): RegisterPackageFile's packages, by file name, in the order registered.
   std::vector<std::pair<std::string, std::filesystem::path>> package_files_;
+  // blur-nx 1.0.2 (SetAsideContent): the saves set aside in this run whose new one is not closed yet (their set-aside
+  // folder is not an unfinished write from an earlier run, so nothing puts it back).
+  std::vector<std::filesystem::path> rewriting_;
 };
 
 }  // namespace xam

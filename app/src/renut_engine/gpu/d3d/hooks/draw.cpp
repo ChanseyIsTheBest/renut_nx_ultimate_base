@@ -21,6 +21,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include <rex/cvar.h>
 #include <rex/hook.h>
 
 #include "renut_engine/gpu/banjo_renut_select.h"
@@ -39,6 +40,14 @@
 #include "renut_engine/gpu/backend/video.h"
 #include "profiler/profiler.h"  // katamari-nx: the frame boundary at Present
 #include <atomic>
+#include <rex/cvar.h>
+
+// deadpool-nx (2026-11-17, its checkpoint 8c90b5ca): D3DDevice_DrawIndexedVerticesUP below.
+REXCVAR_DEFINE_BOOL(deadpool_up_min_vertex, true, "Banjo/Enhancements",
+                    "deadpool-nx (exact for legal indices): DrawIndexedVerticesUP copies the NumVertices vertices from "
+                    "MinVertexIndex on (the base vertex -MinVertexIndex), not MinVertexIndex + NumVertices from vertex 0, "
+                    "and a draw with no vertex or no index is not queued. false: as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 using namespace renut::gpu;
 
@@ -194,15 +203,22 @@ void D3DDevice_DrawIndexedVerticesUP_hook(u32 device, u32 primitive, u32 min_ver
                                           u32 index_format, u32 vertex_data, u32 stride) {
   if (!Active() || !index_data || !vertex_data)
     return;
+  // deadpool-nx (deadpool_up_min_vertex): the vertices the indices can name only (D3D: MinVertexIndex <= every index <
+  // MinVertexIndex + NumVertices); BindStreams reads from base vertex + the lowest index, the same vertex as before.
+  static const bool up_min_vertex = REXCVAR_GET(deadpool_up_min_vertex);
+  if (up_min_vertex && (!num_vertices || !index_count))
+    return;
   DrawCall call;
   call.primitive = primitive;
   call.indexed = true;
+  if (up_min_vertex)
+    call.base_vertex = -i32(min_vertex);
   call.count = index_count;
   call.up_indices = GuestPtr<const u8>(index_data);
   call.up_indices_32 = (index_format & 4) != 0;  // D3DFMT_INDEX32
-  call.up_vertices = GuestPtr<const u8>(vertex_data);
+  call.up_vertices = GuestPtr<const u8>(up_min_vertex ? vertex_data + min_vertex * stride : vertex_data);
   call.up_stride = stride;
-  call.up_vertex_count = min_vertex + num_vertices;
+  call.up_vertex_count = up_min_vertex ? num_vertices : min_vertex + num_vertices;
   const u32 vertex_bytes = call.up_vertex_count * stride;
   const u32 index_bytes = index_count * (call.up_indices_32 ? 4 : 2);
   if (IsRecordingCommandBuffer(device))
@@ -620,6 +636,78 @@ BANJO_RENUT_HOOK(sub_824DA9C0, D3DDevice_DrawIndexedTessellatedVertices_hook);  
 BANJO_RENUT_HOOK(sub_824D9758, D3DDevice_DrawVerticesUP_hook);  // D3DDevice_DrawVerticesUP  // katamari-nx: N&B sub_821FD698, D3DDevice_DrawVerticesUP: BeginVertices-style reserve, reads VerticesRingEnd +13428 (N&B +13444) and the flags +10940; sig 0.69/0.55
 BANJO_RENUT_UNHOOKED_HOOK(sub_8263F2B8, D3DDevice_DrawIndexedVerticesUP_hook);  // D3DDevice_DrawIndexedVerticesUP  // katamari-nx: not hooked (D3DDevice_DrawIndexedVerticesUP: no counterpart found (sig 0.32))
 BANJO_RENUT_HOOK(sub_824D92B8, D3DDevice_BeginVertices_hook);  // D3DDevice_BeginVertices  // katamari-nx: N&B sub_821FBD30, signature 0.87 (next 0.70)
+// asura-nx: HRESULT D3DDevice_BeginIndexedVertices(D3DDevice*, D3DPRIMITIVETYPE, INT BaseVertexIndex, UINT NumVertices,
+//     UINT IndexCount, D3DFORMAT IndexDataFormat, UINT VertexStreamZeroStride, void **ppIndexData, void **ppVertexData):
+// r3-r10 and the ninth argument at sp+84. The vertices and the indices go to the device's scratch (indices after the
+// vertices, 16-byte aligned) and the draw is deferred like BeginVertices'; the inline end is EndIndexedVertices.
+// Katamari's XDK: not found here. A port binds it at its address with BANJO_RENUT_HOOK_RAW (asura-nx: sub_82999080).
+// (Unlike BeginVertices, asura-nx's form does not record into a command buffer being recorded.)
+// deadpool-nx (8c90b5ca): its BeginIndexedVertices recorded a draw inside a command buffer being recorded, as
+// BeginVertices does here (RecordDeferredDraw, its indices copied at the device's next hooked call with its vertices).
+REXCVAR_DEFINE_BOOL(deadpool_begin_indexed_record, true, "Banjo/Enhancements",
+                    "deadpool-nx: a BeginIndexedVertices draw (a port that binds the hook) made while the device records "
+                    "a command buffer goes into that buffer, as BeginVertices' does. false: queued at once, as "
+                    "asura-nx's form (and the console never) does")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+BANJO_RENUT_UNHOOKED_HOOK_RAW(sub_BeginIndexedVertices) {
+  const u32 device = ctx.r3.u32;
+  const u32 primitive = ctx.r4.u32;
+  const i32 base_vertex = i32(ctx.r5.u32);
+  const u32 num_vertices = ctx.r6.u32;
+  const u32 index_count = ctx.r7.u32;
+  const u32 index_format = ctx.r8.u32;
+  const u32 stride = ctx.r9.u32;
+  const u32 pp_index_data = ctx.r10.u32;
+  const u32 pp_vertex_data = LoadU32(ctx.r1.u32 + 84u);
+  const bool indices_32 = (index_format & 4u) != 0;  // D3DFMT_INDEX32
+  const u64 vert_bytes = u64(num_vertices) * stride;
+  const u64 idx_bytes = u64(index_count) * (indices_32 ? 4u : 2u);
+  const u64 vert_aligned = (vert_bytes + 15ull) & ~15ull;
+  const u64 idx_padded = (idx_bytes + 3ull) & ~3ull;
+  if (!vert_bytes || !idx_bytes || vert_aligned + idx_padded > kVerticesScratchSize) {
+    if (pp_index_data)
+      StoreU32(pp_index_data, 0);
+    if (pp_vertex_data)
+      StoreU32(pp_vertex_data, 0);
+    ctx.r3.u64 = kE_OUTOFMEMORY;
+    return;
+  }
+  const u32 scratch = VerticesScratch(device);
+  if (!scratch) {
+    if (pp_index_data)
+      StoreU32(pp_index_data, 0);
+    if (pp_vertex_data)
+      StoreU32(pp_vertex_data, 0);
+    ctx.r3.u64 = kE_OUTOFMEMORY;
+    return;
+  }
+  StoreU32(device + d3d::kDeviceOffsetVerticesRingEnd,
+           LoadU32(device + u32(offsetof(d3d::Device, m_pRing))));
+  const u32 vert_scratch = scratch;
+  const u32 idx_scratch = scratch + u32(vert_aligned);
+  if (pp_index_data)
+    StoreU32(pp_index_data, idx_scratch);
+  if (pp_vertex_data)
+    StoreU32(pp_vertex_data, vert_scratch);
+  DrawCall call;
+  call.primitive = primitive;
+  call.indexed = true;
+  call.base_vertex = base_vertex;
+  call.count = index_count;
+  call.up_vertices = GuestPtr<const u8>(vert_scratch);
+  call.up_stride = stride;
+  call.up_vertex_count = num_vertices;
+  call.up_indices = GuestPtr<const u8>(idx_scratch);
+  call.up_indices_32 = indices_32;
+  static const bool record = REXCVAR_GET(deadpool_begin_indexed_record);
+  if (record && IsRecordingCommandBuffer(device))
+    RecordDeferredDraw(device, call, call.up_vertices, u32(vert_bytes), call.up_indices, u32(idx_bytes));
+  else if (Active())
+    QueueDeferredDraw(device, call, call.up_vertices, u32(vert_bytes), call.up_indices, u32(idx_bytes));
+  else
+    FlushDeferredVertices(device);
+  ctx.r3.u64 = 0;
+}
 BANJO_RENUT_HOOK(sub_824F3248, D3DDevice_ClearF_hook);  // D3DDevice_ClearF  // katamari-nx: N&B sub_8224F110, D3DDevice_ClearF: sig 0.71/0.40; reads the targets +12432.. and tiling surfaces +12720.. as N&B +12448 / +12736
 BANJO_RENUT_HOOK(sub_824F3370, D3DDevice_Clear_hook);  // D3DDevice_Clear  // katamari-nx: N&B sub_8224F238, signature 0.84 (next 0.36)
 BANJO_RENUT_HOOK(sub_824F12B8, D3DDevice_Resolve_hook);  // D3DDevice_Resolve  // katamari-nx: N&B sub_821FC7A0, signature 0.78 (next 0.33)

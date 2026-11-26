@@ -30,6 +30,47 @@ struct Vertex
     float clipDistance : SV_ClipDistance0;
 };
 
+// ilomilo-nx (2026-11-25, ilomilo_renut_gs_no_clip): rectangle_list_noclip_gs.hlsl defines RENUT_GS_NO_CLIP and
+// includes this file: the same rectangles with no clip distance written, for the draws whose vertex shader writes none
+// (sasrt_gpu_clip_spec: no plane set, constant 929 = 0). This shader passed the vertex shader's unwritten output on:
+// the console ignores it there (plume_deko3d's noUserClip turns the clip slot off), but Ryujinx clips with whatever
+// the last stage writes, and cut ilomilo's depth-of-field rectangles into wedges. The fields are Vertex's, in its
+// order, without clipDistance (a built-in: no location, so the others keep theirs).
+#if defined(RENUT_GS_NO_CLIP)
+struct OutVertex
+{
+    float4 position : SV_Position;
+    float4 texcoord[16] : TEXCOORD0;
+    float4 color[2] : COLOR0;
+    float4 normal[3] : NORMAL0;
+    float4 tangent : TANGENT0;
+    float4 binormal : BINORMAL0;
+    float4 fog : FOG0;
+    float4 position2 : POSITION2;
+    float2 pointCoord : POINTCOORD;
+    float pointSize : POINTSIZE;
+};
+
+OutVertex Out(Vertex v)
+{
+    OutVertex o;
+    o.position = v.position;
+    o.texcoord = v.texcoord;
+    o.color = v.color;
+    o.normal = v.normal;
+    o.tangent = v.tangent;
+    o.binormal = v.binormal;
+    o.fog = v.fog;
+    o.position2 = v.position2;
+    o.pointCoord = v.pointCoord;
+    o.pointSize = v.pointSize;
+    return o;
+}
+#else
+typedef Vertex OutVertex;
+Vertex Out(Vertex v) { return v; }
+#endif
+
 // a + b - c for every output: the corner across the diagonal a-b from c.
 Vertex Opposite(Vertex a, Vertex b, Vertex c)
 {
@@ -64,16 +105,16 @@ float Skew(float2 p, float2 a, float2 b)
 }
 
 // The strip from the right angle c, then a and b, then the corner across the diagonal a-b.
-void EmitRectangle(Vertex c, Vertex a, Vertex b, inout TriangleStream<Vertex> output)
+void EmitRectangle(Vertex c, Vertex a, Vertex b, inout TriangleStream<OutVertex> output)
 {
-    output.Append(c);
-    output.Append(a);
-    output.Append(b);
-    output.Append(Opposite(a, b, c));
+    output.Append(Out(c));
+    output.Append(Out(a));
+    output.Append(Out(b));
+    output.Append(Out(Opposite(a, b, c)));
 }
 
 [maxvertexcount(4)]
-void main(triangle Vertex input[3], inout TriangleStream<Vertex> output)
+void main(triangle Vertex input[3], inout TriangleStream<OutVertex> output)
 {
     const float2 p0 = ScreenPosition(input[0]);
     const float2 p1 = ScreenPosition(input[1]);

@@ -212,6 +212,7 @@ bool ReXApp::SetupEnvironment() {
     rex::cvar::LoadConfigString(built_in, "built-in defaults");
   if (std::filesystem::exists(config_path_))
     rex::cvar::LoadConfig(config_path_);
+  OnPostConfig();
 #if REX_PLATFORM_SWITCH
   // banjo-nx (2026-10-27): the four-core mode's keys as the toml sets them (main read them before the toml was loaded:
   // the command line's and the defaults only), and the forwarder's NPDM for the toml's program id.
@@ -272,28 +273,43 @@ bool ReXApp::SetupEnvironment() {
 }
 
 bool ReXApp::ConstructRuntime(const PathConfig& paths) {
-  if (paths.game_data_root.empty()) {
+  PathConfig sanitized_paths = paths;
+#if defined(__SWITCH__)
+  auto strip_sdmc = [](std::filesystem::path& p) {
+    std::string s = p.string();
+    if (s.rfind("sdmc:/", 0) == 0) {
+      p = s.substr(5);
+    }
+  };
+  strip_sdmc(sanitized_paths.game_data_root);
+  strip_sdmc(sanitized_paths.user_data_root);
+  strip_sdmc(sanitized_paths.update_data_root);
+  strip_sdmc(sanitized_paths.cache_root);
+  strip_sdmc(sanitized_paths.metadata_root);
+#endif
+  if (sanitized_paths.game_data_root.empty()) {
     auto msg = std::string("--game_data_root was not provided.");
     REXLOG_ERROR("{}", msg);
     rex::ShowSimpleMessageBox(rex::SimpleMessageBoxType::Error, msg);
     return false;
   }
-  if (!std::filesystem::is_directory(paths.game_data_root)) {
-    auto msg = fmt::format("--game_data_root does not exist: {}", paths.game_data_root.string());
+  std::error_code ec;
+  if (!std::filesystem::is_directory(sanitized_paths.game_data_root, ec)) {
+    auto msg = fmt::format("--game_data_root does not exist: {}", sanitized_paths.game_data_root.string());
     REXLOG_ERROR("{}", msg);
     rex::ShowSimpleMessageBox(rex::SimpleMessageBoxType::Error, msg);
     return false;
   }
 
-  game_data_root_ = paths.game_data_root;
-  user_data_root_ = paths.user_data_root;
-  update_data_root_ = paths.update_data_root;
-  cache_root_ = paths.cache_root;
-  metadata_root_ = paths.metadata_root;
+  game_data_root_ = sanitized_paths.game_data_root;
+  user_data_root_ = sanitized_paths.user_data_root;
+  update_data_root_ = sanitized_paths.update_data_root;
+  cache_root_ = sanitized_paths.cache_root;
+  metadata_root_ = sanitized_paths.metadata_root;
 
   runtime_ =
-      std::make_unique<rex::Runtime>(paths.game_data_root, paths.user_data_root,
-                                     paths.update_data_root, paths.cache_root, paths.metadata_root);
+      std::make_unique<rex::Runtime>(sanitized_paths.game_data_root, sanitized_paths.user_data_root,
+                                     sanitized_paths.update_data_root, sanitized_paths.cache_root, sanitized_paths.metadata_root);
   runtime_->set_app_context(&app_context());
 
   // Window and ImGui drawer already exist from SetupPresentation; publish them

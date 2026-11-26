@@ -3,6 +3,7 @@
 // cache of compiled variants on the SD card.
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -38,6 +39,20 @@ bool BoolSpecMask(uint64_t hash, uint32_t mask[8]);
 // device is made.
 void InstallShaderCache();
 void SaveShaderCache();
+
+// S4ep2-XBLA-nx (github.com/FurryLilManChild/S4ep2-XBLA-nx, GPL-3.0, 0.5.0; its ca03ac30 "Shaders prepared before the
+// game"): with s4ep2_prepare_shaders_list naming a file next to the NRO (tools/deko3d_variant_cache.py --export-variants:
+// "<vs|ps>_<HASH> <id>=<value>,..."), every variant it lists is made ready before the game draws: read from the DKSH
+// cache, or compiled now when the cache lacks it (saved there for the next start). Called once, from
+// Direct3D_CreateDevice (the game's thread, before its first draw); blocks that thread; the progress is in ShaderPrep()
+// for the screen that shows it (app/src/shader_prep_screen.cpp). Nothing with the key empty, without the file, or off
+// deko3d. Switch builds only (this file).
+struct ShaderPrepProgress {
+  std::atomic<bool> active{false};
+  std::atomic<uint32_t> done{0}, total{0}, compiled{0}, failed{0};
+};
+ShaderPrepProgress &ShaderPrep();
+void PrepareListedVariants();
 
 // One line for the renderer's report: compiles, cache hits, memory.
 std::string Report();

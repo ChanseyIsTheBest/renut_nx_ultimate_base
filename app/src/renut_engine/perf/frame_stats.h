@@ -53,6 +53,28 @@ std::string WaitReport();
 // The window starts again.
 std::string PacingReport();
 
+struct PacingSnapshot {
+    int count = 0;
+    double best_ms = 0.0;
+    double worst_ms = 0.0;
+    double median_ms = 0.0;
+    double avg_ms = 0.0;
+    double avg_fps = 0.0;
+    double low1_fps = 0.0;
+    int low1_count = 0;
+    int stutters = 0;
+    int hitches_45ms = 0;
+    int vblank_pct[5] = {};  // 1, 2, 3, 4, 5+ vblanks
+    double cur_cpu_active_ms = 0.0, avg_cpu_active_ms = 0.0;
+    double cur_wait_fence_ms = 0.0, avg_wait_fence_ms = 0.0;
+    double cur_wait_swap_ms = 0.0, avg_wait_swap_ms = 0.0;
+    double cur_wait_display_ms = 0.0, avg_wait_display_ms = 0.0;
+    double cur_wait_limiter_ms = 0.0, avg_wait_limiter_ms = 0.0;
+    double cur_render_ms = 0.0, avg_render_ms = 0.0;
+    double cur_gpu_ms = 0.0, avg_gpu_ms = 0.0;
+};
+
 Snapshot Get();
+PacingSnapshot GetPacingSnapshot();
 
 } // namespace renut::frame_stats

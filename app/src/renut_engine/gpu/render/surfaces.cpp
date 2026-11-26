@@ -28,6 +28,7 @@
 #include "renut_engine/perf/frame_stats.h"  // sasrt-nx (2026-11-09, sasrt_dynamic_cpu_aware; port 52)
 #include "renut_engine/gpu/sasrt_gpu_round.h"  // sasrt-nx (2026-11-09, sasrt_rt_restore_candidates; port 54)
 #include <rex/filesystem/devices/host_path_file.h>  // sasrt-nx (2026-11-09; port 58): TrimRangeCache (the governor)
+#include <rex/audio/xma/context.h>  // blur-nx 1.0.2 (issue #9): LimitXmaFrameCache (the governor)
 #if defined(PLUME_DEKO3D)
 #include <plume_deko3d.h>  // banjo-nx (2026-10-21, from sa2-nx 1.0.3.1): Deko3DSetSwapChainSize
 #endif
@@ -566,6 +567,14 @@ RenderScale ResolutionScale() {
   return g_resolution_scale;
 }
 
+// asura-nx (v1.0.0): a game with no composite list (banjo_renut_smaa_after_ps empty) draws at the render scale always.
+// Off: with nothing to detect the composite by, every frame counts as a menu after kMenuFrames and is drawn at the
+// display scale (the render height does nothing in such a game), as before.
+REXCVAR_DEFINE_BOOL(asura_renut_scale_without_composite_list, false, "Banjo/Renut",
+                    "From asura-nx: with banjo_renut_smaa_after_ps empty, the render height applies to every frame "
+                    "(menus included). false: such a game draws at the display scale, as before. Read at start")
+    .lifecycle(::rex::cvar::Lifecycle::kInitOnly);
+
 void LatchResolutionScaleLocked() {
   LatchGraphicsOptionsLocked();
   // blur-nx (2026-11-18, the game menu: MSAA at once): the level once a frame; a change makes the MSAA targets anew (their
@@ -762,7 +771,9 @@ void LatchResolutionScaleLocked() {
     g_frames_without_composite = g_composite_seen ? 0 : std::min(g_frames_without_composite + 1, kMenuFrames);
     g_composite_seen = false;
     ui = display_scale;
-    scale = g_frames_without_composite < kMenuFrames ? render_scale : display_scale;
+    static const bool without_list = REXCVAR_GET(asura_renut_scale_without_composite_list) &&  // asura-nx
+                                     banjo::renut_gpu::SmaaAfterPsList().empty();
+    scale = (without_list || g_frames_without_composite < kMenuFrames) ? render_scale : display_scale;
 #if defined(PLUME_DEKO3D)
     // The swapchain at the display's size (from sa2-nx 1.0.3.1): the present scales the frame to it.
     static int32_t last_display = 0;
@@ -876,6 +887,24 @@ void LatchResolutionScaleLocked() {
         RGPU_INFO("[renut] {} MB free: {} MB of kept thread stacks given back to the heap (sasrt_memory_governor)", mb,
                   stacks >> 20);
 #endif
+    }
+    // blur-nx 1.0.2 (2026-11-26, GitHub issue #9): the XMA frame cache (Blur's holds up to 384 MB, filled over a session
+    // of races: 178 MB after five on 11-26, the heap's room 1210 -> 263 MB) gives memory back at the marks: half its
+    // size while memory is low, a quarter while critical; with twice the low marks free again it may grow back whole.
+    if (banjo::renut_gpu::XmaCacheGovernorOn()) {  // renut-ultimate port 329: blur_xma_cache_governor
+      static uint32_t xma_percent = 100;
+      const bool plenty = mb >= 2 * banjo::renut_gpu::MemoryLowMarkMb() &&
+                          (!cpu_watch || cpu_mb >= 2 * banjo::renut_gpu::CpuLowMarkMb());
+      const uint32_t want = critical ? 25u : low ? std::min(xma_percent, 50u) : plenty ? 100u : xma_percent;
+      if (want != xma_percent) {
+        const uint64_t freed = rex::audio::LimitXmaFrameCache(want);
+        static uint32_t xma_logged = 0;
+        if (xma_logged++ < 32)
+          RGPU_INFO("[renut] {} MB free, the CPU side {} MB: the XMA frame cache held at {} % of "
+                    "banjo_xma_frame_cache_mb ({} MB given back; sasrt_memory_governor)",
+                    mb, cpu_room >> 20, want, freed >> 20);
+        xma_percent = want;
+      }
     }
 #if defined(__SWITCH__)
     // sasrt-nx (2026-11-09 night, sasrt_spare_stacks_idle_s; port 58): the kept guest thread stacks back to the heap once
@@ -1175,6 +1204,35 @@ void ColorAliasesLocked(const HostSurface *surface, std::vector<HostSurface *> &
     if (target && target.get() != surface && target->texture && !target->depth &&
         (key & kViewMask) == (own & kViewMask))
       out.push_back(target.get());
+  }
+}
+
+// asura-nx (asura_renut_clear_aliases_32bpp):
+void DepthColorAliasesLocked(const HostSurface *depth, std::vector<HostSurface *> &out) {
+  out.clear();
+  if (!depth || !depth->depth)
+    return;
+  uint64_t own = 0;
+  bool found = false;
+  for (const auto &[key, target] : g_targets) {
+    if (target.get() == depth) {
+      own = key;
+      found = true;
+      break;
+    }
+  }
+  if (!found)
+    return;
+  constexpr uint64_t kBaseAndPitch = 0x3FFFFFFull;
+  for (const auto &[key, target] : g_targets) {
+    HostSurface *c = target.get();
+    if (!c || c->depth || !c->texture || (key & kBaseAndPitch) != (own & kBaseAndPitch) ||
+        ((key >> 26) & 3) != ((own >> 26) & 3) || c->samples != depth->samples ||
+        c->scale != depth->scale)
+      continue;
+    const u32 cf = (u32(c->color_info_word) >> 16) & 0xF;
+    if (cf == 0 || cf == 1 || cf == 2 || cf == 3 || cf == 10 || cf == 12)
+      out.push_back(c);
   }
 }
 
@@ -1933,6 +1991,9 @@ void SwapDepthImageLocked(HostSurface &surface, DepthImage &image) {
   std::swap(surface.stencil_view, image.stencil_view);
   std::swap(surface.stencil_slot, image.stencil_slot);
   std::swap(surface.handover_views, image.views);
+  static const bool dirty_rect = REXCVAR_QUERY(bool, asura_shadow_dirty_rect);  // asura-nx (draw.cpp)
+  if (dirty_rect)
+    surface.depth_dirty_tracked = false;
   image.host_width = surface.scale.Size(surface.width);
   image.host_height = surface.scale.Size(surface.height);
   image.format = surface.format;
@@ -2083,6 +2144,30 @@ plume::RenderFramebuffer *GetFramebufferLocked(HostSurface *const *colors, uint3
   }
   g_framebuffers.push_back({key, std::move(framebuffer)});
   return remember(g_framebuffers.back().framebuffer.get());
+}
+
+// S4ep2-XBLA-nx (s4ep2_frame_capture): the target that owns a bindless slot (its sample or stencil view), for the capture.
+HostSurface *S4SurfaceBySlotLocked(uint32_t slot, const char **what) {
+  for (auto &[key, t] : g_targets) {
+    if (!t)
+      continue;
+    if (t->sample_slot == slot) {
+      *what = "target sample view";
+      return t.get();
+    }
+    if (t->stencil_slot == slot) {
+      *what = "target stencil view";
+      return t.get();
+    }
+  }
+  return nullptr;
+}
+
+// Every target, for the capture's end of frame.
+void S4ForEachSurfaceLocked(void (*fn)(HostSurface *, void *), void *ctx) {
+  for (auto &[key, t] : g_targets)
+    if (t)
+      fn(t.get(), ctx);
 }
 
 } // namespace renut::gpu

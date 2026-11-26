@@ -105,10 +105,34 @@ constexpr u64 kSecondNs = 1000000000ULL;      // tick for the console overlays
 /* internal resolution published to the overlays. The game sets it when choosing the video mode. */
 std::atomic<uint32_t> g_resolution{(1280u << 16) | 720u};
 constexpr u64 kPassiveIntervalNs = 100000000ULL;  // 100 ms, without pausing threads
-// Next to the rexglue logs, in <NRO folder>/logs/rex/.
-std::string StackFlagPath() {
-  return std::string(RexSwitchLogDir()) + "stacks_profile.flag";
+// Next to the rexglue logs (in <NRO folder>/logs/rex/) or directly in <NRO
+// folder>/ (NFSMW-NX style).
+std::string FindStackProfileFlag() {
+  const std::string log_dir = RexSwitchLogDir();
+  std::string nro_dir;
+  constexpr const char kSuffix[] = "logs/rex/";
+  if (log_dir.size() > sizeof(kSuffix) - 1 &&
+      log_dir.compare(log_dir.size() - (sizeof(kSuffix) - 1),
+                      sizeof(kSuffix) - 1, kSuffix) == 0) {
+    nro_dir = log_dir.substr(0, log_dir.size() - (sizeof(kSuffix) - 1));
+  }
+  const std::string candidates[] = {
+      log_dir + "perfil_pilas.flag",
+      log_dir + "stacks_profile.flag",
+      nro_dir.empty() ? std::string() : nro_dir + "perfil_pilas.flag",
+      nro_dir.empty() ? std::string() : nro_dir + "stacks_profile.flag",
+  };
+  for (const std::string &path : candidates) {
+    if (path.empty())
+      continue;
+    if (FILE *flag = std::fopen(path.c_str(), "r")) {
+      std::fclose(flag);
+      return path;
+    }
+  }
+  return {};
 }
+std::atomic<bool> g_stacks_active{false};
 constexpr u64 kReportSeconds = 10;
 /*
  * Let the game start first. This only delays stack sampling and the first report, which read the
@@ -1133,9 +1157,9 @@ void ProfilerMain(void*) {
   // Invasive sampling is only enabled explicitly, for diagnostics.
   // The normal mode keeps FPS, CPU and counters, without stopping the game.
   bool sample_stacks = false;
-  if (FILE* flag = std::fopen(StackFlagPath().c_str(), "r")) {
+  const std::string flag_path = FindStackProfileFlag();  // asura-nx
+  if (!flag_path.empty()) {
     sample_stacks = true;
-    std::fclose(flag);
   }
   // banjo-nx (as futari-nx): also from the config, so a profiling config works without copying the flag file to
   // the SD card (the title defines the cvar switch_profile_stacks).
@@ -1143,6 +1167,7 @@ void ProfilerMain(void*) {
     const std::string value = rex::cvar::GetFlagByName("switch_profile_stacks");
     if (value == "true" || value == "1") sample_stacks = true;
   }
+  g_stacks_active.store(sample_stacks, std::memory_order_relaxed);  // asura-nx (RexSwitchPerfStacksActive)
   // blur-nx (2026-11-16, the 15 ms batch): the interval between two stack samples, from the title's cvar
   // switch_profile_stacks_ms (1 when it has none). Each sample pauses one game thread (svcSetThreadActivity), reads its
   // context and stack and resumes it, from a thread above every game thread: at 1 ms that is ~1,000 pauses and ~5,000
@@ -1785,6 +1810,11 @@ void __wrap_svcSleepThread(s64 nano) {
  * shadow, 4 = SEH. 28..32 = draws per surface width from IssueDraw
  * (1600 or more, 1280-1599, 640-1279, 256-639, under 256).
  */
+// asura-nx: whether stack sampling runs (the profiler overlay's pacing panel says it).
+bool RexSwitchPerfStacksActive(void) {
+  return g_stacks_active.load(std::memory_order_relaxed);
+}
+
 // A long frame, in armGetSystemTick ticks (see WindowHitch).
 void RexSwitchPerfHitch(u64 start, u64 end) {
   const u32 i = g_num_hitches.fetch_add(1);

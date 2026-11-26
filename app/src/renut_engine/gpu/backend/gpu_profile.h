@@ -12,7 +12,9 @@
  */
 #pragma once
 
+#include <atomic>
 #include <cstdint>
+#include <string>
 #include <string_view>
 
 namespace renut::gpu {
@@ -43,5 +45,16 @@ void Collect(VideoState &s, uint32_t slot);
 // are worked out only for timed frames (with the per-shader breakdown, one frame in four).
 extern bool g_recording_timed;
 inline bool Timed() { return g_recording_timed; }
+
+// One-shot single-frame GPU & draw/pass/resolve/barrier capture (trigger from GameMenuDialog).
+void RequestFrameDiagCapture();
+std::string FrameDiagStatus();
+
+extern std::atomic<bool> g_frame_diag_recording;
+inline bool FrameDiagActive() {
+  return g_frame_diag_recording.load(std::memory_order_relaxed);
+}
+void FrameDiagNoteEvent(std::string_view line);
+uint32_t FrameDiagNextDrawOrdinal();
 
 } // namespace renut::gpu::gpu_profile

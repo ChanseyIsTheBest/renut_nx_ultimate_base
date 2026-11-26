@@ -13,8 +13,9 @@ float Encode7e3(float value)
     const float v = clamp(value, 0.0, 31.875);
     if (!(v >= 0.25))
         return floor(v * 512.0 + 0.5);
-    const float exponent = floor(log2(v));
-    return (exponent + 3.0) * 128.0 + floor((v / pow(2.0, exponent) - 1.0) * 128.0 + 0.5);
+    const uint u = asuint(v);
+    const uint code = min(((u + 0x8000u) - (124u << 23u)) >> 16u, 1023u);
+    return float(code);
 }
 
 float4 main(float4 position : SV_Position) : SV_Target0

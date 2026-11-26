@@ -199,6 +199,13 @@ static constexpr int kIdToSampleRate[4] = {24000, 32000, 44100, 48000};
 // enabled). Only XmaContext::set_is_enabled writes it.
 uint32_t XmaEnabledWord(uint32_t word);
 
+// blur-nx 1.0.2 (2026-11-26, GitHub issue #9; for every port with the frame cache): the XMA frame cache under memory
+// pressure. LimitXmaFrameCache caps it at 'percent' of banjo_xma_frame_cache_mb (100: the cvar alone) and evicts its
+// least answered nodes down to that at once; it returns the bytes freed. The memory governor (renut's
+// sasrt_memory_governor) calls it at its marks.
+size_t LimitXmaFrameCache(uint32_t percent);
+size_t XmaFrameCacheBytes();
+
 class XmaContext {
  public:
   static const uint32_t kBytesPerPacket = 2048;

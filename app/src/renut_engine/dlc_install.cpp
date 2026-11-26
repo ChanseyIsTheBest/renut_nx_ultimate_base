@@ -40,6 +40,7 @@ REXCVAR_DEFINE_BOOL(katamari_dlc_unlock_packs, false, "Nuts&Bolts/DLC",
     "Special Accessory): false (the default) keeps them from the game, though they stay installed; true shows them "
     "too. The stage packs are shown either way.");
 REXCVAR_DECLARE(std::string, dlc_hidden);  // sdk/src/system/xam/content_manager.cpp
+REXCVAR_DECLARE(bool, deadpool_dlc_enabled);  // sdk/src/system/xam/content_manager.cpp (deadpool-nx)
 
 namespace renut::dlc {
 
@@ -142,6 +143,8 @@ void SetUserDataRoot(const fs::path &root) {
 
 void InstallPackages(rex::Runtime *runtime) {
     if (!runtime || !runtime->kernel_state())
+        return;
+    if (!REXCVAR_GET(deadpool_dlc_enabled))
         return;
     if (!REXCVAR_GET(katamari_dlc_unlock_packs)) {
         std::string &hidden = REXCVAR_GET(dlc_hidden);

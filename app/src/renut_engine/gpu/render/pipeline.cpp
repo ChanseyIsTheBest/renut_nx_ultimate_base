@@ -314,6 +314,14 @@ uint32_t OutputTrimMask(const PipelineKey &key) {
 
 namespace {
 
+// renut-ultimate (port 284's hardening): the one place that says when a pipeline's vertex shader writes no clip
+// distance (sasrt_gpu_clip_spec: key bit 3 clear, constant 929 = 0 below). The geometry shader's choice
+// (ilomilo_renut_gs_no_clip) asks the same, so the two cannot disagree: a vertex shader that writes the clip
+// distance always gets the geometry shaders that pass it on.
+inline bool VertexShaderWritesNoClip(const PipelineKey &key) {
+  return key.vertex_shader && !(key.reserved & 8u);
+}
+
 // Any thread: reads only what device creation set up.
 std::unique_ptr<plume::RenderPipeline> Build(const PipelineKey &key, const PipelineInputs &inputs) {
   // banjo-nx (a test, banjo_renut_diag_build_delay_ms): console-slow compiles on the PC.
@@ -327,10 +335,16 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineKey &key, const Pipel
   desc.pipelineLayout = s.draw_layout.get();
   desc.vertexShader = inputs.vertex_shader;
   desc.pixelShader = inputs.pixel_shader;
+  // ilomilo-nx (2026-11-25, ilomilo_renut_gs_no_clip): key bit 3 of reserved clear is exactly when the vertex shader
+  // gets constant 929 = 0 below (sasrt_gpu_clip_spec: no plane), so it writes no clip distance: the geometry shader
+  // then writes none either (the usual one passed the unwritten output on, which Ryujinx clipped with).
+  const bool gs_no_clip = VertexShaderWritesNoClip(key);
   if (key.rectangle_list)
-    desc.geometryShader = s.rectangle_list_gs.get();
+    desc.geometryShader = gs_no_clip && s.rectangle_list_noclip_gs ? s.rectangle_list_noclip_gs.get()
+                                                                   : s.rectangle_list_gs.get();
   if (key.point_sprite)
-    desc.geometryShader = s.point_sprite_gs.get();
+    desc.geometryShader = gs_no_clip && s.point_sprite_noclip_gs ? s.point_sprite_noclip_gs.get()
+                                                                 : s.point_sprite_gs.get();
   desc.primitiveTopology = key.topology;
 
   // PA_SU_SC_MODE_CNTL: cull front 0, cull back 1, front face clockwise 2.
@@ -343,7 +357,9 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineKey &key, const Pipel
                                              : plume::RenderCullMode::NONE;
   desc.frontFace = (key.mode_control & 4) ? plume::RenderFrontFace::CLOCKWISE
                                           : plume::RenderFrontFace::COUNTER_CLOCKWISE;
-  desc.depthClipEnabled = true;
+  // ilomilo-nx (2026-11-25, ilomilo_renut_clip_disable / ilomilo_renut_rect_depth_clamp; renut-ultimate port 289):
+  // mode_control bit 3 (MakeKey): depth clamped there instead of clipped.
+  desc.depthClipEnabled = !(key.mode_control & 8u);
   // rr6-nx (2026-11-03, rr6_depth_bias): set per draw (SetDrawDepthBias), so no value of it makes a pipeline.
   desc.dynamicDepthBiasEnabled = banjo::renut_gpu::DepthBiasOn() && s.device->getCapabilities().dynamicDepthBias;
 
@@ -434,7 +450,8 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineKey &key, const Pipel
     // blur-nx (2026-11-17, blur_renut_target_bias_rgb): the colour scaled by the bias too (shader_common.h, constant 927).
     // One value for the whole run, so not in the key: a variant is keyed by the values of the constants it declares.
     if (banjo::renut_gpu::TargetBiasRgbOn())
-      spec[spec_count++] = plume::RenderSpecConstant(927, 1);
+      spec[spec_count++] = plume::RenderSpecConstant(927, (key.sasrt_words[7] & 0x10000u) ? 2u : 1u);  // asura-nx: 2
+                                                    // fixed16 (bit 16 is set only with asura_renut_fixed16_bias)
   }
   // banjo-nx (banjo_gpu_output_trim): the colour channels the pixel shader leaves 0.
   if (key.output_trim) {
@@ -460,7 +477,7 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineKey &key, const Pipel
   // sasrt-nx (2026-11-08, sasrt_gpu_clip_spec; the second GPU round): a draw without a user clip plane (key bit 3
   // clear): the vertex shader without its clip distance (constant 929 = 0, pass clipspec); plume_deko3d sets the clip slot
   // off for the pipeline (Deko3DGraphicsPipeline::noUserClip).
-  if (key.vertex_shader && !(key.reserved & 8u)) {
+  if (VertexShaderWritesNoClip(key)) {
     spec[spec_count++] = plume::RenderSpecConstant(929, 0);
     sasrt::gpu_round::Count(sasrt::gpu_round::kClipSpec, 1, 1);  // pipelines built without it (the 10 s line, /n)
   }
@@ -1266,10 +1283,26 @@ SpecState SpecialisedPipeline(const PipelineKey &key, uint64_t hash, const HostV
   return SpecState::Pending;
 }
 
+// asura-nx (v1.0.0): while a specialised pipeline builds, the generic one a draw takes keeps sasrt_words[7] bits 28-31
+// (constant 990, the 7e3 clamp) and bit 16 (constant 927 = 2, asura_renut_fixed16_bias): "so generic fallbacks stay
+// non-specialised while preserving clamping". false: every spec word cleared, as before (a 7e3 target drew unclamped
+// until its variant was built).
+REXCVAR_DEFINE_BOOL(asura_renut_generic_keeps_clamps, true, "Banjo/Renut",
+                    "From asura-nx: the generic pipeline a draw takes while its variant builds keeps the 7e3 and 16-bit "
+                    "fixed-point clamps (more generic variants in the DKSH cache). false: as before. Read at start")
+    .lifecycle(::rex::cvar::Lifecycle::kInitOnly);
+inline uint32_t AsuraGenericKeptWord7() {
+  static const uint32_t keep = REXCVAR_GET(asura_renut_generic_keeps_clamps) ? 0xF0010000u : 0u;
+  return keep;
+}
+
 bool Specialised(const PipelineKey &key) {
   if (key.alpha_func || key.tess_kind || key.fetch_pad)  // port 44: fetch_pad, constant 926
     return true;
-  for (const uint32_t w : key.sasrt_words) {  // sasrt-nx (2026-11-08, the third round)
+  const uint32_t kept7 = AsuraGenericKeptWord7();  // asura-nx: 0 with the key off
+  for (uint32_t i = 0; i < 20; ++i) {  // sasrt-nx (2026-11-08, the third round)
+    // asura-nx: the clamps a generic fallback keeps are not a specialisation.
+    const uint32_t w = (i == 7) ? (key.sasrt_words[7] & ~kept7) : key.sasrt_words[i];
     if (w)
       return true;
   }
@@ -1517,6 +1550,8 @@ static plume::RenderPipeline *GetPipelineSlow(const PipelineKey &key, const Pipe
     generic.tess_kind = 0;
     generic.fetch_pad = 0;  // port 44 (sasrt_gpu_plain_fetches)
     std::memset(generic.sasrt_words, 0, sizeof(generic.sasrt_words));  // sasrt-nx (2026-11-08, the third round)
+    if (const uint32_t kept7 = AsuraGenericKeptWord7())  // asura-nx: keep 990 clamp7e3 & 927 fixed16
+      generic.sasrt_words[7] = key.sasrt_words[7] & kept7;
     plume::RenderPipeline *pipeline = GetPipelineLocked(generic, inputs);
     if (state == SpecState::Pending) {
       SpecPending &p = g_spec_pending[hash];

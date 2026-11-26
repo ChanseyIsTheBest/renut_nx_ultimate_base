@@ -36,6 +36,9 @@
 #include "renut_engine/gpu/banjo_renut_tuning.h"  // banjo-nx: CountFenceQuery
 #include "renut_engine/gpu/banjo_renut_checks.h"  // banjo-nx (package 27c): QueueKickFlush
 #include "renut_engine/gpu/banjo_renut_select.h"
+#if defined(__SWITCH__)
+#include "renut_engine/gpu/banjo_renut_deko3d.h"  // S4ep2-XBLA-nx: PrepareListedVariants (Switch builds only)
+#endif
 #include <rex/kernel/xboxkrnl/video.h>
 #include <rex/ppc.h>
 #include <rex/system/xvideo.h>
@@ -402,6 +405,11 @@ void UninitializeDevice(native::Device d) {
 u32 Direct3D_CreateDevice_hook(u32 /*adapter*/, u32 device_type, u32 /*unused*/,
                                u32 behavior_flags, u32 present_parameters,
                                mapped_u32 out_device) {
+#if defined(__SWITCH__)
+  // S4ep2-XBLA-nx (s4ep2_prepare_shaders_list, banjo_renut_deko3d.h): the listed shader variants made ready before the game
+  // draws, on its thread (once; nothing with the key empty). banjo_renut_deko3d.cpp is in the Switch build only.
+  banjo::renut_gpu::deko3d::PrepareListedVariants();
+#endif
   if (out_device)
     *out_device = 0u;
 
@@ -1266,8 +1274,10 @@ void D3DDevice_SetGammaRamp_hook(u32 device_va, u32 ramp_va) {
 }
 
 // Port 173 (from rehatched-nx, its commit 9d93d896): XDK 2.0.9407 (and 11164, docs/xdk-notes.md) keeps the Flags
-// argument, (D3DDevice*, DWORD Flags, ramp): the two-argument hooks would read Flags as the ramp's address. Not bound
-// here (Katamari's build dropped Flags); a port at such an XDK binds these at the two functions' addresses in place of
+// argument, (D3DDevice*, DWORD Flags, ramp): the two-argument hooks would read Flags as the ramp's address. ilomilo-nx
+// (2026-11-25): XDK 2.0.5632 keeps it too: Katamari's SetGammaRamp sub_824DE218 and SetPWLGamma sub_824DE2F8 both begin
+// mr r31,r3; mr r4,r5; li r5,0 (the ramp is r5), so the base binds these forms
+// (renut-ultimate port 286); a port at any XDK checks its own and binds these at the two functions' addresses in place of
 // the two-argument hooks (BANJO_RENUT_HOOK(sub_<address>, D3DDevice_SetGammaRamp_flags_hook), and the PWL one).
 void D3DDevice_SetGammaRamp_hook(u32 device_va, u32 ramp_va);
 void D3DDevice_SetPWLGamma_hook(u32 device_va, u32 pwl_va);
@@ -1369,8 +1379,8 @@ BANJO_RENUT_UNHOOKED_HOOK(sub_8225D1D0, D3DDevice_BlockOnFence_hook);  // D3DDev
 BANJO_RENUT_HOOK(sub_824E89E8, D3D_SynchronizeToPresentationInterval_hook);  // D3D_SynchronizeToPresentationInterval  // katamari-nx: N&B sub_82258778, D3D_SynchronizeToPresentationInterval: called by Present before the resolve; sig 0.72/0.39
 BANJO_RENUT_UNHOOKED_HOOK(sub_8263D4B8, D3DResource_GetDevice_hook);  // D3DResource_GetDevice  // katamari-nx: not hooked (signature too weak or ambiguous (sub_824E8610 0.43, next 0.43))
 BANJO_RENUT_UNHOOKED_HOOK(sub_82BC8078, D3D_IsFusion_hook);  // D3D_IsFusion  // katamari-nx: not hooked (signature too weak or ambiguous (sub_824903A8 0.56, next 0.43))
-BANJO_RENUT_HOOK(sub_824DE218, D3DDevice_SetGammaRamp_hook);  // D3DDevice_SetGammaRamp  // katamari-nx: N&B sub_82636F48, D3DDevice_SetGammaRamp: InitializePresentationParameters calls it, then SetPWLGamma, in N&B's order; sig 0.63 for both
-BANJO_RENUT_HOOK(sub_824DE2F8, D3DDevice_SetPWLGamma_hook);  // D3DDevice_SetPWLGamma  // katamari-nx: N&B sub_82637018, D3DDevice_SetPWLGamma: as above
+BANJO_RENUT_HOOK(sub_824DE218, D3DDevice_SetGammaRamp_flags_hook);  // D3DDevice_SetGammaRamp  // katamari-nx: N&B sub_82636F48, D3DDevice_SetGammaRamp: InitializePresentationParameters calls it, then SetPWLGamma, in N&B's order; sig 0.63 for both
+BANJO_RENUT_HOOK(sub_824DE2F8, D3DDevice_SetPWLGamma_flags_hook);  // D3DDevice_SetPWLGamma  // katamari-nx: N&B sub_82637018, D3DDevice_SetPWLGamma: as above
 BANJO_RENUT_HOOK(sub_824D0598, Direct3D_CreateDevice_hook);  // Direct3D_CreateDevice  // katamari-nx: N&B sub_82634990, Direct3D_CreateDevice: allocates the 0x5700 device (li r3,22272 / 128 alignment, sub_824D0240), calls the device init sub_824E18D0 (XenonGpu_Initialize, InitializePresentationParameters, InitializeApiState); sig 0.39 because N&B inlines that init
 BANJO_RENUT_HOOK(sub_824D0368, D3DDevice_Release_hook);  // D3DDevice_Release  // katamari-nx: N&B sub_82634AE8, signature 1.00 (next 0.59)
 BANJO_RENUT_HOOK(sub_824ED278, D3D_XenonGpu_Initialize_hook);  // D3D_XenonGpu_Initialize  // katamari-nx: N&B sub_8264B748, D3D_XenonGpu_Initialize: called by the device init sub_824E18D0 after the -1 words; sig 0.66/0.23

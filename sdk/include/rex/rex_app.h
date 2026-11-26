@@ -95,6 +95,9 @@ class ReXApp : public ui::WindowedApp, public ui::WindowListener, public ui::Win
 
   // --- Virtual hooks for customization ---
 
+  /// Called right after built-in and user TOML configs load, before system/logging init.
+  virtual void OnPostConfig() {}
+
   /// Called before Runtime::Setup(). Override to modify backend config.
   virtual void OnPreSetup(RuntimeConfig& config) {}
 

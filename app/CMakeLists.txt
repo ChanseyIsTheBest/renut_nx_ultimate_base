@@ -206,6 +206,7 @@ set(RENUT_SOURCES
     src/build_stamp.cpp  # port 193: the build stamp, the first line of every log (cmake/build_stamp.cmake)
     src/katamari_keys.cpp
     src/game_menu.cpp  # blur-nx (2026-11-18): the game menu (A+B+X+Y+L+R on the Switch, F8 on the PC)
+    src/shader_prep_screen.cpp  # S4ep2-XBLA-nx: the "Preparing shaders" screen (s4ep2_prepare_shaders_list)
     src/blur_small_alloc.cpp  # blur-nx (2026-11-17, #220; port 151): small C++ allocations per thread (Switch; 32 MB)
     # katamari-nx (2026-10-31): DLC packages in the "dlc" folder next to the NRO installed at start (reNut upstream's).
     src/renut_engine/dlc_install.cpp
@@ -375,6 +376,16 @@ set(BANJO_HOT_SOURCES src/cpu/banjo_hot_guest.cpp
     src/cpu/banjo_hot_shard_10.cpp
     src/cpu/banjo_hot_shard_11.cpp
 )
+# S4ep2-XBLA-nx (github.com/FurryLilManChild/S4ep2-XBLA-nx, GPL-3.0, 0.5.0; its ce9ec65d "Make the hot-copy sources wait
+# for the code generator on a fresh build"): these include generated/renut_pch.h and generated/hot, so on a fresh tree
+# they wait for the code generator and the post-codegen steps appended to its command (its first PC build compiled them
+# before it had run: "'renut_pch.h' file not found"). A build-order dependency only: the objects are the same. OFF: as
+# before. The Switch cross build has no generator target.
+option(S4EP2_HOT_SOURCES_WAIT_CODEGEN "The hot-copy sources wait for the code generator's stamp (a fresh tree's build order)" ON)
+if(S4EP2_HOT_SOURCES_WAIT_CODEGEN AND TARGET renut_codegen)
+    set_property(SOURCE ${BANJO_HOT_SOURCES} APPEND PROPERTY OBJECT_DEPENDS
+                 "${CMAKE_CURRENT_SOURCE_DIR}/generated/codegen.build.stamp")
+endif()
 if(BANJO_GENERATED_MATH_FLAGS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set_property(SOURCE ${BANJO_HOT_SOURCES} APPEND PROPERTY COMPILE_OPTIONS -fno-math-errno)
     # banjo-nx (2026-11-19; blur-nx's form): the copies as the game code (the guard compares them with it).

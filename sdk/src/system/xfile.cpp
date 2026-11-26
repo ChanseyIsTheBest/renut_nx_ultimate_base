@@ -27,6 +27,12 @@ REXCVAR_DEFINE_BOOL(kernel_scatter_read_offset_zero, false, "Kernel",
                     "tw2de_nx (exact): NtReadFileScatter at byte offset 0 reads from offset 0: only -1 and -2 mean the "
                     "file's own position. false: offset 0 read from wherever the file's position was, as before");
 
+// deadpool-nx (v1.0.1, 25a2e309).
+REXCVAR_DEFINE_BOOL(deadpool_xfile_read_position, true, "Kernel",
+                    "deadpool-nx: after a read the file's position is the read's offset plus the bytes read, also for "
+                    "a read at offset 0. false: a read at offset 0 added to the old position, as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
 namespace rex::system {
 
 XFile::XFile(KernelState* kernel_state, rex::filesystem::File* file, bool synchronous)
@@ -176,10 +182,16 @@ X_STATUS XFile::ReadInternal(uint32_t buffer_guest_address, uint32_t buffer_leng
                   buffer_length, true, true);
             }
 
-            if (byte_offset) {
-              position_ = byte_offset;
+            static const bool read_position = REXCVAR_GET(deadpool_xfile_read_position);
+            if (read_position) {
+              // byte_offset is already the position when the game passed -1 (above).
+              position_ = byte_offset + bytes_read;
+            } else {
+              if (byte_offset) {
+                position_ = byte_offset;
+              }
+              position_ += bytes_read;
             }
-            position_ += bytes_read;
           }
         }
       }

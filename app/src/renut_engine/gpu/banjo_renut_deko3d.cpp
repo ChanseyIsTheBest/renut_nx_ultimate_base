@@ -2,11 +2,15 @@
 #include "renut_engine/gpu/banjo_renut_deko3d.h"
 
 #include <algorithm>
+#include <chrono>  // S4ep2-XBLA-nx: PrepareListedVariants
 #include <cinttypes>
 #include <cstdio>
+#include <cstdlib>  // S4ep2-XBLA-nx: PrepareListedVariants
 #include <cstring>
 #include <condition_variable>
+#include <fstream>  // S4ep2-XBLA-nx: PrepareListedVariants
 #include <mutex>
+#include <thread>  // S4ep2-XBLA-nx: PrepareListedVariants
 #include <string_view>
 #include <unordered_map>
 #include <vector>
@@ -18,18 +22,33 @@
 #include <rex/logging.h>
 #include <zstd.h>
 
+#include "renut_engine/gpu/backend/gpu_profile.h"
+#include "renut_engine/gpu/backend/video.h"  // S4ep2-XBLA-nx: PrepareListedVariants (Video::Device)
 #include "renut_engine/gpu/banjo_renut_tuning.h"
 #include "renut_engine/gpu/ultimate.h"
 #include "renut_engine/gpu/sasrt_gpu_round.h"  // sasrt-nx (2026-11-08)
 #include "renut_engine/gpu/guest/command_buffers.h"  // banjo-nx (2026-10-28): ReleaseSpareBuffersNow
 #include "renut_engine/gpu/shaders/shader_cache.h"  // banjo-nx (2026-10-22): the installed package's shader table
 
+// asura-nx (v1.0.0): Deko3DOptions::vtxSlotBound. Off until checked: the attributes it makes constant read 0, where
+// the zero stream's defaults (keflings_renut_missing_input_w1: w = 1) were meant (they never reach deko3d either way).
+REXCVAR_DEFINE_BOOL(asura_deko3d_vtx_slot_bound, false, "Banjo/Enhancements",
+                    "deko3d (from asura-nx): a vertex element on slot 16 or above (the zero stream) is made a constant "
+                    "attribute instead of pointing at buffer 16, which deko3d never sets up. false: as before. Read at "
+                    "start")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 // sasrt-nx (2026-11-08, the GPU round after the move to the ultimate base): defined on every platform so the tomls read
 // the same; only the deko3d back end counts.
 // Port 165 (from fnxf_xiii, its notes of 2026-10-25 and 10-29): plume_deko3d.h Deko3DOptions::swapInterval.
 REXCVAR_DEFINE_INT32(banjo_deko3d_swap_interval, 1, "Banjo/Enhancements",
                      "deko3d: the display refreshes each image is held for with vsync on, 1-4 (fnxf_xiii's frame "
                      "interval: 2 shows a 30 fps game evenly at 60 Hz, paced by the display itself). 1: as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// asura-nx (v1.0.0): Deko3DOptions::vtxStateChecked. Not measured: the base has measured render-thread trims of this
+// kind slower on the console (docs/off-by-default.md 3a), so off until an A/B.
+REXCVAR_DEFINE_BOOL(asura_deko3d_vtx_state_dedupe, false, "Banjo/Enhancements",
+                    "deko3d (from asura-nx): vertex attribute and buffer state sent only when it differs from what the "
+                    "list bound, with the strides each draw binds. false: as before. Read at start")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 // Port 161 (from fnxf_xiii, its note of 2026-11-05): see DiagLogWriter.
 REXCVAR_DEFINE_BOOL(banjo_deko3d_log_writer, true, "Banjo/Enhancements",
@@ -51,6 +70,13 @@ REXCVAR_DEFINE_BOOL(banjo_deko3d_log_misses, false, "Banjo/Diagnostics",
                     "deko3d renderer: every shader variant a draw got the generic one for (neither loaded nor in "
                     "deko3d_shaders.bin) is logged once to deko3d.log as a \"run-time variant\" line, for "
                     "tools/deko3d_variant_cache.py --runtime-log: the variants a cache made from the pipeline lists lacks")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// S4ep2-XBLA-nx (github.com/FurryLilManChild/S4ep2-XBLA-nx, GPL-3.0, 0.5.1; its 4d08d3da): plume_deko3d.h
+// Deko3DOptions::logEveryCompile.
+REXCVAR_DEFINE_BOOL(s4ep2_deko3d_log_every_compile, false, "Banjo/Diagnostics",
+                    "deko3d renderer: every shader compile's \"uam: compile\" line with the heap's and the process's free "
+                    "memory, not the first 4 (a console crash inside malloc during a compile, S4ep2-XBLA-nx). A line "
+                    "per compile. false: the first 4, as before")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(banjo_deko3d_copy_run_barriers, false, "Banjo/Enhancements",
                     "deko3d: no barrier between back-to-back buffer copies once a full one has run (the copy engine "
@@ -77,6 +103,15 @@ REXCVAR_DEFINE_BOOL(lo_deko3d_relaxed_descriptor_counters, true, "Banjo/Enhancem
                     "deko3d renderer (from LostOdysseyRecomp): a descriptor write's count and epoch use relaxed atomic "
                     "increments, so the write does not wait for its store into the uncached descriptor memory to drain. "
                     "false: the ordered increments as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// S4ep2-XBLA-nx (github.com/FurryLilManChild/S4ep2-XBLA-nx, GPL-3.0, 0.5.0; its ca03ac30 "Shaders prepared before the game:
+// listed variants made ready behind a progress screen"; the tester's console: "prepared before the game: 1639 variants of
+// 572 shaders in 1.6 s; 0 compiled on the console"): PrepareListedVariants below. A file name next to the NRO, empty for
+// none. Not deko3d_variants.txt by default: banjo_deko3d_variant_log appends its own lines to that name.
+REXCVAR_DEFINE_STRING(s4ep2_prepare_shaders_list, "", "Banjo/Renut",
+                      "deko3d renderer: a file next to the NRO (tools/deko3d_variant_cache.py --export-variants) whose "
+                      "every shader variant is read from deko3d_shaders.bin or compiled before the game draws, behind a "
+                      "progress screen; the rest still compile when first drawn. Empty: none, as before. Read at start")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 #if defined(PLUME_DEKO3D)
@@ -760,6 +795,7 @@ void InstallShaderCache() {
   options.vsOutputs = Deko3DVsOutputsOn();
   options.uamFlags = Deko3DUamFlags();
   options.logMisses = REXCVAR_GET(banjo_deko3d_log_misses);  // banjo-nx (2026-11-20)
+  options.logEveryCompile = REXCVAR_GET(s4ep2_deko3d_log_every_compile);  // S4ep2-XBLA-nx
   options.mergeBarriers = Deko3DBarrierMergeOn();  // banjo-nx (2026-10-19, GPU)
   options.leanBarriers = Deko3DBarrierLeanOn();
   options.copyRunBarriers = REXCVAR_GET(banjo_deko3d_copy_run_barriers);  // port 161 (from fnxf_xiii)
@@ -773,12 +809,14 @@ void InstallShaderCache() {
   options.compileWaitBoost = Deko3DCompileWaitBoostOn();  // 2026-10-23
   options.fastFirstCompile = Deko3DFastFirstCompileOn();  // port 56 (mk9-nx)
   options.asyncCacheReads = Deko3DAsyncCacheReadsOn();     // 2026-10-23
+  options.vtxSlotBound = REXCVAR_GET(asura_deko3d_vtx_slot_bound);  // asura-nx
   options.userClipEnable = Deko3DUserClipEnable();  // renut-ultimate, from rr6-nx (2026-11-05)
   options.depthResolve = Deko3DDepthResolveOn();  // sasrt-nx (2026-10-21)
   options.depthResolveLazy = Deko3DDepthResolveLazyOn();  // renut-ultimate (2026-11-08)
   options.diagBarriers = REXCVAR_GET(sasrt_deko3d_diag_barriers);  // sasrt-nx (2026-11-08)
   options.descriptorCache = REXCVAR_GET(lo_deko3d_descriptor_cache);                       // port 59
   options.relaxedDescriptorCounters = REXCVAR_GET(lo_deko3d_relaxed_descriptor_counters);  // port 59
+  options.vtxStateChecked = REXCVAR_GET(asura_deko3d_vtx_state_dedupe);  // asura-nx
   plume::Deko3DSetOptions(options);
   sasrt::gpu_round::ApplyPlume();  // sasrt-nx (2026-11-08): the GPU round's items in plume (preciseDepthResolve)
   // banjo-nx (2026-10-28, the console's OOM): a block that finds no room in the heap gets the spare command buffers'.
@@ -848,6 +886,8 @@ void InstallShaderCache() {
 
 // sasrt-nx (2026-11-08, sasrt_deko3d_diag_trace): one frame's command stream every 600 frames.
 void TraceFrameBoundary() {
+  if (::renut::gpu::gpu_profile::FrameDiagActive())
+    return;
   static const bool on = REXCVAR_GET(sasrt_deko3d_diag_trace);
   if (!on)
     return;
@@ -943,13 +983,96 @@ std::string ReportBody(const plume::Deko3DStats &st, uint64_t compiles) {
   return r;
 }
 
+// S4ep2-XBLA-nx (s4ep2_prepare_shaders_list; banjo_renut_deko3d.h).
+void PrepareListedVariants() {
+  static std::atomic<bool> ran{false};
+  if (ran.exchange(true))
+    return;  // once: a game may make a second device (D3D's no-hardware one)
+  const std::string name = REXCVAR_GET(s4ep2_prepare_shaders_list);
+  if (name.empty())
+    return;
+  ShaderPrepProgress &prog = ShaderPrep();
+  const std::string path = NextToExecutable(name).string();
+  std::ifstream in(path);
+  if (!in) {
+    REXLOG_INFO("[shader prep] no {}: no shaders prepared before the game (they compile as they are first drawn)", path);
+    return;
+  }
+  struct Line {
+    uint64_t hash = 0;
+    std::vector<plume::RenderSpecConstant> constants;
+  };
+  std::vector<Line> lines;
+  std::string text;
+  while (std::getline(in, text)) {
+    // "<vs|ps>_<16 hex> <id>=<value>,<id>=<value>" (the constants may be absent: the default variant)
+    if (text.size() < 19 || (text.compare(0, 3, "vs_") != 0 && text.compare(0, 3, "ps_") != 0))
+      continue;
+    Line l;
+    l.hash = std::strtoull(text.substr(3, 16).c_str(), nullptr, 16);
+    size_t at = text.find(' ', 19);
+    while (at != std::string::npos && at + 1 < text.size()) {
+      const size_t eq = text.find('=', at + 1);
+      if (eq == std::string::npos)
+        break;
+      const size_t end = text.find(',', eq + 1);
+      const uint32_t id = uint32_t(std::strtoul(text.substr(at + 1, eq - at - 1).c_str(), nullptr, 10));
+      const uint32_t value = uint32_t(
+          std::strtoul(text.substr(eq + 1, end == std::string::npos ? std::string::npos : end - eq - 1).c_str(), nullptr,
+                       10));
+      l.constants.emplace_back(id, value);
+      at = end;
+    }
+    lines.push_back(std::move(l));
+  }
+  // The host device is made at the app's start (overlay/app_integration.cpp), before the game's CreateDevice; waited
+  // for a little in case it is not yet.
+  plume::RenderDevice *device = nullptr;
+  for (int i = 0; i < 100 && !(device = ::renut::gpu::Video::Device()); ++i)
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  if (!device || lines.empty()) {
+    REXLOG_WARN("[shader prep] {} lines in {}, device {}: nothing prepared", lines.size(), path,
+                device ? "ready" : "missing");
+    return;
+  }
+  prog.total.store(uint32_t(lines.size()));
+  prog.active.store(true);
+  const auto start = std::chrono::steady_clock::now();
+  std::unordered_map<uint64_t, std::unique_ptr<plume::RenderShader>> shaders;
+  for (const Line &l : lines) {
+    auto it = shaders.find(l.hash);
+    if (it == shaders.end())
+      it = shaders.emplace(l.hash, CreateGameShader(device, l.hash)).first;
+    bool compiled = false;
+    const bool ok = it->second && plume::Deko3DPrepareVariant(device, it->second.get(), l.constants.data(),
+                                                              uint32_t(l.constants.size()), &compiled);
+    if (!ok)
+      prog.failed.fetch_add(1);
+    if (compiled)
+      prog.compiled.fetch_add(1);
+    prog.done.fetch_add(1);
+  }
+  SaveShaderCache();
+  const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+  REXLOG_INFO("[shader prep] prepared before the game: {} variants of {} shaders in {:.1f} s; {} compiled on the "
+              "console (the rest from deko3d_shaders.bin), {} failed (s4ep2_prepare_shaders_list {})",
+              lines.size(), shaders.size(), seconds, prog.compiled.load(), prog.failed.load(), name);
+  prog.active.store(false);
+}
+
 #else
 
+void PrepareListedVariants() {}
 std::unique_ptr<plume::RenderShader> CreateGameShader(plume::RenderDevice *, uint64_t) { return nullptr; }
 void InstallShaderCache() {}
 std::string Report() { return {}; }
 
 #endif
+
+ShaderPrepProgress &ShaderPrep() {  // S4ep2-XBLA-nx
+  static ShaderPrepProgress p;
+  return p;
+}
 
 bool BoolSpecMask(uint64_t hash, uint32_t mask[8]) {
   const PackageEntry *e = Find(OpenInstalled(), hash);

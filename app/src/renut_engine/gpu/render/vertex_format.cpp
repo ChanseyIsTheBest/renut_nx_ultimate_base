@@ -568,6 +568,11 @@ const char *UsageSemantic(u8 usage) {
   return usage < std::size(kUsageSemantics) ? kUsageSemantics[usage] : "TEXCOORD";
 }
 
+// deadpool-nx (deadpool_whole_sparse_streams): InputLocation for render/draw.cpp.
+bool VertexInputLocation(u8 usage, u8 usage_index, u32 &location) {
+  return InputLocation(usage, usage_index, location);
+}
+
 HostVertexLayout BuildHostVertexLayout(const GuestVertexElement *elements, u32 count) {
   HostVertexLayout layout;
   for (u32 i = 0; i < count; ++i) {
@@ -615,6 +620,10 @@ HostVertexLayout BuildHostVertexLayout(const GuestVertexElement *elements, u32 c
       host.components = 4;
     }
     layout.streams[stream].used = true;
+    // deadpool-nx (deadpool_whole_sparse_streams): read by WholeGeometryTry only (not in the layout hash).
+    layout.streams[stream].location_mask |= 1u << host.location;
+    layout.streams[stream].guest_vertex_bytes =
+        std::max(layout.streams[stream].guest_vertex_bytes, host.guest_offset + info.dwords * 4u);
     layout.used_mask |= 1u << stream;  // banjo-nx (2026-10-20, from sa2-nx, banjo_renut_stream_mask)
     layout.streams[stream].elements.push_back(host);
   }

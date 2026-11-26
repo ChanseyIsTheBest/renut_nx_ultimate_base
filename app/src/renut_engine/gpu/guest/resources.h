@@ -99,6 +99,9 @@ struct ShaderRecord {
     // a miss on the host shader at most vertex shader changes), -1 until a draw asks; the host is set once per record.
     int8_t reads_vertex_id = -1;
     u32 valid[8] = {};  // the groups' registers (a whole upload's 'valid'; the first upload only)
+    // deadpool-nx (deadpool_whole_sparse_streams): the input locations the vertex shader reads through the input layout
+    // (bit per location; ~0: all, with the key off or without a cache entry).
+    u32 vs_input_locations = ~0u;
   };
   mutable DrawSummary draw_summary;
   // banjo-nx (banjo_gpu_bool_spec): the bools the shader's SPIR-V specialises (ShaderBoolSpecMask), read on the
@@ -159,6 +162,13 @@ void BuildDeclarationLayout(VertexDeclarationRecord &declaration);
 // The vertex shader's fetch declaration (see ShaderRecord::fetch_declaration).
 // Requires State().mutex.
 const VertexDeclarationRecord *ShaderFetchDeclarationLocked(ShaderRecord &vs);
+
+// S4ep2-XBLA-nx (s4ep2_merge_shader_inputs, d3d/hooks/shader.cpp): the device's declaration plus, for each vertex shader
+// input it has no element for (same usage and index), the element the shader's own vfetch describes (its stream, offset
+// and format). The draw paths call it only with the key on (render/draw.cpp S4ep2MergeShaderInputsOn). Requires
+// State().mutex.
+const VertexDeclarationRecord *DeclarationWithShaderInputsLocked(const VertexDeclarationRecord *declaration,
+                                                                 ShaderRecord &vs);
 
 // The shader's host object, building it on first call. nullptr if the shader
 // is missing from the cache or creation failed. Requires State().mutex.

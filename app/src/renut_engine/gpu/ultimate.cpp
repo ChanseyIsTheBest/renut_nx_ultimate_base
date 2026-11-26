@@ -162,6 +162,36 @@ REXCVAR_DEFINE_BOOL(halo3_renut_loop_constants, true, "Banjo/Enhancements",
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 // rr6-nx (2026-11-03, 45bbd0e09c) and vivapinata-nx (f346dd4963), for every vertex shader here.
+// ilomilo-nx (2026-11-25): the host geometry shaders without the clip distance where the vertex shader writes none.
+REXCVAR_DEFINE_BOOL(ilomilo_renut_gs_no_clip, true, "Banjo/Enhancements",
+                    "From ilomilo-nx: rectangle lists and point sprites drawn by a draw whose vertex shader writes no "
+                    "clip distance (sasrt_gpu_clip_spec: no user clip plane set) go through geometry shaders that write "
+                    "none either (rectangle_list_noclip_gs, point_sprite_noclip_gs). The usual ones passed the vertex "
+                    "shader's unwritten output on as their clip distance: the console's clip slot is off for those "
+                    "draws (plume_deko3d noUserClip) and ignores it, but Ryujinx clips with what the last stage writes "
+                    "and cut ilomilo's depth-of-field rectangles into wedges (the tiles' clear colours in the picture). "
+                    "Same pixels on the console, fewer outputs a vertex. Off: the usual geometry shaders for every draw")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// ilomilo-nx (2026-11-25; renut-ultimate port 289): PA_CL_CLIP_CNTL's clip_disable honoured (render/draw.cpp
+// MakeKey, render/pipeline.cpp), and depth clamping for rectangle lists. Both tried for ilomilo's wedges in Ryujinx
+// (port 284 was the cause); neither changed its picture. Off: every draw clipped, as before.
+REXCVAR_DEFINE_BOOL(ilomilo_renut_clip_disable, false, "Banjo/Enhancements",
+                    "From ilomilo-nx: a draw whose PA_CL_CLIP_CNTL has clip_disable (bit 16) set is not clipped at the "
+                    "near and far planes: its depth is clamped instead, as the Xenos does not clip it. Off (the "
+                    "default): every draw clipped, as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(ilomilo_renut_rect_depth_clamp, false, "Banjo/Enhancements",
+                    "From ilomilo-nx: rectangle lists (the Xenos' screen-space rectangles) clamp depth instead of being "
+                    "clipped at the near and far planes; a rectangle inside the depth range gives the same pixels "
+                    "either way. Off (the default): clipped as every other draw")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// blur-nx 1.0.2 (2026-11-26, GitHub issue #9; renut-ultimate port 329): the XMA frame cache under the memory governor.
+REXCVAR_DEFINE_BOOL(blur_xma_cache_governor, true, "Banjo/Enhancements",
+                    "From blur-nx: while the memory governor (sasrt_memory_governor) sees memory low, the XMA frame "
+                    "cache (banjo_xma_frame_cache_mb) is held at half its size and evicted down to it at once, a quarter "
+                    "while critical, and whole again with twice the low marks free (Blur's 384 MB cache filled the heap "
+                    "the GPU region needed over a session of races). Off: the cvar's size always, as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(rr6_user_clip_plane, true, "Banjo/Enhancements",
                     "From rr6-nx and vivapinata-nx: the game's user clip plane 0 (SetClipPlane, PA_CL_CLIP_CNTL bit 0) reaches the "
                     "vertex shaders, as the GPU clips with it (Ridge Racer 6's car reflections, Viva Pinata's water). Every vertex "
@@ -474,6 +504,22 @@ bool LoopConstantsOn() {
 }
 bool UserClipPlaneOn() {
   static const bool on = REXCVAR_GET(rr6_user_clip_plane);
+  return on;
+}
+bool XmaCacheGovernorOn() {
+  static const bool on = REXCVAR_GET(blur_xma_cache_governor);
+  return on;
+}
+bool IlomiloClipDisableOn() {
+  static const bool on = REXCVAR_GET(ilomilo_renut_clip_disable);
+  return on;
+}
+bool IlomiloRectDepthClampOn() {
+  static const bool on = REXCVAR_GET(ilomilo_renut_rect_depth_clamp);
+  return on;
+}
+bool IlomiloGsNoClipOn() {
+  static const bool on = REXCVAR_GET(ilomilo_renut_gs_no_clip);
   return on;
 }
 bool TextureSignsOn() {

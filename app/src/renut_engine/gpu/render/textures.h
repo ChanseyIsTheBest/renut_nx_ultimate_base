@@ -132,6 +132,13 @@ struct HostTexture {
   // banjo-nx (2026-10-18): a resolve destination as the target of DrawResolveCopy (draw.cpp), made at its first one.
   std::unique_ptr<plume::RenderFramebuffer> copy_framebuffer;
   uint64_t resolves = 0;
+  // asura-nx (asura_renut_stacked_resolve_alias): a sequence bumped each time a color resolve writes this
+  // destination, and whether a stacked 2D array texture aliases its tiled slices (textures.cpp
+  // StackedResolveSource); the stacked texture's per-layer views and framebuffers for the copy draw.
+  uint64_t color_resolve_seq = 0;
+  bool has_stacked_alias = false;
+  std::vector<std::unique_ptr<plume::RenderTextureView>> stacked_layer_views;
+  std::vector<std::unique_ptr<plume::RenderFramebuffer>> stacked_layer_framebuffers;
   // banjo-nx (2026-10-19, banjo_renut_resolve_skip): the signature of the last resolve into it (render/draw.cpp), 0 once
   // anything else wrote it (an upload, a words copy).
   uint64_t resolve_signature = 0;
@@ -151,6 +158,10 @@ struct HostTexture {
   // before; skipped, its last resolve was left out (the last_* fields above say from where and what).
   bool depth_read = false;
   bool depth_skipped = false;
+  // asura-nx (asura_shadow_dirty_rect): the guest-pixel region the last float-only ResolveDepth from a tracked
+  // clear=1.0 depth target modified.
+  bool depth_resolved_clean = false;
+  int32_t depth_resolved_x1 = 0, depth_resolved_y1 = 0, depth_resolved_x2 = 0, depth_resolved_y2 = 0;
   // A texture over a depth resolve's memory: the resolve its words were
   // copied from last.
   uint64_t copied_resolve = 0;
@@ -183,6 +194,7 @@ struct TextureBinding {
   // The scale its host levels reach (HostTexture::extra_levels), 1x without
   // them; the sampler takes it (SamplerSlotLocked).
   RenderScale lod_scale;
+  bool hw_srgb = false;  // asura-nx (asura_renut_hw_srgb): the slot is an sRGB view; never true with the key off
 };
 
 // Flags on a stacked texture's 3D descriptor index (RENUT_STACKED_TEXTURE,

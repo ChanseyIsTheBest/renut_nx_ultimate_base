@@ -183,6 +183,57 @@ void InputSystem::RefreshDevices() {
     changed = true;
   }
 
+  // ilomilo-nx (2026-11-25, the user's console: in ilomilo's multiplayer player 1's controller was "not signed in"
+  // and could not join, player 2's controller could start it): a device with a player number of its own (the Switch's,
+  // the number its lights show) is that player whenever it connected, not the next free one. By connection order a
+  // controller that connected or woke after another one was a later player than its number says, and only player 1
+  // (guest user 0) has the profile. Contested (the handheld and No1 are both player 1): the one that holds it keeps it,
+  // else the first listed. With nobody on player 1, the lowest-numbered device is player 1 (a lone No2 still plays as
+  // the profile). Any other device that holds a number one of these now takes is given the lowest free one below.
+  // renut-ultimate (port 290's hardening): only the numbers of the four guest users are placed. Ordinal N feeds guest
+  // user N for N < 4 only (device_assignment.h), so a controller the Switch numbers No5-No8 is placed as before (the
+  // lowest free ordinal), not at an ordinal no user reads while players 2-4 are free.
+  {
+    constexpr uint32_t kPlacedPlayers = 4;  // XUSER_MAX_COUNT
+    std::vector<bool> placed(seen.size(), false);
+    bool any_number = false;
+    for (size_t i = 0; i < seen.size(); i++) {
+      const uint32_t want = seen[i].player_number;
+      if (seen[i].synthetic || want == DeviceInfo::kNoPlayerNumber || want >= kPlacedPlayers) continue;
+      any_number = true;
+      bool loses = false;
+      for (size_t j = 0; j < seen.size() && !loses; j++) {
+        if (j == i || seen[j].synthetic || seen[j].player_number != want) continue;
+        const bool i_holds = !fresh[i] && seen[i].ordinal == want;
+        const bool j_holds = !fresh[j] && seen[j].ordinal == want;
+        loses = j_holds || (!i_holds && j < i);
+      }
+      if (loses) continue;
+      seen[i].ordinal = want;
+      fresh[i] = false;
+      placed[i] = true;
+    }
+    if (any_number) {
+      size_t first = seen.size();
+      bool one_taken = false;
+      for (size_t i = 0; i < seen.size(); i++) {
+        if (!placed[i]) continue;
+        one_taken = one_taken || seen[i].ordinal == 0;
+        if (first == seen.size() || seen[i].player_number < seen[first].player_number) first = i;
+      }
+      if (!one_taken && first != seen.size()) seen[first].ordinal = 0;
+      for (size_t i = 0; i < seen.size(); i++) {
+        if (placed[i] || fresh[i] || seen[i].synthetic) continue;
+        for (size_t j = 0; j < seen.size(); j++) {
+          if (placed[j] && seen[j].ordinal == seen[i].ordinal) {
+            fresh[i] = true;  // given the lowest free ordinal below
+            break;
+          }
+        }
+      }
+    }
+  }
+
   // Runs after the carry-forward pass so a new device cannot take an ordinal a
   // live one is still holding. Lowest free rather than a growing counter,
   // because a reconnected pad arrives as a new device and would otherwise walk
@@ -212,6 +263,14 @@ void InputSystem::RefreshDevices() {
     }
     seen[i].ordinal = ordinal;
     fresh[i] = false;
+  }
+
+  // ilomilo-nx: a device whose player changed (the player numbers above) is a change too; compared at the end, so a
+  // device that only passes through another number on the way is not.
+  for (const auto& device : seen) {
+    auto existing = std::find_if(devices_.begin(), devices_.end(),
+                                 [&](const DeviceInfo& d) { return d.id == device.id; });
+    if (existing != devices_.end() && existing->ordinal != device.ordinal) changed = true;
   }
 
   for (const auto& old : devices_) {
@@ -462,6 +521,22 @@ X_RESULT InputSystem::GetCapabilities(uint32_t user_index, uint32_t flags,
     return X_ERROR_DEVICE_NOT_CONNECTED;
   }
   return driver->GetDeviceCapabilities(chosen, flags, out_caps);
+}
+
+// hexic2-nx (2026-11-04; ilomilo-nx 2026-11-25 took it): has this user a controller now? No read of it, so the
+// input-latency probes in GetState stay on the game's reads (xam_guest_signin_on_connect, kernel/xam/xam_user.cpp).
+bool InputSystem::IsUserConnected(uint32_t user_index) {
+  if (user_index >= 1 && user_index <= 3 && !InputScriptOther(user_index).empty()) {
+    return ScriptOtherConnected(user_index);
+  }
+  if (!assignment_) {
+    return false;
+  }
+  std::lock_guard<std::recursive_mutex> devices_lock(devices_mutex_);
+  RefreshDevices();
+  std::vector<DeviceId>& ids = UserDeviceScratch();
+  assignment_->DevicesForUser(user_index, ids);
+  return !ids.empty();
 }
 
 X_RESULT InputSystem::GetState(uint32_t user_index, X_INPUT_STATE* out_state) {

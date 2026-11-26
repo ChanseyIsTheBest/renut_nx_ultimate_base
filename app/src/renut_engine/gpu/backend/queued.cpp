@@ -55,6 +55,13 @@ REXCVAR_DEFINE_BOOL(banjo_renut_capture_batches, true, "Banjo/Enhancements",
                     "the pool, and the render thread gives them back, 32 at a time instead of one lock of the pool's "
                     "per draw on each thread. Off: one at a time")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// deadpool-nx (2026-11-17, its checkpoint 8c90b5ca): CapturePool::Give below.
+REXCVAR_DEFINE_BOOL(deadpool_capture_binding_reset, true, "Banjo/Enhancements",
+                    "deadpool-nx (a fix): a capture given back to the pool forgets its shader binding (halo3-nx's "
+                    "banjo_renut_recorded_binds), so one given back without being drawn (a deferred draw replaced before "
+                    "its flush, a tile twin's) cannot apply that binding at the next draw, clear or resolve made from it. "
+                    "A drawn capture's binding is 0 already. false: kept, the base's")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 // bangaio-nx (2026-10-29): see CapturePool::Keeps.
 REXCVAR_DEFINE_BOOL(banjo_renut_small_captures, true, "Banjo/Enhancements",
                     "Renut's renderer (banjo_renut_capture_pool): a delta is written into the chain's own scratch and "
@@ -70,6 +77,14 @@ REXCVAR_DEFINE_BOOL(banjo_renut_delta_masks, true, "Banjo/Enhancements",
                     "three runs), then visits only those (1.1 a draw), instead of a reduction, a move to a register and "
                     "a branch per chunk (65 % of CaptureDelta, 18 % of the game thread in the v4 console storm). The "
                     "same chunks. In-run A/B target 81 (73 in bangaio-nx)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// deadpool-nx (2026-11-17, its checkpoint 8c90b5ca): CopyDeltaChunk, CaptureDelta, DeviceForDraw, PrefetchDeltaLines.
+REXCVAR_DEFINE_BOOL(deadpool_delta_copies, true, "Banjo/Enhancements",
+                    "deadpool-nx (exact): a delta's short chunk is copied as fixed-size overlapping copies and its "
+                    "constant groups 64 bytes at a time (inline, not a call of the run's size), on the game thread and "
+                    "the render thread; PrefetchDeltaLines (banjo_renut_delta_prefetch) primes one line in four of the "
+                    "guest device's compared runs and none of the shadow, and only when the chain is on this device. "
+                    "The same bytes. false: the base's copies and prefetches")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 // bangaio-nx (2026-10-29, v6): see PrefetchDeltaLines.
 REXCVAR_DEFINE_BOOL(banjo_renut_delta_prefetch, true, "Banjo/Enhancements",
@@ -255,6 +270,9 @@ public:
       capture->vertices.clear();
       capture->indices.clear();
       capture->narrowed = false;  // blur-nx (2026-11-13, #13)
+      static const bool binding_reset = REXCVAR_GET(deadpool_capture_binding_reset);
+      if (binding_reset)
+        capture->binding = 0;  // deadpool-nx: an undrawn capture's LastBindingOf answer
       capture->held = HeldBytes(*capture);  // its lines are this thread's now: not read again under the lock
       if (CaptureBatchesOn() && render_thread) {
         std::vector<DrawCapture *> &given = render_given_;
@@ -333,6 +351,8 @@ struct DeferredDraw {
   DrawCapture *capture = nullptr;  // owned (g_capture_pool)
   const u8 *scratch = nullptr;
   u32 bytes = 0;
+  const u8 *index_scratch = nullptr;
+  u32 index_bytes = 0;
 };
 std::mutex g_deferred_mutex;
 std::unordered_map<u32, DeferredDraw> g_deferred;
@@ -458,6 +478,34 @@ inline bool ShortChunkDiffers(const u8 *a, const u8 *b, u32 size) {
   for (; k < size; ++k)
     diff |= u8(a[k] ^ b[k]);
   return diff != 0;
+}
+// deadpool-nx (deadpool_delta_copies): a short chunk (under 64 bytes) as fixed-size copies, the last overlapping the one
+// before it, which the compiler keeps inline (a variable-size memcpy is a call).
+inline void ShortChunkCopy(u8 *dst, const u8 *src, u32 size) {
+  if (size >= 16) {
+    u32 k = 0;
+    for (; k + 16 <= size; k += 16)
+      std::memcpy(dst + k, src + k, 16);
+    if (k < size)
+      std::memcpy(dst + size - 16, src + size - 16, 16);
+    return;
+  }
+  if (size >= 8) {
+    std::memcpy(dst, src, 8);
+    std::memcpy(dst + size - 8, src + size - 8, 8);
+    return;
+  }
+  if (size >= 4) {
+    std::memcpy(dst, src, 4);
+    std::memcpy(dst + size - 4, src + size - 4, 4);
+    return;
+  }
+  for (u32 k = 0; k < size; ++k)
+    dst[k] = src[k];
+}
+inline bool DeltaCopiesOn() {
+  static const bool on = REXCVAR_GET(deadpool_delta_copies);
+  return on;
 }
 constexpr DeltaRuns kDeltaAllRuns = MakeDeltaRuns(kDeltaAllChunks);
 constexpr DeltaRuns kDeltaReadRuns = MakeDeltaRuns(kDeltaReadChunks);
@@ -672,6 +720,8 @@ const u8 *DeviceForDraw(const DrawCapture &capture) {
         // Whole chunks as a fixed-size copy, which stays inline.
         if (size == kDeltaUnitBytes)
           std::memcpy(g_delta_device + DeltaChunkOffset(i), from, kDeltaUnitBytes);
+        else if (DeltaCopiesOn())
+          ShortChunkCopy(g_delta_device + DeltaChunkOffset(i), from, size);  // deadpool-nx
         else
           std::memcpy(g_delta_device + DeltaChunkOffset(i), from, size);
         from += size;
@@ -679,6 +729,12 @@ const u8 *DeviceForDraw(const DrawCapture &capture) {
     }
     for (const auto [dirty, base] : {std::pair{h.vs, kDeltaVertexF}, std::pair{h.ps, kDeltaPixelF}}) {
       ForEachGroupRun(dirty, [&](u32 first, u32 count) {
+        if (DeltaCopiesOn()) {  // deadpool-nx: a fixed-size copy a group
+          u8 *dst = g_delta_device + base + first * kDeltaUnitBytes;
+          for (u32 k = 0; k < count; ++k, dst += kDeltaUnitBytes, from += kDeltaUnitBytes)
+            std::memcpy(dst, from, kDeltaUnitBytes);
+          return;
+        }
         const u32 bytes = count * kDeltaUnitBytes;
         std::memcpy(g_delta_device + base + first * kDeltaUnitBytes, from, bytes);
         from += bytes;
@@ -1119,6 +1175,9 @@ DrawCapture *CaptureDelta(u32 device_va, const DrawCall &call) {
       if (size == kDeltaUnitBytes) {
         std::memcpy(c.shadow + at, bytes + at, kDeltaUnitBytes);
         std::memcpy(to, bytes + at, kDeltaUnitBytes);
+      } else if (DeltaCopiesOn()) {  // deadpool-nx
+        ShortChunkCopy(c.shadow + at, bytes + at, size);
+        ShortChunkCopy(to, bytes + at, size);
       } else {
         std::memcpy(c.shadow + at, bytes + at, size);
         std::memcpy(to, bytes + at, size);
@@ -1153,6 +1212,12 @@ DrawCapture *CaptureDelta(u32 device_va, const DrawCall &call) {
     }
     for (const auto [dirty, base] : {std::pair{vs, kDeltaVertexF}, std::pair{ps, kDeltaPixelF}}) {
       ForEachGroupRun(dirty, [&](u32 first, u32 count) {
+        if (DeltaCopiesOn()) {  // deadpool-nx: a fixed-size copy a group
+          const u8 *src = bytes + base + first * kDeltaUnitBytes;
+          for (u32 k = 0; k < count; ++k, to += kDeltaUnitBytes, src += kDeltaUnitBytes)
+            std::memcpy(to, src, kDeltaUnitBytes);
+          return;
+        }
         const u32 group_bytes = count * kDeltaUnitBytes;
         std::memcpy(to, bytes + base + first * kDeltaUnitBytes, group_bytes);
         to += group_bytes;
@@ -1266,6 +1331,19 @@ void PrefetchDeltaLines(u32 device_va) {
   if (!device)
     return;
   const DeltaRuns &runs = DeltasNarrowOn() ? kDeltaReadRuns : kDeltaAllRuns;
+  if (DeltaCopiesOn()) {
+    // deadpool-nx (deadpool_delta_copies): nothing when the chain's device is another (CaptureDelta rebases: no compare);
+    // one line in four of the guest's runs (the hardware's stream prefetch takes the lines between); the shadow stays in
+    // the game thread's cache from its last compare.
+    if (g_delta.device.load(std::memory_order_relaxed) != reinterpret_cast<const d3d::Device *>(device))
+      return;
+    for (u32 r = 0; r < runs.count; ++r) {
+      const u32 at = DeltaChunkOffset(runs.run[r].first);
+      for (u32 k = 0; k < runs.run[r].count; k += 4)
+        __builtin_prefetch(device + at + k * kDeltaUnitBytes);
+    }
+    return;
+  }
   for (u32 r = 0; r < runs.count; ++r) {
     const u32 at = DeltaChunkOffset(runs.run[r].first);
     for (u32 k = 0; k < runs.run[r].count; ++k) {
@@ -1321,7 +1399,8 @@ void QueueDraw(u32 device_va, const DrawCall &call, u32 up_vertex_bytes, u32 up_
   QueueCapture(capture);
 }
 
-void QueueDeferredDraw(u32 device_va, const DrawCall &call, const u8 *scratch, u32 bytes) {
+void QueueDeferredDraw(u32 device_va, const DrawCall &call, const u8 *scratch, u32 bytes,
+                       const u8 *index_scratch, u32 index_bytes) {
   NoteDrawer(device_va);  // blur-nx (2026-11-13, M-31's census)
   FlushDeferredVertices(device_va);
   RunReadyCallbacks();
@@ -1355,7 +1434,7 @@ void QueueDeferredDraw(u32 device_va, const DrawCall &call, const u8 *scratch, u
       std::lock_guard lock(g_deferred_mutex);
       if (!g_deferred.count(device_va))
         DeferredOf(device_va).fetch_add(1, std::memory_order_acq_rel);  // blur-nx (2026-11-17)
-      g_deferred[device_va] = {capture, scratch, bytes};
+      g_deferred[device_va] = {capture, scratch, bytes, index_scratch, index_bytes};
       g_deferred_count.store(g_deferred.size(), std::memory_order_release);
       g_delta.deferred_device = device_va;  // blur-nx (2026-11-13, #51): cleared when FlushDeferredVertices queues it
       return;
@@ -1383,7 +1462,7 @@ void QueueDeferredDraw(u32 device_va, const DrawCall &call, const u8 *scratch, u
     DeferredOf(device_va).fetch_add(1, std::memory_order_acq_rel);  // blur-nx (2026-11-17)
   DeferredDraw &slot = g_deferred[device_va];
   g_capture_pool.Give(slot.capture);  // one not flushed (the original replaced it the same way)
-  slot = {capture, scratch, bytes};
+  slot = {capture, scratch, bytes, index_scratch, index_bytes};
   g_deferred_count.store(g_deferred.size(), std::memory_order_release);
 }
 
@@ -1412,8 +1491,10 @@ void FlushDeferredVertices(u32 device_va) {
     g_deferred_count.store(g_deferred.size(), std::memory_order_release);
   }
   deferred.capture->vertices.assign(deferred.scratch, deferred.scratch + deferred.bytes);
+  if (deferred.index_scratch && deferred.index_bytes)
+    deferred.capture->indices.assign(deferred.index_scratch, deferred.index_scratch + deferred.index_bytes);
   // blur-nx (2026-11-13, #52's census): the vertex bytes the flush copies (a scratch ring could leave them in place).
-  g_deferred_vertex_bytes.fetch_add(deferred.bytes, std::memory_order_relaxed);
+  g_deferred_vertex_bytes.fetch_add(deferred.bytes + deferred.index_bytes, std::memory_order_relaxed);
   g_deferred_vertex_draws.fetch_add(1, std::memory_order_relaxed);
   QueueCapture(deferred.capture);
   if (chain.owns_lock() && g_delta.deferred_device == device_va)

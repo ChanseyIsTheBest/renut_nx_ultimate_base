@@ -39,6 +39,17 @@
 #include <cstdlib>
 #include <string>
 
+// asura-nx (v1.0.0), both off by default (Asura's own layout, measured on no other game):
+// (a) a thread whose core mask is the system core alone is not moved by RexSwitchSetCurrentThreadMask;
+// (b) the main (UI) thread leaves core 0 when other cores are granted (asura-nx: "so UI/ImGui never preempts Main
+//     XThread (0x30)"); read at each RexSwitchInitSystemCore, which runs again once the toml is loaded.
+REXCVAR_DEFINE_BOOL(asura_switch_keep_system_core_threads, false, "Banjo/Threads",
+                    "A thread on the system core alone is not moved by the guest core layout (asura-nx). false: as "
+                    "before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(asura_switch_ui_thread_off_core0, false, "Banjo/Threads",
+                    "The main (UI) thread leaves core 0 when other cores are granted (asura-nx). false: as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 // banjo-nx (2026-10-27, the user's request; NetherSX2_nx's 4-core mode, MIT, NaGaa95). See threading_switch.h.
 REXCVAR_DEFINE_INT32(banjo_system_core, 1, "Banjo/Threads",
                      "When the process is granted all four cores (a forwarder whose NPDM allows CPU 0-3, as "
@@ -94,6 +105,14 @@ REXCVAR_DEFINE_STRING(switch_yield_backoff_exempt, "", "Threading",
                       "Named threads that never take switch_yield_backoff's sleep (a comma-separated list of name "
                       "prefixes, set when a thread takes its name): a frame-chain thread polling for a job keeps "
                       "yielding instead of sleeping (~1 ms on Horizon). Example: \"Game Master,JQ Worker 0\". Empty: none")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// deadpool-nx (v1.0.2, f09e21e7; its deadpool_system_core_max_pct, 20 there): the XMA decoder on the system core
+// (banjo_system_core_xma) sleeps after its passes to stay under this share of the core. 0 = off.
+REXCVAR_DEFINE_INT32(system_core_duty_cap_pct, 0, "Banjo/Threads",
+                     "deadpool-nx: with the XMA decoder on the system core (banjo_system_core_xma), the most of that core "
+                     "it may take, in percent (1-50; it sleeps after a pass to stay under it, in 250 us quanta). 0 = no "
+                     "cap (as before). A cap too low starves the decoder: sound breaks up")
+    .range(0, 50)
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(banjo_system_core_test, false, "Banjo/Debug",
                     "Test of banjo_system_core's layout without a four-core launch: the process's highest core (2 with "
@@ -405,6 +424,13 @@ bool RexSwitchSetCurrentThreadMask(int preferred, unsigned long long mask) {
     }
     h = CUR_THREAD_HANDLE;
   }
+  // asura-nx (asura_switch_keep_system_core_threads): a thread on the system core alone stays there.
+  if (REXCVAR_GET(asura_switch_keep_system_core_threads)) {
+    const int sys_core = RexSwitchSystemCore();
+    if (sys_core >= 0 && current == (u64(1) << sys_core)) {
+      return false;
+    }
+  }
   const u64 m = u64(mask) & 0x7;  // the process's three cores
   if (m == 0 || preferred < 0 || !(m & (u64(1) << preferred))) {
     return false;
@@ -582,7 +608,22 @@ int RexSwitchInitSystemCore(void) {
   }
   // The main thread: NetherSX2_nx's forwarder hands it over with the whole grant (restoreMainThreadAffinity).
   const u32 strip = g_strip_mask.load(std::memory_order_relaxed);
-  if (strip != 0) {
+  if (REXCVAR_GET(asura_switch_ui_thread_off_core0)) {
+    // asura-nx: keep main (UI) (priority 0x2C) off Core 0 when other app cores exist so UI/ImGui never preempts Main
+    // XThread (0x30).
+    s32 preferred = 0;
+    u64 mask = 0;
+    if (R_SUCCEEDED(svcGetThreadCoreMask(&preferred, &mask, CUR_THREAD_HANDLE)) && mask != 0) {
+      u64 ui_mask = (mask & ~u64(strip)) ? (mask & ~u64(strip)) : mask;
+      if ((ui_mask & 1ull) != 0 && (ui_mask & ~1ull) != 0) {
+        ui_mask &= ~1ull;
+      }
+      const s32 ui_pref = (ui_mask & 4ull) ? 2 : __builtin_ctzll(ui_mask);
+      if (ui_mask != mask || preferred == 0 || (strip != 0 && preferred >= 0 && ((strip >> preferred) & 1u))) {
+        svcSetThreadCoreMask(CUR_THREAD_HANDLE, ui_pref, u32(ui_mask));  // (leaves Core 0 dedicated to Main XThread)
+      }
+    }
+  } else if (strip != 0) {
     s32 preferred = 0;
     u64 mask = 0;
     if (R_SUCCEEDED(svcGetThreadCoreMask(&preferred, &mask, CUR_THREAD_HANDLE)) && (mask & strip) != 0 &&
@@ -627,6 +668,28 @@ bool RexSwitchMoveCurrentThreadToSystemCore(int priority) {
   if (R_FAILED(svcSetThreadCoreMask(CUR_THREAD_HANDLE, core, 1u << core))) return false;
   if (priority >= 0) (void)RexSwitchSetCurrentThreadPriorityOk(priority);
   return true;
+}
+
+int RexSwitchSystemCoreDutyCapPct(void) {
+  static const int pct = int(REXCVAR_GET(system_core_duty_cap_pct));
+  return pct;
+}
+
+void RexSwitchThrottleSystemCoreSlice(uint64_t active_ticks) {
+  int max_pct = RexSwitchSystemCoreDutyCapPct();
+  if (max_pct <= 0) return;
+  if (max_pct > 50) max_pct = 50;
+  const int sys_core = RexSwitchSystemCore();
+  if (sys_core < 0 || int(svcGetCurrentProcessorNumber()) != sys_core) return;
+  thread_local u64 tl_active_ticks = 0;
+  tl_active_ticks += active_ticks;
+  const u64 kQuantumTicks = armNsToTicks(250000ull);
+  if (tl_active_ticks >= kQuantumTicks) {
+    const u64 sleep_ticks = (tl_active_ticks * u64(100 - max_pct)) / u64(max_pct);
+    const u64 sleep_ns = armTicksToNs(sleep_ticks);
+    tl_active_ticks = 0;
+    if (sleep_ns > 0) svcSleepThread(s64(sleep_ns));
+  }
 }
 
 void RexSwitchSampleCoreIdle(void) {

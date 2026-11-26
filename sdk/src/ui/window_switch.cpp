@@ -209,6 +209,7 @@ void ReadUiEntry(UiEntry& output, float touch_to_logical_x, float touch_to_logic
     // having started HID first.
     hidInitialize();
     hidInitializeTouchScreen();
+    padConfigureInput(4, HidNpadStyleSet_NpadStandard);
     padInitializeAny(&gamepad);
     prepared = true;
   }

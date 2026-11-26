@@ -3,6 +3,7 @@
 #ifdef RENUT_RECOMP
 #include "banjo_pred_select.h"  // banjo-nx: predicated blocks without a branch
 #include "banjo_bool_spec.h"    // banjo-nx: bool constants as specialization constants
+#include <cstdlib>  // asura-nx: std::getenv (ASURA_LOG_RSQ_ABS)
 #include <set>
 #endif
 
@@ -800,6 +801,17 @@ void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicu
     }
 }
 
+// asura-nx (v1.0.0): scalar LOG / LOGC and RSQ / RSQC of |x| ("avoid NaN on negative log2/inversesqrt inputs", "matching
+// D3D9 LOG/RSQ"; not checked against the Xenos). Off unless ASURA_LOG_RSQ_ABS=1 in the translator's environment: every
+// shader's text as before.
+static bool AsuraLogRsqAbs() {
+    static const bool on = [] {
+        const char* v = std::getenv("ASURA_LOG_RSQ_ABS");
+        return v != nullptr && v[0] == '1';
+    }();
+    return on;
+}
+
 void ShaderRecompiler::recompile(const AluInstruction& instr)
 {
 #ifdef RENUT_RECOMP
@@ -1582,7 +1594,10 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
 
         case AluScalarOpcode::Logc:
         case AluScalarOpcode::Log:
-            print("clamp(log2({}), FLT_MIN, FLT_MAX)", op(SCALAR_0));
+            if (AsuraLogRsqAbs())  // asura-nx
+                print("clamp(log2(abs({})), FLT_MIN, FLT_MAX)", op(SCALAR_0));
+            else
+                print("clamp(log2({}), FLT_MIN, FLT_MAX)", op(SCALAR_0));
             break;
 
     #ifdef RENUT_RECOMP
@@ -1608,7 +1623,10 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
         case AluScalarOpcode::Rsqf:
     #endif
         case AluScalarOpcode::Rsq:
-            print("clamp(rsqrt({}), FLT_MIN, FLT_MAX)", op(SCALAR_0));
+            if (AsuraLogRsqAbs())  // asura-nx
+                print("clamp(rsqrt(abs({})), FLT_MIN, FLT_MAX)", op(SCALAR_0));
+            else
+                print("clamp(rsqrt({}), FLT_MIN, FLT_MAX)", op(SCALAR_0));
             break;
 
         case AluScalarOpcode::Subs:

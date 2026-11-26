@@ -17,6 +17,8 @@
 #include <cstdint>
 #include <limits>
 
+#include <rex/cvar.h>  // asura-nx: asura_renut_set_texture_null_clears_fetch (backend/video.cpp)
+
 namespace renut::gpu::native {
 
 namespace {
@@ -957,6 +959,14 @@ void SetTexture(Device device, u32 sampler, u32 texture) {
     dword4 = Insert(dword4, min_level, 6, 4);
     device.SetW(Fetch(sampler, 4), dword4);
     device.Dirty(kPendingFetch, FetchBit(sampler));
+  } else {
+    // asura-nx (asura_renut_set_texture_null_clears_fetch): SetTexture(NULL) clears the fetch constant's type
+    // (invalid), so the slot reads as unbound.
+    static const bool clears_fetch = REXCVAR_QUERY(bool, asura_renut_set_texture_null_clears_fetch);
+    if (clears_fetch) [[unlikely]] {
+      device.SetW(Fetch(sampler, 0), device.W(Fetch(sampler, 0)) & ~3u);
+      device.Dirty(kPendingFetch, FetchBit(sampler));
+    }
   }
   device.SetW(off::Textures + sampler * 4, texture);
   if (previous)

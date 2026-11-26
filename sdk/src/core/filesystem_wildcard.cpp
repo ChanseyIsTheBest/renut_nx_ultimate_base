@@ -12,8 +12,16 @@
 #include <algorithm>
 
 #include <rex/assert.h>
+#include <rex/cvar.h>
 #include <rex/filesystem/wildcard.h>
 #include <rex/string.h>
+
+// deadpool-nx (v1.0.1, 25a2e309). Off: the Xbox 360 kernel's own rule for "*.*" is not confirmed (Win32's FindFirstFile
+// matches every name with it).
+REXCVAR_DEFINE_BOOL(deadpool_wildcard_star_dot_star, false, "Filesystem",
+                    "deadpool-nx: a directory query's \"*.*\" matches every name, also one without a dot, and a "
+                    "trailing \"*.*\" matches as \"*\" (Win32's rule). false: \"*.*\" needs a dot in the name, as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 namespace rex::filesystem {
 
@@ -62,8 +70,20 @@ bool WildcardRule::Check(const std::string_view lower, std::string::size_type* o
   return false;
 }
 
-void WildcardEngine::PreparePattern(const std::string_view pattern) {
+void WildcardEngine::PreparePattern(const std::string_view pattern_in) {
   rules_.clear();
+
+  std::string_view pattern = pattern_in;
+  static const bool star_dot_star = REXCVAR_GET(deadpool_wildcard_star_dot_star);
+  if (star_dot_star) {
+    // deadpool-nx: "*.*" (and a trailing ".*" after '*') also matches names without a dot.
+    if (pattern == "*.*") {
+      return;
+    }
+    while (pattern.size() >= 3 && pattern.compare(pattern.size() - 3, 3, "*.*") == 0) {
+      pattern.remove_suffix(2);
+    }
+  }
 
   WildcardFlags flags(WildcardFlags::FIRST);
   size_t n = 0;

@@ -1,5 +1,7 @@
 #pragma once
 #include <rex/cvar.h>
+
+REXCVAR_DECLARE(bool, deadpool_fps_overlay_skip_empty);  // renut_engine/FPS.cpp (deadpool-nx)
 #include <rex/ui/imgui_dialog.h>
 #include <rex/ui/keybinds.h>
 #include "imgui.h"
@@ -67,6 +69,14 @@ public:
         if (!fpsManager || !fpsManager->showFPS) return;
         if (!AppImGuiReady()) return;  // renut-ultimate (port 66)
 
+        // deadpool-nx (2026-11-19, v1.0.0): no window when there is nothing to show in it (no counter yet, no host or
+        // generated rate): an empty dark box in the corner otherwise.
+        float hostFps = static_cast<float>(rex::cvar::Query<double>("present_host_fps"));
+        float generatedFps = static_cast<float>(rex::cvar::Query<double>("present_fsr3_generated_fps"));
+        if (REXCVAR_GET(deadpool_fps_overlay_skip_empty) && fpsManager->counters.empty() && hostFps <= 0.5f &&
+            generatedFps <= 0.5f)
+            return;
+
         const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDecoration;
 
         ImGui::SetNextWindowPos(ImVec2(10.0f, 10.0f), ImGuiCond_Always);
@@ -88,12 +98,10 @@ public:
             if (gpuMS > 0.0) ImGui::TextColored(color,"gpu: %.1fms", gpuMS);
         }
 
-        float hostFps = static_cast<float>(rex::cvar::Query<double>("present_host_fps"));
         if (hostFps > 0.5f) {
             ImGui::TextColored(ImVec4(0.65f, 0.4f, 1.0f, 1.0f), "%.0f FPS (host)", hostFps);
         }
 
-        float generatedFps = static_cast<float>(rex::cvar::Query<double>("present_fsr3_generated_fps"));
         if (generatedFps > 0.5f) {
             ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.85f, 1.0f), "%.0f FPS (generated)",
                                generatedFps);

@@ -9,6 +9,7 @@
  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
 
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <filesystem>
@@ -65,6 +66,12 @@ REXCVAR_DEFINE_BOOL(kernel_u64_args_whole, false, "Kernel",
                     "(XamFormatDateString / XamFormatTimeString's FILETIME, XamNotifyCreateListener's mask, an XUID). "
                     "false: the low word, as before");
 // tw2de_nx (2026-10-31): the overlapped's event reset as the deferred operation starts, as the console (and Windows) do.
+// deadpool-nx (v1.0.1, 25a2e309).
+REXCVAR_DEFINE_BOOL(deadpool_overlapped_result_last, true, "Kernel",
+                    "deadpool-nx: a completed overlapped's extended error and length are stored before its result, with "
+                    "a release fence between, so a guest that polls the result (XHasOverlappedIoCompleted) on another "
+                    "core then reads the new length. false: the result first, as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(kernel_overlapped_reset_event, true, "Kernel",
                     "tw2de_nx (exact): a deferred overlapped call (XamContentCreate, XamEnumerate, the XamShow* "
                     "dialogs) resets the overlapped's event as it starts, as the console does: a signal left from an "
@@ -1215,9 +1222,17 @@ void KernelState::CompleteOverlapped(uint32_t overlapped_ptr, X_RESULT result) {
 void KernelState::CompleteOverlappedEx(uint32_t overlapped_ptr, X_RESULT result,
                                        uint32_t extended_error, uint32_t length) {
   auto ptr = memory()->TranslateVirtual(overlapped_ptr);
-  XOverlappedSetResult(ptr, result);
-  XOverlappedSetExtendedError(ptr, extended_error);
-  XOverlappedSetLength(ptr, length);
+  static const bool result_last = REXCVAR_GET(deadpool_overlapped_result_last);
+  if (result_last) {
+    XOverlappedSetExtendedError(ptr, extended_error);
+    XOverlappedSetLength(ptr, length);
+    std::atomic_thread_fence(std::memory_order_release);
+    XOverlappedSetResult(ptr, result);
+  } else {
+    XOverlappedSetResult(ptr, result);
+    XOverlappedSetExtendedError(ptr, extended_error);
+    XOverlappedSetLength(ptr, length);
+  }
   X_HANDLE event_handle = XOverlappedGetEvent(ptr);
   if (event_handle) {
     auto ev = object_table()->LookupObject<XEvent>(event_handle);

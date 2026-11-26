@@ -178,6 +178,33 @@ std::string ThreadCpuUsage() {
   return out;
 }
 
+// deadpool-nx (v1.0.2, f09e21e7).
+ProcessCpuUsage QueryProcessCpuUsage() {
+  ProcessCpuUsage out;
+#if REX_PLATFORM_SWITCH
+  static std::mutex s_cpu_mutex;
+  static uint64_t s_last_thread_ticks = 0;
+  static uint64_t s_last_wall_ticks = 0;
+  static ProcessCpuUsage s_cached{};
+  std::lock_guard<std::mutex> lock(s_cpu_mutex);
+  const uint64_t wall = armGetSystemTick();
+  const uint64_t freq = armGetSystemTickFreq();
+  if (s_last_wall_ticks == 0 || wall - s_last_wall_ticks >= freq) {
+    const uint64_t ticks = os::switch_cpu_profiler::TotalThreadTicks();
+    if (s_last_wall_ticks != 0 && wall > s_last_wall_ticks && ticks >= s_last_thread_ticks) {
+      const double pct = 100.0 * double(ticks - s_last_thread_ticks) / double(wall - s_last_wall_ticks);
+      s_cached.valid = true;
+      s_cached.pct_one_core = pct;
+      s_cached.pct_four_cores = pct / 4.0;
+    }
+    s_last_thread_ticks = ticks;
+    s_last_wall_ticks = wall;
+  }
+  out = s_cached;
+#endif
+  return out;
+}
+
 void Start() {
 #if REX_PLATFORM_SWITCH
   os::switch_cpu_profiler::SetSlowFrameThreshold(

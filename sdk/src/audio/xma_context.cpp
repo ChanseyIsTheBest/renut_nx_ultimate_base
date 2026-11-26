@@ -765,12 +765,20 @@ bool EvictOne(FrameCache& c) {
   }
 }
 
+// blur-nx 1.0.2 (issue #9): the memory governor's cap below the cvar's (0: none); see SetXmaFrameCacheCeiling.
+std::atomic<size_t> g_frame_cache_ceiling{0};
+
 // A new node (room made first: EvictOne). Under the cache's lock.
 void AddNode(FrameCache& c, uint64_t key, uint64_t format, const uint8_t* prev, uint32_t prev_size, const uint8_t* data,
              uint32_t size, const uint8_t* pcm, uint32_t pcm_bytes) {
   const size_t need = size_t(prev_size) + size + pcm_bytes;
   const size_t cost = sizeof(FrameNode) + need;
-  const size_t limit = size_t(REXCVAR_GET(banjo_xma_frame_cache_mb)) << 20;
+  size_t limit = size_t(REXCVAR_GET(banjo_xma_frame_cache_mb)) << 20;
+  // blur-nx 1.0.2 (2026-11-26, GitHub issue #9): Blur's 384 MB cache, filled over a session of races, took that much of
+  // the heap the GPU region and the game also grow into (a player's career ran out of heap after a few events). Under
+  // memory pressure the governor caps it lower.
+  if (const size_t ceiling = g_frame_cache_ceiling.load(std::memory_order_relaxed); ceiling && ceiling < limit)
+    limit = ceiling;
   if (cost > limit) return;
   while (c.bytes + cost > limit && EvictOne(c)) {
   }
@@ -800,6 +808,26 @@ void AddNode(FrameCache& c, uint64_t key, uint64_t format, const uint8_t* prev, 
 }
 
 }  // namespace
+
+// blur-nx 1.0.2 (2026-11-26, GitHub issue #9): see context.h.
+size_t LimitXmaFrameCache(uint32_t percent) {
+  const size_t full = size_t(REXCVAR_GET(banjo_xma_frame_cache_mb)) << 20;
+  const size_t keep = percent >= 100 ? 0 : full / 100 * std::max<uint32_t>(percent, 1);
+  g_frame_cache_ceiling.store(keep, std::memory_order_relaxed);
+  if (!keep) return 0;
+  FrameCache& c = Cache();
+  std::lock_guard<std::mutex> lock(c.mutex);
+  const size_t before = c.bytes;
+  while (c.bytes > keep && EvictOne(c)) {
+  }
+  return before - c.bytes;
+}
+
+size_t XmaFrameCacheBytes() {
+  FrameCache& c = Cache();
+  std::lock_guard<std::mutex> lock(c.mutex);
+  return c.bytes;
+}
 
 static std::string XmaFrameCacheReport() {
   FrameCache& c = Cache();

@@ -528,6 +528,15 @@ namespace plume {
         // zero stream at every draw).
         DkBufExtents boundVtx[16]{};
         uint32_t boundVtxValid = 0;
+        // asura-nx (Deko3DOptions::vtxStateChecked): the attribute and buffer state bound last, and the strides given.
+        DkVtxAttribState boundVtxAttrib[32]{};
+        uint32_t boundVtxAttribCount = 0;
+        bool boundVtxAttribValid = false;
+        DkVtxBufferState boundVtxBufState[16]{};
+        uint32_t boundVtxBufStateCount = 0;
+        bool boundVtxBufStateValid = false;
+        uint32_t drawVtxStrideMask = 0;
+        uint32_t drawVtxStride[16]{};
         // banjo-nx (2026-10-23, batch 6): a slot or the graphics pipeline changed since bindGraphicsBuffers last ran
         // (with neither, every slot its pipeline reads is bound for its stages already: the walk binds nothing).
         bool graphicsBuffersDirty = true;
@@ -692,6 +701,9 @@ namespace plume {
         // sasrt-nx (2026-11-08, Deko3DOptions::vsInputMask): the pipeline's vertex attributes and buffers, the ones its
         // bound vertex variant does not read as constants (bound only when that differs from what is bound).
         void bindVertexInput(const Deko3DGraphicsPipeline *p, const DkShader *vs);
+        // asura-nx (Deko3DOptions::vtxStateChecked): the binds above, skipped when the state is the one bound.
+        void bindVtxAttribStateChecked(const DkVtxAttribState *states, uint32_t count);
+        void bindVtxBufferStateChecked(const DkVtxBufferState *base, uint32_t count);
         // sasrt-nx (2026-11-08, Deko3DOptions::trackedImageInvalidate): image id 'id' of the bound image set sampled in
         // the current epoch; every bound one again (after a drop: later draws sample them still).
         void markSampled(uint32_t id);
@@ -1082,6 +1094,12 @@ namespace plume {
     bool Deko3DShaderReadsVertexId(const RenderShader *shader);
     // vivapinata-nx (2026-11-03): whether a vertex shader has the kill's constant 914 (Deko3DShaderUsage::writesVertexKill).
     bool Deko3DShaderWritesVertexKill(const RenderShader *shader);
+    // S4ep2-XBLA-nx (2026-11-19): one variant of a shader made ready now (read from the cache, or compiled with this
+    // thread waiting), for a pass that prepares every listed variant before the game draws (banjo_renut_deko3d.cpp,
+    // PrepareListedVariants). The variant stays in the shader's variant table, so a draw that needs it later neither
+    // compiles nor reads the card. Returns whether the variant is valid; 'compiled' is set when uam had to compile it.
+    bool Deko3DPrepareVariant(RenderDevice *device, RenderShader *shader, const RenderSpecConstant *specConstants,
+                              uint32_t specConstantsCount, bool *compiled);
     // banjo-nx (2026-11-23): a pixel shader's twin register + 1 (Deko3DShaderUsage::twinRegPlusOne); 0 for none or null.
     uint32_t Deko3DShaderTwinRegPlusOne(const RenderShader *shader);
     // banjo-nx (2026-11-23): whether a pixel shader may read gl_FragCoord (Deko3DShaderUsage::readsFragCoord); true for null.
@@ -1252,6 +1270,11 @@ namespace plume {
         // once, as the compile log's "run-time variant" lines (tools/deko3d_variant_cache.py --runtime-log reads both):
         // the variants a DKSH cache made from pipeline lists still lacks. A diagnostic: off by default.
         bool logMisses = false;
+        // S4ep2-XBLA-nx (github.com/FurryLilManChild/S4ep2-XBLA-nx, GPL-3.0, 0.5.1; its 4d08d3da): every uam compile's
+        // "uam: compile N" line with the heap's and the process's free memory, not the first 4 ("a tester's console
+        // crashed inside malloc during one (rex_crash.log), so each compile's memory figures are kept for the next one").
+        // A diagnostic (a line per compile): off by default.
+        bool logEveryCompile = false;
         // The uam thread's core (-1: any) and priority (Horizon: a higher number is a lower priority; 0: unchanged).
         // A thread that waits for a compile lends its priority to the uam thread while it waits.
         int compileCore = -1;
@@ -1386,6 +1409,10 @@ namespace plume {
         // variant does not read (Deko3DShaderVariant::vsInputs) bound as constants: the vertex attribute fetch reads no
         // memory for them.
         bool vsInputMask = false;
+        // asura-nx (v1.0.0; asura_deko3d_vtx_state_dedupe): vertex attribute and buffer state bound only when they differ
+        // from what the list bound last (a memcmp), and the strides setVertexBuffers is given (its inputSlots) in place
+        // of the pipeline's. Off: every bind sent and the pipeline's strides, as before.
+        bool vtxStateChecked = false;
         // sasrt-nx (2026-11-09, sasrt_gpu_exp_sph_no_global_store): an EXPERIMENT: vertex programs loaded with their shader
         // program header's DoesGlobalStore bit (word 0 bit 16) cleared; bit 0 of the value: that bit, bit 1: DoesLoadOrStore
         // (bit 26) too.
@@ -1414,6 +1441,10 @@ namespace plume {
         // LostOdysseyRecomp's profile). Nothing on the CPU reads a descriptor after the epoch: the epoch only decides an
         // invalidate in the list being recorded, and the GPU sees the stores after the submission's system call.
         bool relaxedDescriptorCounters = true;
+        // asura-nx (v1.0.0; asura_deko3d_vtx_slot_bound): a vertex element on slot 16 or above becomes a constant
+        // attribute when a pipeline is made. Off: its bufferId is 16 (DkVtxAttribState.bufferId is 5 bits), a stream
+        // deko3d never configures, as before.
+        bool vtxSlotBound = false;
     };
     // sasrt-nx (2026-11-08, Deko3DOptions::dataOnlyInvalidate): plume's own invalidate bit, above deko3d's flags.
     constexpr uint32_t Deko3DDataInvalidate = 1u << 30;

@@ -19,7 +19,10 @@ if ($freeCommit -lt $MinCommitGB) { Write-Output ("free commit memory {0:N1} GB 
 $built = Join-Path $root "app\out\$Build\renut.nro"
 if (-not (Test-Path $built)) { Write-Output "no NRO at $built"; exit 4 }
 Copy-Item $built $nro -Force
-if ($Toml) { Copy-Item $Toml (Join-Path $sd "katamari.toml") -Force }
+# ilomilo-nx (2026-11-25; renut-ultimate port 291): the SD's own toml is put back after the run.
+$sdToml = Join-Path $sd "katamari.toml"
+$savedToml = Join-Path $root "out\emu_sd_toml_saved.toml"
+if ($Toml) { if (Test-Path $sdToml) { Copy-Item $sdToml $savedToml -Force } else { Remove-Item $savedToml -ErrorAction SilentlyContinue }; Copy-Item $Toml $sdToml -Force }
 # renut-ultimate (2026-11-11, port 78; sasrt-nx's idea 27): an NRO without the copies' guard forms (the everyday and
 # release builds) calls every native copy directly whatever the toml's guard keys say: say so before the run.
 $cache = Join-Path $root "app\out\$Build\CMakeCache.txt"
@@ -43,6 +46,14 @@ if ($Toml -and -not $inPlace -and (Test-Path $cache) -and
 New-Item -ItemType Directory -Force $out | Out-Null
 $logs = Join-Path $sd "logs"
 if (Test-Path $logs) { Remove-Item -Recurse -Force $logs }
+# ilomilo-nx (2026-11-25, its handoff 4; renut-ultimate port 291): in Ryujinx the NRO has no usable argv[0], so the
+# rexglue log folder (logs/rex next to the NRO, switch_crash_hooks.c) is never set and those logs (the stall
+# watchdog's and CPU sampler's banjo_profiler.log, rex_profile.log, rex_stderr.log, a crash's rex_crash.log; the
+# watchdog's trigger file stall_dump) are written in the working folder, the SD's /switch/: cleared before the
+# run, collected into the run's folder after.
+$swRoot = Split-Path -Parent $sd
+$rexLogs = @("banjo_profiler.log", "rex_profile.log", "rex_stderr.log", "rex_crash.log", "stall_dump")
+foreach ($f in $rexLogs) { $p0 = Join-Path $swRoot $f; if (Test-Path $p0) { Remove-Item -Force $p0 } }
 $env:DOTNET_ROOT = "D:\New folder\dotnet10"
 # katamari-nx (2026-10-31): the run's own start time ($p.StartTime filtered nothing: every run copied every capture
 # the SD had ever kept, ~800 MB a run, 19 GB in out/emu_runs).
@@ -56,6 +67,8 @@ if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force; Write-Output "stopped pi
 else { Write-Output "Ryujinx exited by itself (code $($p.ExitCode))" }
 Start-Sleep -Seconds 2
 if (Test-Path $logs) { Copy-Item -Recurse $logs (Join-Path $out "logs") -Force }
+foreach ($f in $rexLogs) { $p0 = Join-Path $swRoot $f; if (Test-Path $p0) { Copy-Item $p0 (Join-Path $out $f) -Force } }
+if ($Toml) { if (Test-Path $savedToml) { Copy-Item $savedToml $sdToml -Force; Remove-Item $savedToml } else { Remove-Item $sdToml -ErrorAction SilentlyContinue }; Write-Output "the SD's toml put back" }
 # This run's captures move out of the SD (the SD's folder no longer grows); older ones there are left alone.
 Get-ChildItem $sd -Filter "*.png" -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $started } |
     Move-Item -Destination $out -Force

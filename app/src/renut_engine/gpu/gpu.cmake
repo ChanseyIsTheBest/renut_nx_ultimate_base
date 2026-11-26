@@ -44,6 +44,7 @@ enable_language(C)
 set(RENUT_ZSTD_LIB_DIR "${RENUT_XENOS_RECOMP_DIR}/thirdparty/zstd/lib")
 file(GLOB renut_zstd_sources
     "${RENUT_ZSTD_LIB_DIR}/common/*.c"
+    "${RENUT_ZSTD_LIB_DIR}/compress/*.c"   # S4ep2-XBLA-nx: the frame captures compress their files (s4ep2_frame_capture)
     "${RENUT_ZSTD_LIB_DIR}/decompress/*.c")
 add_library(renut_zstd STATIC ${renut_zstd_sources})
 target_include_directories(renut_zstd PUBLIC "${RENUT_ZSTD_LIB_DIR}")
@@ -79,6 +80,10 @@ endif()
 function(renut_host_shader TARGET STEM PROFILE)
     set(src "${RENUT_GPU_DIR}/shaders/host/${STEM}.hlsl")
     file(GLOB host_includes "${RENUT_GPU_DIR}/shaders/host/*.hlsli")
+    # ilomilo-nx (2026-11-25): further arguments name the .hlsl files the shader includes (its variants).
+    foreach(included IN LISTS ARGN)
+        list(APPEND host_includes "${RENUT_GPU_DIR}/shaders/host/${included}")
+    endforeach()
 
     set(formats spirv)
     if(WIN32)
@@ -292,6 +297,10 @@ function(renut_gpu_setup TARGET)
     renut_host_shader(${TARGET} texture_mip_ps ps_6_0)
     renut_host_shader(${TARGET} resolve_copy_ps ps_6_0)  # banjo-nx (2026-10-18)
     renut_host_shader(${TARGET} view_fp10_encode_ps ps_6_0)  # halo3-nx (2026-11-03)
+    renut_host_shader(${TARGET} view_fp10_encode_1x_ps ps_6_0)  # asura-nx (asura_renut_view_sync_32bpp)
+    renut_host_shader(${TARGET} view_fp10_decode_ps ps_6_0)  # asura-nx: 32bpp <-> 7e3 / 8888 <-> 2101010 EDRAM views
+    renut_host_shader(${TARGET} view_fp10_decode_m0_ps ps_6_0)  # asura-nx
+    renut_host_shader(${TARGET} s4ep2_view_bits_ps ps_6_0)  # S4ep2-XBLA-nx: 32_FLOAT views (s4ep2_view_sync_32float)
     # blur-nx (2026-11-10/11, port 76; its keys 216 and 220): a multisampled view resolved from the 1x target of its
     # sample grid; one EDRAM view written into another (edram_inherit.hlsli, four sample forms).
     renut_host_shader(${TARGET} sample_grid_resolve_ps ps_6_0)
@@ -300,6 +309,8 @@ function(renut_gpu_setup TARGET)
     renut_host_shader(${TARGET} edram_inherit_dst_ms_ps ps_6_0)
     renut_host_shader(${TARGET} edram_inherit_ms_ms_ps ps_6_0)
     renut_host_shader(${TARGET} resolve_clamp_ps ps_6_0)  # sasrt-nx (2026-10-20): 16-bit fixed-point resolves
+    renut_host_shader(${TARGET} resolve_clamp_scaled_ps ps_6_0)  # asura-nx (asura_renut_fixed16_bias)
+    renut_host_shader(${TARGET} s4ep2_resolve_7e3_ps ps_6_0)  # S4ep2-XBLA-nx (s4ep2_resolve_clamp_7e3)
     renut_host_shader(${TARGET} depth_restore_ps ps_6_0)  # sasrt-nx (2026-10-20): the EDRAM depth restore
     # banjo-nx (2026-10-21, banjo_renut_smaa): SMAA 1x (render/smaa.cpp; app/thirdparty/smaa, MIT).
     renut_host_shader(${TARGET} smaa_vs vs_6_0)
@@ -314,6 +325,9 @@ function(renut_gpu_setup TARGET)
     renut_host_shader(${TARGET} ui_depth_upscale_ps ps_6_0)
     renut_host_shader(${TARGET} rectangle_list_gs gs_6_0)
     renut_host_shader(${TARGET} point_sprite_gs gs_6_0)
+    # ilomilo-nx (2026-11-25, ilomilo_renut_gs_no_clip): the two without the clip distance.
+    renut_host_shader(${TARGET} rectangle_list_noclip_gs gs_6_0 rectangle_list_gs.hlsl)
+    renut_host_shader(${TARGET} point_sprite_noclip_gs gs_6_0 point_sprite_gs.hlsl)
     renut_host_shader(${TARGET} stream_convert_cs cs_6_0)
     renut_host_shader(${TARGET} fetch_copy_cs cs_6_0)  # sasrt-nx (2026-11-08, sasrt_gpu_fetch_copy_compute)
     renut_host_shader(${TARGET} texel_readback_cs cs_6_0)  # sasrt-nx (2026-11-08, sasrt_gpu_texel_readback_compute)

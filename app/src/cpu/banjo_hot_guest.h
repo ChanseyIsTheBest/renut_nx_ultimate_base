@@ -196,6 +196,20 @@ void PoisonDead(PPCContext& ctx, const RegSkip& skip);
   BANJO_HOT_HOOK_EX(SYM, ID, KEY, DEFAULT, SLOT, DESC, false, "Banjo/Enhancements")
 #define BANJO_HOT_HOOK_BULK(SYM, ID, KEY, DEFAULT, SLOT, DESC) \
   BANJO_HOT_HOOK_EX(SYM, ID, KEY, DEFAULT, SLOT, DESC, true, "Banjo/Bulk copies")
+
+// deadpool-nx (8c90b5ca, its cpu/hot/banjo_hot_overrides.h): a hand-written C++ / NEON form of a hot function that has a
+// localized copy, tried ahead of the copy in that function's own hook (a second hook on the same symbol cannot be
+// written). A port specializes it for n_<ID>::Native in a header included before its hot lists, returns true when it
+// handled the call and false to let the copy (or the original) run. The specialization is tried before the copy's key
+// and its guard, so it checks a key of its own (deadpool-nx: deadpool_native_lzx, deadpool_native_physx_solver ...).
+// This primary form returns false and inlines away: with no specialization nothing changes.
+namespace banjo::hot {
+template <auto NativeFn>
+[[gnu::always_inline]] inline bool TryCustomOverride(PPCContext&, uint8_t*) {
+  return false;
+}
+}  // namespace banjo::hot
+
 #if BANJO_HOT_IN_PLACE
 // sasrt-nx (2026-11-11, port 81; machine copies in place): the generated function's symbol is the copy
 // itself (sasrt-nx's SASRT_HOT_IN_PLACE). No state byte, no guard, no run-time key, no in-run A/B 70: a copy its list
@@ -210,6 +224,7 @@ void PoisonDead(PPCContext& ctx, const RegSkip& skip);
   InPlaceCopy g_in_place_##ID{#SYM, #KEY, DEFAULT, BULK, [] { return bool(REXCVAR_GET(KEY)); }};                 \
   }                                                                                                              \
   REX_HOOK_RAW(SYM) {                                                                                            \
+    if (banjo::hot::TryCustomOverride<&banjo::hot::n_##ID::Native>(ctx, base)) return;                           \
     if constexpr (DEFAULT)                                                                                       \
       banjo::hot::n_##ID::Native(ctx, base);                                                                     \
     else                                                                                                         \
@@ -230,6 +245,7 @@ void PoisonDead(PPCContext& ctx, const RegSkip& skip);
       __imp__##SYM(ctx, base);                                                                                   \
       return;                                                                                                    \
     }                                                                                                            \
+    if (banjo::hot::TryCustomOverride<&banjo::hot::n_##ID::Native>(ctx, base)) return;                           \
     banjo::hot::Hook& h = banjo::hot::g_hook_##ID;                                                               \
     uint8_t st = h.state.load(std::memory_order_relaxed);                                                        \
     if (st == banjo::hot::kDirect) [[likely]] {                                                                  \

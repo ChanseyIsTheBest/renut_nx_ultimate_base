@@ -43,6 +43,16 @@
 #include "../core/threading_switch.h"
 #endif
 
+// asura-nx (v1.0.0), off by default (Asura's own layout): with the guest core layout (banjo_renut_core_layout), the
+// main XThread raised to 0x30 (above the 0x3B workers and the timer queue, below the render thread 0x2C and audio), and
+// the other guest threads spread round-robin over the layout's cores instead of all on its preferred core.
+REXCVAR_DEFINE_BOOL(asura_guest_main_priority_30, false, "Threading",
+                    "Guest core layout: the main XThread at priority 0x30 (asura-nx). false: as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(asura_guest_workers_round_robin, false, "Threading",
+                    "Guest core layout: the other guest threads' preferred cores taken in turn over the mask "
+                    "(asura-nx). false: all on the layout's preferred core, as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(ignore_thread_priorities, true, "Kernel",
                     "Ignores game-specified thread priorities");
 
@@ -82,6 +92,7 @@ std::atomic<int32_t> g_guest_main_core{-1};
 std::atomic<uint32_t> g_guest_layout_gen{0};
 thread_local uint32_t t_layout_applied = 0;
 thread_local uint8_t t_guest_kind = 0;
+thread_local bool t_layout_locked = false;  // asura-nx
 }  // namespace
 #endif
 
@@ -1146,6 +1157,8 @@ void ApplyGuestCoreLayoutAtWait() {
     if (auto* hook = g_guest_wait_hook.load(std::memory_order_acquire)) hook();
   }
 #if REX_PLATFORM_SWITCH
+  if (t_layout_locked) [[unlikely]]  // asura-nx: placed by the title (RexSwitchSetCustomGuestThreadPlacement)
+    return;
   const uint32_t gen = g_guest_layout_gen.load(std::memory_order_acquire);
   if (gen == 0 || gen == t_layout_applied) [[likely]]
     return;
@@ -1153,9 +1166,27 @@ void ApplyGuestCoreLayoutAtWait() {
   if (t_guest_kind == 1) {
     const int32_t core = g_guest_main_core.load(std::memory_order_relaxed);
     if (core >= 0) RexSwitchSetCurrentThreadMask(core, uint64_t(1) << core);
+    // asura-nx: raise Main XThread above 0x3B workers/TimerQueue (stays below Render 0x2C and Audio 0x2A-0x2D).
+    if (REXCVAR_GET(asura_guest_main_priority_30)) RexSwitchSetCurrentThreadPriority(0x30);
   } else if (t_guest_kind == 2) {
     const uint32_t mask = g_guest_core_mask.load(std::memory_order_relaxed);
-    if (mask) RexSwitchSetCurrentThreadMask(g_guest_core_preferred.load(std::memory_order_relaxed), mask);
+    if (mask) {
+      int pref = g_guest_core_preferred.load(std::memory_order_relaxed);
+      if (REXCVAR_GET(asura_guest_workers_round_robin)) {
+        // asura-nx: spread non-main guest workers (e.g. UE3 RenderThread & Havok Physics) across all cores in mask
+        // instead of piling all of them onto the same preferred core at priority 0x3B.
+        static std::atomic<uint32_t> g_other_core_rr{0};
+        int cores[4];
+        int ncores = 0;
+        for (int c = 0; c < 4; ++c) {
+          if (mask & (1u << c)) cores[ncores++] = c;
+        }
+        if (ncores >= 2) {
+          pref = cores[g_other_core_rr.fetch_add(1, std::memory_order_relaxed) % uint32_t(ncores)];
+        }
+      }
+      RexSwitchSetCurrentThreadMask(pref, mask);
+    }
   }
 #endif
 }
@@ -1669,6 +1700,32 @@ extern "C" uint32_t RexSetGuestThreadCoreLayout(int main_core, uint32_t others_m
   (void)others_mask;
   (void)others_preferred;
   return 0;
+#endif
+}
+
+// asura-nx (v1.0.0): a title's hook places its own thread; the guest core layout then leaves that thread alone (no key:
+// nothing changes until a title calls them).
+extern "C" void RexSwitchLockCurrentGuestThreadLayout(void) {
+#if REX_PLATFORM_SWITCH
+  t_layout_locked = true;
+  t_layout_applied = g_guest_layout_gen.load(std::memory_order_acquire);
+#endif
+}
+
+extern "C" bool RexSwitchSetCustomGuestThreadPlacement(int preferred_core, uint32_t core_mask, int priority) {
+#if REX_PLATFORM_SWITCH
+  if (t_guest_kind != 2) return false;
+  t_layout_locked = true;
+  t_layout_applied = g_guest_layout_gen.load(std::memory_order_acquire);
+  bool ok = true;
+  if (core_mask) ok = RexSwitchSetCurrentThreadMask(preferred_core, core_mask) && ok;
+  if (priority >= 0) ok = RexSwitchSetCurrentThreadPriorityOk(priority) && ok;
+  return ok;
+#else
+  (void)preferred_core;
+  (void)core_mask;
+  (void)priority;
+  return false;
 #endif
 }
 

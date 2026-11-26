@@ -5,6 +5,11 @@
 #include <rex/hook.h>
 #include "profiler/profiler.h"
 
+// deadpool-nx (v1.0.0, bbccab91): Fps.h's overlay.
+REXCVAR_DEFINE_BOOL(deadpool_fps_overlay_skip_empty, true, "Banjo/Enhancements",
+                    "deadpool-nx: the FPS overlay draws no window while it has nothing to show (no counter yet, no host "
+                    "or generated rate). false: an empty box in the corner then, as before");
+
 namespace banjo::harvest { void Fotograma(); }  // native/banjo_shader_harvest.cpp
 namespace banjo::renderdoc { void GameFrame(); }  // me/banjo_renderdoc.cpp (banjo_renderdoc_game_s)
 

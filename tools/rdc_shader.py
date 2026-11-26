@@ -24,7 +24,8 @@ try:
         raise RuntimeError("open file")
     result = cap.OpenCapture(rd.ReplayOptions(), None)
     status, controller = result if isinstance(result, tuple) else (rd.ResultCode.Succeeded, result)
-    stage_of = {"vs": rd.ShaderStage.Vertex, "ps": rd.ShaderStage.Pixel}
+    # ilomilo-nx (2026-11-25): "gs" too (Renut's rectangle_list_gs and point_sprite_gs run as geometry shaders).
+    stage_of = {"vs": rd.ShaderStage.Vertex, "gs": rd.ShaderStage.Geometry, "ps": rd.ShaderStage.Pixel}
     for ev in EVENTS:
         controller.SetFrameEvent(ev, True)
         st = controller.GetPipelineState()
