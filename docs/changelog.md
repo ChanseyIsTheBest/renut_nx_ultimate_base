@@ -459,3 +459,4 @@ Ports 1-43 are the first round: the universal fixes of the other ports' renderer
   console's size; the main thread on processor 0 and a gamer picture from a Switch user's icon or a file (both off, a
   game's toml turns them on); a PC crash report's host stack scan (off); the hot copies' shard count in one line;
   diagnostics and tools.
+- Port 370: tools/state_block_scan.py, whether a game uses Direct3D state blocks (Poker Smash: its two; Katamari: none).

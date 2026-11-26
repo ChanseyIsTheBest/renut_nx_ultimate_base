@@ -348,8 +348,11 @@ CMake `BANJO_HOT_SHARD_COUNT` 12 (363). Poker Smash's own toml sets `kernel_main
 `gamer_picture_user = 0` at its next sync. Not taken: its native D3D state-block capture and apply (its biggest console
 win, 20.45 to 9.14 us a call, 49.1 to 62.1 fps), bound to its addresses and XDK 2.0.6534's device and block layout with
 raw offsets; the two sampler-state natives (general, but nothing in the base calls them); its 16 hand-written natives,
-GetFunction bindings and per-game defaults. Ideas only: whether Katamari's draw thread uses D3D state blocks; the base's
-memcpy native fits XDK 2.0.6534's memcpy (-52 % on its console).
+GetFunction bindings and per-game defaults. Katamari does not use D3D state blocks (port 370's
+tools/state_block_scan.py finds no capture or apply in it; in Poker Smash exactly its two), so the state block path
+would gain it nothing: a port whose game shows candidates can copy pokersmash-nx 93873e35's hooks/state_block.cpp onto
+port 341's offset table and run its check key. Idea only: the base's memcpy native fits XDK 2.0.6534's memcpy (-52 % on
+its console).
 
 ## Keeping this page
 
