@@ -218,17 +218,22 @@ The work, in order
       (banjo_hot_poison_dead = true, banjo_hot_guard_calls = 0, banjo_hot_guard_period = 1048576), where registers
       dead after a return get garbage: the picture right to the end, only known artefacts.
    And the exact options that still need this game's check: SSASR_CALL_RELOADS=1 (post-codegen; checked with
-   REX_STACK_FWD_VERIFY in the hooked builds); the submit worker and setter log (ssasr_submit_worker,
-   ssasr_setter_log: banjo_renut_snapshot_deltas_verify 0 of the draws differ; the worker costs the render thread about
-   0.9 ms, so only where the game thread is the limit); ssasr_draw_runs (Beautiful Katamari's PC renderer presented no
-   frame with it: test it before anything else); ssasr_tags_narrow with this game's own ssasr_tags_narrow_map (the
-   census's "N18 census" line names the state tags that come alone; every store in the game's code that sets one
-   gives its ranges; the D3D library's processors that set tags from run-time masks get a mid-asm hook calling
-   native::MarkStateTagsWide; then the guard race with banjo_renut_tags_check = 1: no "changed without a mark").
-   On by default, with a log line to check: ssasr_code_blocks_data
+   REX_STACK_FWD_VERIFY in the hooked builds); the submit worker (ssasr_submit_worker:
+   banjo_renut_snapshot_deltas_verify 0 of the draws differ; it costs the render thread about 0.9 ms, so only where the
+   game thread is the limit; ssasr-nx's console: -0.9 ms a frame at 1,200 draws); the setter log (ssasr_setter_log: the
+   same check; ssasr-nx's console +1.2 ms a frame, so only with this game's own console A/B showing a gain);
+   ssasr_draw_runs (Beautiful Katamari's PC renderer presented no frame with it: test it before anything else;
+   ssasr-nx's console: +0.1 ms, nothing); ssasr_tags_narrow with this game's own ssasr_tags_narrow_map: first the
+   census's "N18 census" line (with the submit worker); no staged draw with a state tag (Beautiful Katamari: none)
+   means nothing to narrow, so stop there. Otherwise it names the state tags that come alone; every store in the
+   game's code that sets one gives its ranges; the D3D library's processors that set tags from run-time masks get a
+   mid-asm hook calling native::MarkStateTagsWide; then the guard race with banjo_renut_tags_check = 1: no "changed
+   without a mark" (ssasr-nx: no console gain). On by default, with a log line to check: ssasr_code_blocks_data
    (the data and bss on 2 MB blocks: "[code blocks] ... and data"; their size again in heap, so false in the player's
-   toml for a game short of heap) and ssasr_capture_pool_mb (64; with ssasr_renut_host50_census its line shows whether
-   the pool still makes and deletes captures).
+   toml for a game short of heap; ssasr-nx's console TLB test: no cost) and ssasr_capture_pool_mb (64; with
+   ssasr_renut_host50_census its line shows whether the pool still makes and deletes captures).
+   Less work on the PC is not a console gain: ssasr-nx's exact host changes (port 385) with N18 measured 30.6 against
+   30.5 ms over four console races each. Take them for exactness and consistency, not speed.
    Also the measurement tools for where the generated code's time goes: tools\codegen_census.py and
    tools\generated_code_census.py (they want a console profile: list them for the console step) and
    tools\loop_body_census.py, tools\arm_cost_census.py on the build.
@@ -282,7 +287,8 @@ Rules
 - Not-exact forms only with their census done and written down; never on by guesswork. A form whose census counts is
   off until I decide, with the sites in the notes.
 - The console decides performance. The PC and the emulator are proxies: record their numbers as such. Never compare
-  load times or frame rates between emulator runs.
+  load times or frame rates between emulator runs. A change the PC shows doing less work is a candidate, not a gain,
+  until its console A/B (ssasr-nx's N18 took a tagged draw from 22 chunks to 13.6 and gained nothing there).
 - Remove work, do not move it to another thread or core.
 - The PC is shared with other port sessions. One Ryujinx run at a time, only when none runs (tools\run_ryujinx.ps1
   refuses to start beside another; never stop Ryujinx by name, only your own run's process). Check free commit memory

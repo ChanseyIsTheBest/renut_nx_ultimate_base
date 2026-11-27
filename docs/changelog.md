@@ -475,3 +475,5 @@ Ports 1-43 are the first round: the universal fixes of the other ports' renderer
 - Port 388 (ssasr-nx's 941eac99, N18): named state tags can stand for a port's own chunk sets (`ssasr_tags_narrow`, off;
   `ssasr_tags_narrow_map`, empty), with a census for the candidates and a helper for the port's hooks. No gain on
   ssasr-nx's console; Beautiful Katamari's staged draws carry no state tag.
+- Port 389: the porting and rebasing prompts take ssasr-nx's console results (the submit worker the one win, the setter
+  log a loss, draw runs and N18 nothing) and a rule: less work on the PC is a candidate until the console's A/B.

@@ -216,16 +216,25 @@ The work, in order
       helper's model).
    j. The exact options that still need this game's check: SSASR_CALL_RELOADS=1 (post-codegen; the reloads after calls
       forwarded by the whole-program write summaries, checked with REX_STACK_FWD_VERIFY in the hooked builds); the
-      submit worker and setter log (ssasr_submit_worker, ssasr_setter_log: banjo_renut_snapshot_deltas_verify, 0 of the
-      draws differ; the worker costs the render thread about 0.9 ms, so only where the game thread is the limit);
-      ssasr_draw_runs (Beautiful Katamari's PC renderer presented no frame with it: test it before anything else);
-      ssasr_tags_narrow with the game's own ssasr_tags_narrow_map (the "N18 census" line names the state tags that
-      come alone; every store in the game's code that sets one gives its ranges; the D3D library's processors that
-      set tags from run-time masks get a mid-asm hook calling native::MarkStateTagsWide; then the guard race with
-      banjo_renut_tags_check = 1: no "changed without a mark"; ssasr-nx gained nothing on its console from it);
-      and two on by default, each with a line to check: ssasr_code_blocks_data (the data and bss on 2 MB blocks,
-      "[code blocks] ... and data"; its size again in heap, so false in the player's toml for a game short of heap)
-      and ssasr_capture_pool_mb (64; its census line, with ssasr_renut_host50_census, shows the pool's churn).
+      submit worker (ssasr_submit_worker: banjo_renut_snapshot_deltas_verify, 0 of the draws differ; it costs the
+      render thread about 0.9 ms, so only where the game thread is the limit; ssasr-nx's console: -0.9 ms a frame at
+      1,200 draws, its one win of the three); the setter log (ssasr_setter_log: the same check; ssasr-nx's console
+      +1.2 ms a frame, as logging every setter write costs the game thread more than the rebuilt chunks save, so only
+      with this game's own console A/B showing a gain); ssasr_draw_runs (Beautiful Katamari's PC renderer presented no
+      frame with it: test it before anything else; ssasr-nx's console: +0.1 ms, nothing); ssasr_tags_narrow with the
+      game's own ssasr_tags_narrow_map: first the "N18 census" line (ssasr_renut_host50_census with the submit
+      worker); if no staged draw carries a state tag (Beautiful Katamari: 0 of about 134,000 every 10 s) there is
+      nothing to narrow, so stop there. Otherwise it names the state tags that come alone; every store in the game's
+      code that sets one gives its ranges; the D3D library's processors that set tags from run-time masks get a
+      mid-asm hook calling native::MarkStateTagsWide; then the guard race with banjo_renut_tags_check = 1: no
+      "changed without a mark" (ssasr-nx: 22 chunks a tagged draw down to 13.6, and no console gain). And two on by
+      default, each with a line to check: ssasr_code_blocks_data (the data and bss on 2 MB blocks, "[code blocks] ...
+      and data"; its size again in heap, so false in the player's toml for a game short of heap; ssasr-nx's console TLB
+      test found no cost, -0.2 ns a scattered access) and ssasr_capture_pool_mb (64; its census line, with
+      ssasr_renut_host50_census, shows the pool's churn).
+      Less work on the PC is not a console gain: ssasr-nx's exact host changes (port 385: the capture pool's rounded
+      growth, relaxed hook counters, SsFilter's lookup) with N18 measured 30.6 against 30.5 ms over four console races
+      each, nothing. Keep them for exactness and consistency; spend the effort on what the console's profile samples.
    Run CG-13's census (step 1) and these again after any large change to the code generation, and note in the report
    which forms are on.
 8. Smaller game files: the movies to H.265 and the audio to Opus (docs/media-compression.md, all of it, before any
@@ -276,7 +285,8 @@ The work, in order
 Rules
 - Pixel-identical by default. Anything that changes the picture is a separate config and my decision.
 - The console decides performance. The PC and the emulator are proxies: judge on the A57 at 1020 MHz. Never compare load
-  times or frame rates between emulator runs.
+  times or frame rates between emulator runs. A change the PC shows doing less work is a candidate, not a gain, until
+  its console A/B (ssasr-nx's N18 took a tagged draw from 22 chunks to 13.6 and gained nothing there).
 - A console A/B is the same NRO both ways (an in-run A/B or ABBA order) with a control from the same session: the
   console's speed drifts a few percent between sessions and after a reboot. Read fps from Renut's wall-clock 10 s lines;
   the profiler's per-second counters can read high when core 3 is busy.
