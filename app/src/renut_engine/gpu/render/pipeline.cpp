@@ -1324,9 +1324,16 @@ SpecState SpecialisedPipeline(const PipelineKey &key, uint64_t hash, const HostV
 // (constant 990, the 7e3 clamp) and bit 16 (constant 927 = 2, asura_renut_fixed16_bias): "so generic fallbacks stay
 // non-specialised while preserving clamping". false: every spec word cleared, as before (a 7e3 target drew unclamped
 // until its variant was built).
-REXCVAR_DEFINE_BOOL(asura_renut_generic_keeps_clamps, true, "Banjo/Renut",
+// Port 390 (2026-11-28, the user: "turn this off please"): off by default. A clamped generic is not one the prebuild
+// makes ahead, so a draw that needs one waits for its compile: a Gears of War port logged "BLOCKING (a draw waits)"
+// stalls of the render thread up to 492 ms (bursts near a second with the compiles on core 3) at doors, path choices
+// and short cutscenes, where new shaders come. Off, the draw takes the plain generic the prebuild already has, and a 7e3
+// target goes unclamped only for the frames its own variant takes.
+REXCVAR_DEFINE_BOOL(asura_renut_generic_keeps_clamps, false, "Banjo/Renut",
                     "From asura-nx: the generic pipeline a draw takes while its variant builds keeps the 7e3 and 16-bit "
-                    "fixed-point clamps (more generic variants in the DKSH cache). false: as before. Read at start")
+                    "fixed-point clamps (more generic variants in the DKSH cache; a clamped generic the prebuild has not "
+                    "made makes the draw wait for its compile). Off by default (port 390): the plain generic, as before. "
+                    "Read at start")
     .lifecycle(::rex::cvar::Lifecycle::kInitOnly);
 inline uint32_t AsuraGenericKeptWord7() {
   // dmc_devil-nx (dmc_renut_target_wide_alpha): bits 24-27 kept as well, with both keys on (0xF0010000 otherwise).

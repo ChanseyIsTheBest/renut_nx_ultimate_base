@@ -477,3 +477,5 @@ Ports 1-43 are the first round: the universal fixes of the other ports' renderer
   ssasr-nx's console; Beautiful Katamari's staged draws carry no state tag.
 - Port 389: the porting and rebasing prompts take ssasr-nx's console results (the submit worker the one win, the setter
   log a loss, draw runs and N18 nothing) and a rule: less work on the PC is a candidate until the console's A/B.
+- Port 390: asura-nx's clamped generic pipelines off by default (`asura_renut_generic_keeps_clamps`): a draw waited for
+  their compile, stalling the render thread up to half a second in a Gears of War port.

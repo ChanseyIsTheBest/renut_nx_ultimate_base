@@ -286,13 +286,15 @@ def sasrt_guess(hashes, spec):
 # dmc_devil-nx (517b4928, DMC-11: "Both spec and generic tail carry 924/925/927"): the generic pipeline a specialised key
 # draws with until its own is built (render/pipeline.cpp GetPipelineSlow) is the key with its bools, alpha function, fetch
 # types, tess kind, fetch pad and spec words cleared, but its reserved word kept and, with asura_renut_generic_keeps_clamps
-# (on), sasrt_words[7] bits 28-31 and 16 (and 24-27 with dmc_renut_target_wide_alpha). Build() so gives it 924, 925 / 927,
+# (off by default since port 390), sasrt_words[7] bits 28-31 and 16 (and 24-27 with dmc_renut_target_wide_alpha). Build()
+# so gives it 924, 925 / 927,
 # 929 and 990 as the specialised key's, which the tail below has none of: the console compiled those generic variants as
 # it went. Each such generic is made too, beside the base's tail (nothing the tool made before is left out), and 927 has
 # Build()'s value (2 for asura-nx's fixed16 bit 16; 1 before). DMC_VARIANT_GENERIC_TARGETS=0: as before;
-# DMC_VARIANT_GENERIC_CLAMPS=0: for a game that turns asura_renut_generic_keeps_clamps off.
+# DMC_VARIANT_GENERIC_CLAMPS=1: for a game that turns asura_renut_generic_keeps_clamps on (port 390: off by default, so
+# the clamped generics are left out unless asked for; they were made by default before).
 GENERIC_TARGETS = os.environ.get('DMC_VARIANT_GENERIC_TARGETS', '1') != '0'
-GENERIC_KEPT7 = 0xFF010000 if os.environ.get('DMC_VARIANT_GENERIC_CLAMPS', '1') != '0' else 0
+GENERIC_KEPT7 = 0xFF010000 if os.environ.get('DMC_VARIANT_GENERIC_CLAMPS', '0') == '1' else 0
 
 
 def target_bias_927(sw7):

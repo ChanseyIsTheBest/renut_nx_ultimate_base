@@ -283,8 +283,9 @@ On here: `ilomilo_renut_gs_no_clip` (port 284: the console's pixels cannot chang
 | `deadpool_frame_diag_at_s` (0), `system_core_duty_cap_pct` (0) | 314 | a frame diagnostic; the system core's duty cap |
 | `deadpool_whole_sparse_streams`, `deadpool_edram_inherit_view_sync`, `deadpool_drop_unused_depth` | 317 | sparse whole-buffer streams; the inherit through a view; drop unused depth |
 | `deadpool_switch_profiler_counters` | 318 | Renut's counters for the Switch profiler |
+| `asura_renut_generic_keeps_clamps` (off since port 390) | 300 | the generic a draw takes while its variant builds keeps the 7e3 / fixed16 clamps; a clamped generic is not prebuilt, so the draw waits for its compile (a Gears of War port: render-thread stalls up to 492 ms). The cache tool makes those generics only with `DMC_VARIANT_GENERIC_CLAMPS=1` |
 
-On here, each with a key to turn it off: 293's menu combo, 300's spec words and generic clamps, 307's fetch forms
+On here, each with a key to turn it off: 293's menu combo, 300's spec words, 307's fetch forms
 (`ASURA_GLSL_FETCH_FORMS=0`), 312's file fixes (`*.*` apart), 313's content I/O, 315, 316's speed-ups, 317's capture reset,
 318's FPS window. Left out on purpose: asura-nx's quiet report skip (and deadpool-nx's, the same): the 10 s report path
 also runs banjo::hot::Report (the hot-count files), record::Report, ReportNvk and CodegenChecksReport, which logging off
