@@ -99,8 +99,30 @@ constexpr FetchTagTable MakeFetchTagTable() {
 }
 inline constexpr FetchTagTable kFetchTagChunks = MakeFetchTagTable();
 static_assert(kTouchFetchBegin + 32 * 24 == kTouchFetchEnd);
+// ssasr-nx (2026-11-27, batch 5's N18 after the thread batch, 941eac99; ssasr_tags_narrow, off): a state tag (m_Pending
+// word 2, bit n) stands for all 17 render-state chunks above. In ssasr-nx 91-98 % of the tagged draws carried tags 2.10
+// and 2.17 alone, and the game's own code (Direct3D's inline setters compiled into it) sets them only beside stores to a
+// few fields: those tags can stand for the chunks of those fields alone (22 chunks a draw compared and copied there,
+// 13.6 narrowed). Which tags, and which fields, are the game's (its code and its XDK's device layout), so the base has
+// no map of its own: a port names it in ssasr_tags_narrow_map (banjo_renut_tuning.cpp, ParseTagsNarrowMap) after its
+// census (ssasr_renut_host50_census's "N18 census"; every store that sets the tag, found in the game's code). A set may
+// name chunks outside kStateTagChunks (an extra chunk is one more compare). The D3D library's own processors that set tags from
+// run-time masks (ssasr-nx: sub_8212DAA8, sub_82134E60) get a mid-asm hook at their entry in the port's
+// title_midasm_hooks that calls MarkStateTagsWide(r3) below. A change the narrowed tags miss is the mark check's
+// (banjo_renut_tags_check, the staged deltas' sparse compare): NoteUnmarked turns this off for the run.
+// Off, or no map: every state tag stands for all 17, as before.
+inline bool g_tags_narrow = false;
+inline uint64_t g_narrow_tags = 0;         // the state tags (word 2's bits) that have a narrowed set
+inline uint64_t g_narrow_chunks[64] = {};  // per tag: its chunks
 inline uint64_t TagChunks(uint64_t states, uint64_t fetch, uint64_t misc) {
-  uint64_t chunks = (states | misc | (fetch >> 32)) ? kStateTagChunks : 0;
+  uint64_t chunks;
+  if (g_tags_narrow && (states & ~g_narrow_tags) == 0 && (misc | (fetch >> 32)) == 0) {
+    chunks = 0;
+    for (uint64_t bits = states; bits; bits &= bits - 1)
+      chunks |= g_narrow_chunks[std::countr_zero(bits)];
+  } else {
+    chunks = (states | misc | (fetch >> 32)) ? kStateTagChunks : 0;
+  }
   for (uint32_t bits = uint32_t(fetch); bits; bits &= bits - 1)
     chunks |= kFetchTagChunks.chunks[31 - std::countr_zero(bits)];
   return chunks;
@@ -191,6 +213,15 @@ struct SetterLog {
 };
 inline u32 g_log_slot = ~0u;
 inline uint64_t g_log_raw = 0;
+// ssasr-nx (941eac99, N18; ssasr_tags_narrow): for a port's mid-asm hook at the entry of a D3D library function that
+// sets state tags from run-time masks (r3 the device): the device's 17 render-state chunks marked, so a narrowed tag
+// never has to stand for that function's writes. Nothing while narrowing is off.
+inline void MarkStateTagsWide(u32 device_va) {
+  if (!g_tags_narrow) return;
+  const u32 slot = TouchSlotOf(device_va);
+  g_touch[slot].chunks |= kStateTagChunks;
+  if (slot == g_log_slot) g_log_raw |= kStateTagChunks;  // (the setter log's device: copied raw)
+}
 inline SetterLog g_setter_log;
 [[gnu::always_inline]] inline void LogSetterWrite(u32 offset, u32 size, const void *guest_bytes) {
   SetterLog &l = g_setter_log;

@@ -221,7 +221,11 @@ The work, in order
    REX_STACK_FWD_VERIFY in the hooked builds); the submit worker and setter log (ssasr_submit_worker,
    ssasr_setter_log: banjo_renut_snapshot_deltas_verify 0 of the draws differ; the worker costs the render thread about
    0.9 ms, so only where the game thread is the limit); ssasr_draw_runs (Beautiful Katamari's PC renderer presented no
-   frame with it: test it before anything else). On by default, with a log line to check: ssasr_code_blocks_data
+   frame with it: test it before anything else); ssasr_tags_narrow with this game's own ssasr_tags_narrow_map (the
+   census's "N18 census" line names the state tags that come alone; every store in the game's code that sets one
+   gives its ranges; the D3D library's processors that set tags from run-time masks get a mid-asm hook calling
+   native::MarkStateTagsWide; then the guard race with banjo_renut_tags_check = 1: no "changed without a mark").
+   On by default, with a log line to check: ssasr_code_blocks_data
    (the data and bss on 2 MB blocks: "[code blocks] ... and data"; their size again in heap, so false in the player's
    toml for a game short of heap) and ssasr_capture_pool_mb (64; with ssasr_renut_host50_census its line shows whether
    the pool still makes and deletes captures).

@@ -1244,6 +1244,11 @@ void NoteUnmarked(const u8 *device, const u8 *shadow, uint64_t chunks, OpKind ki
   }
   // banjo-nx (2026-10-26, setter rewrite): with the setters' tags kept apart, a write they covered by a tag alone
   // could be the one missed: their tags go back into the devices first, and only a miss after that stops the marks.
+  if (native::g_tags_narrow) {  // ssasr-nx (941eac99, N18; port 388): a change the tags missed: every state tag all 17
+    native::g_tags_narrow = false;
+    RGPU_ERROR("Recording from marks: a device chunk changed without a mark; ssasr_tags_narrow off from now on (every "
+               "state tag stands for all 17 render-state chunks again)");
+  }
   if (!verify && native::g_tags_apart) {
     native::g_tags_apart = false;
     RGPU_ERROR("Recording from marks: a device chunk changed without a mark; the setters' tags go into the devices again "

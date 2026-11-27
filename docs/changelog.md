@@ -472,3 +472,6 @@ Ports 1-43 are the first round: the universal fixes of the other ports' renderer
 - Port 387: the data and bss on 2 MB blocks on by default (`ssasr_code_blocks_data`; `= false` in the player's toml
   keeps them on 4 KB pages; with no heap for the copy, the code alone); the rebasing prompt's not-exact censuses and
   media step.
+- Port 388 (ssasr-nx's 941eac99, N18): named state tags can stand for a port's own chunk sets (`ssasr_tags_narrow`, off;
+  `ssasr_tags_narrow_map`, empty), with a census for the candidates and a helper for the port's hooks. No gain on
+  ssasr-nx's console; Beautiful Katamari's staged draws carry no state tag.

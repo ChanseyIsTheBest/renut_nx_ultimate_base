@@ -372,6 +372,7 @@ narrowing) against the build before it: 30.6 against 30.5 over four races each, 
 | `ssasr_submit_worker` | 376 | the submit worker (the render thread +0.9 ms in ssasr-nx: check per game) |
 | `ssasr_setter_log` | 376 | chunks only the setters wrote rebuilt on the worker (ssasr-nx's console: +1.2 ms a frame, the loser) |
 | `ssasr_draw_runs` | 376 | staged draws in runs (Beautiful Katamari's PC renderer presented no frame with it; ssasr-nx's console: +0.1 ms, neutral) |
+| `ssasr_tags_narrow`, `ssasr_tags_narrow_map` | 388 | the state tags the map names stand for its chunks alone (the map is the game's: none in the base; ssasr-nx's console: no gain) |
 | `ssasr_renut_depth_slices` | 378 | depth resolves into stacked slices beyond 0 (a picture change) |
 | `ssasr_diag_watch_cs`, `ssasr_diag_watch_hooks`, `switch_profile_addresses` | 372, 381 | diagnostics |
 | `SSASR_CALL_RELOADS=1` (env, post_codegen) | 379 | reloads after calls forwarded by the call write summaries |

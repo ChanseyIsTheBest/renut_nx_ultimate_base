@@ -7,6 +7,7 @@
 #include "renut_engine/gpu/banjo_renut_tuning.h"
 #include "renut_engine/gpu/d3d/d3d.h"
 #include "renut_engine/gpu/d3d/d3d_native.h"  // banjo-nx (2026-10-26): g_touch_compare
+#include "renut_engine/gpu/d3d/tags_narrow_map.h"  // ssasr-nx (941eac99, N18; port 388)
 #include "renut_engine/gpu/backend/queued.h"
 #include "renut_engine/gpu/render/draw.h"
 #include "renut_engine/gpu/render/textures.h"  // blur-nx (2026-11-17, audit #4/#5): ResolveRemakeReport
@@ -147,6 +148,21 @@ REXCVAR_DEFINE_BOOL(banjo_renut_touch_compare, true, "Banjo/Enhancements",
                     "the recording only when the value changes (compare-on-set, as Unleashed's setters), so a recorded "
                     "op compares the chunks that changed rather than all the game set again. Exact. A/B 26. Off: every "
                     "write stored and marked, as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// ssasr-nx (2026-11-27, batch 5's N18 after the thread batch, 941eac99; port 388; d3d_native.h TagChunks): named state
+// tags stand for the chunks of the fields the game's code stores beside them, not all 17 render-state chunks (ssasr-nx:
+// tags 2.10 and 2.17 on 91-98 % of its tagged draws, 22 chunks a draw compared and copied, 13.6 narrowed; no console
+// gain there, 30.6 against 30.5 ms). The map is the game's (its code, its XDK's device layout): none in the base, so on
+// without one does nothing. The port's mid-asm hooks at the D3D library's processors that set tags from run-time masks
+// call native::MarkStateTagsWide; the mark check turns it off at a change it would have missed.
+REXCVAR_DEFINE_BOOL(ssasr_tags_narrow, false, "SSASR/Enhancements",
+                    "The state tags ssasr_tags_narrow_map names stand for its chunks alone, not all 17 render-state "
+                    "chunks (the port's mid-asm hooks mark all 17 where the D3D library sets tags from run-time "
+                    "masks). Off, or no map: as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_STRING(ssasr_tags_narrow_map, "", "SSASR/Enhancements",
+                      "With ssasr_tags_narrow: TAG=OFFSET+SIZE,...;TAG=... (m_Pending word 2's bits and the device "
+                      "ranges each stands for; d3d/tags_narrow_map.h). A fault anywhere rejects the whole map (logged)")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(banjo_renut_tags_apart, true, "Banjo/Enhancements",
                     "Renut's renderer (2026-10-26): a recording device's native setters keep their dirty tags out of "
@@ -2805,10 +2821,46 @@ bool UploadCached() {
 #endif
 }
 
+// ssasr-nx (941eac99, N18; port 388): the map is read for the census too (queued.cpp N18Report), narrowing only with
+// ssasr_tags_narrow on and a map that parsed whole.
+static void LoadTagsNarrowMap() {
+  namespace native = renut::gpu::native;
+  native::g_tags_narrow = false;
+  native::g_narrow_tags = 0;
+  std::fill(std::begin(native::g_narrow_chunks), std::end(native::g_narrow_chunks), 0);
+  const std::string text = REXCVAR_GET(ssasr_tags_narrow_map);
+  native::TagsNarrowMap map;
+  std::string error;
+  if (!native::ParseTagsNarrowMap(
+          text, [](u32 offset, u32 size) { return native::TouchBits(offset, size); }, native::kTouchLines * 64, &map,
+          &error)) {
+    REXLOG_ERROR("[renut] ssasr_tags_narrow_map rejected ({}): every state tag stands for all 17 chunks", error);
+    return;
+  }
+  native::g_narrow_tags = map.tags;
+  std::copy(std::begin(map.chunks), std::end(map.chunks), std::begin(native::g_narrow_chunks));
+  if (!REXCVAR_GET(ssasr_tags_narrow)) return;
+  if (map.tags == 0) {
+    REXLOG_WARN("[renut] ssasr_tags_narrow on without ssasr_tags_narrow_map: off (the map is the game's)");
+    return;
+  }
+  native::g_tags_narrow = true;
+  std::string tags;
+  for (uint64_t bits = map.tags; bits; bits &= bits - 1) {
+    const int t = std::countr_zero(bits);
+    const int outside = std::popcount(map.chunks[t] & ~native::kStateTagChunks);
+    tags += fmt::format("{}2.{} ({} chunks{})", tags.empty() ? "" : ", ", t, std::popcount(map.chunks[t]),
+                        outside ? fmt::format(", {} outside the state chunks", outside) : std::string());
+  }
+  REXLOG_INFO("[renut] ssasr_tags_narrow: {} stand for their chunks alone (of {})", tags,
+              std::popcount(native::kStateTagChunks));
+}
+
 void BeforeDeviceCreated() {
   g_workload_on = REXCVAR_GET(deadpool_switch_profiler_counters);  // deadpool-nx: latched once, read at every draw
   renut::gpu::native::g_touch_compare = REXCVAR_GET(banjo_renut_touch_compare);  // banjo-nx (2026-10-26)
   renut::gpu::native::g_tags_apart = REXCVAR_GET(banjo_renut_tags_apart);
+  LoadTagsNarrowMap();  // ssasr-nx (941eac99, N18; port 388)
   // The two rules outside the enhancement table (no master switch), stated once.
   REXLOG_INFO("[renut] banjo_renut_exact_streams {}; banjo_renut_keep_gpu_written {}{}; banjo_renut_memory_policy {}{}",
               REXCVAR_GET(banjo_renut_exact_streams), REXCVAR_GET(banjo_renut_keep_gpu_written),

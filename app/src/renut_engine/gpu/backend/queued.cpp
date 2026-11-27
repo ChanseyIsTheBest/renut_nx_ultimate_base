@@ -498,6 +498,42 @@ std::atomic<uint64_t> g_grow_uses[kGrowSites], g_grow_count[kGrowSites], g_grow_
   if (need > v.capacity()) [[unlikely]]
     v.reserve((need + step - 1) / step * step);
 }
+// ssasr-nx (2026-11-27, N18's census again, after T1; port 388, with the port's map in place of ssasr-nx's two sets):
+// the game thread's staged copies: raw chunks a staged draw, the draws a state tag made compare the 17 render-state
+// chunks, the draws whose state tags were word 2's alone (the only ones a map can narrow) and how often each of word
+// 2's tags came in them (the candidates for a map), and of those the draws whose tags are all in
+// ssasr_tags_narrow_map, with the chunks the narrowed sets would have copied instead.
+std::atomic<uint64_t> g_n18_draws{0}, g_n18_raw_chunks{0}, g_n18_state_tagged{0}, g_n18_states_alone{0},
+    g_n18_in_map{0}, g_n18_chunks_now{0}, g_n18_chunks_narrow{0};
+std::atomic<uint64_t> g_n18_tag_draws[64];
+std::string N18Report() {
+  const uint64_t draws = g_n18_draws.exchange(0, std::memory_order_relaxed);
+  const uint64_t raw = g_n18_raw_chunks.exchange(0, std::memory_order_relaxed);
+  const uint64_t tagged = g_n18_state_tagged.exchange(0, std::memory_order_relaxed);
+  const uint64_t alone = g_n18_states_alone.exchange(0, std::memory_order_relaxed);
+  const uint64_t in_map = g_n18_in_map.exchange(0, std::memory_order_relaxed);
+  const uint64_t now = g_n18_chunks_now.exchange(0, std::memory_order_relaxed);
+  const uint64_t narrow = g_n18_chunks_narrow.exchange(0, std::memory_order_relaxed);
+  uint64_t per_tag[64];
+  for (int t = 0; t < 64; ++t) per_tag[t] = g_n18_tag_draws[t].exchange(0, std::memory_order_relaxed);
+  std::string top;  // the four most frequent of word 2's tags in those draws
+  for (int k = 0; k < 4; ++k) {
+    int best = -1;
+    for (int t = 0; t < 64; ++t)
+      if (per_tag[t] && (best < 0 || per_tag[t] > per_tag[best])) best = t;
+    if (best < 0) break;
+    top += fmt::format("{}2.{} {:.0f} %", top.empty() ? "" : ", ", best,
+                       alone ? 100.0 * double(per_tag[best]) / double(alone) : 0.0);
+    per_tag[best] = 0;
+  }
+  return fmt::format("; N18 census: {} staged draws, {:.1f} raw chunks each; {} with a state tag ({:.0f} %), {} of them "
+                     "word 2's alone (tags: {}); {} with the map's tags alone ({:.0f} % of the tagged): their compare "
+                     "sets {:.1f} chunks, narrowed {:.1f}",
+                     draws, draws ? double(raw) / double(draws) : 0.0, tagged,
+                     draws ? 100.0 * double(tagged) / double(draws) : 0.0, alone, top.empty() ? "none" : top, in_map,
+                     tagged ? 100.0 * double(in_map) / double(tagged) : 0.0, in_map ? double(now) / double(in_map) : 0.0,
+                     in_map ? double(narrow) / double(in_map) : 0.0);
+}
 std::string GrowReport() {
   static const char *const kNames[kGrowSites] = {"whole", "rebase", "marked", "staged", "delta", "UP vertices",
                                                  "UP indices", "deferred vertices"};
@@ -1917,9 +1953,9 @@ bool StagingOn() {
   uint64_t &marks = DeltaMarksOf(device_va);
   const uint64_t touched = marks & kReadTouchBits;
   marks = 0;
-  const uint64_t tagged = native::TagChunks(uint64_t(device->m_Pending[2]), uint64_t(device->m_Pending[3]),
-                                            uint64_t(device->m_Pending[4])) &
-                          kReadTouchBits;
+  const uint64_t st = uint64_t(device->m_Pending[2]), ft = uint64_t(device->m_Pending[3]),
+                 mt = uint64_t(device->m_Pending[4]);  // (N18's census reads them after the clear below)
+  const uint64_t tagged = native::TagChunks(st, ft, mt) & kReadTouchBits;
   const uint64_t vs = c.vs | uint64_t(device->m_Pending[0]);
   const uint64_t ps = c.ps | uint64_t(device->m_Pending[1]);
   c.vs = c.ps = 0;
@@ -1941,6 +1977,29 @@ bool StagingOn() {
   sh.vs = vs;
   sh.ps = ps;
   sh.marked = tagged | touched;
+  if (h50::CensusOn()) [[unlikely]] {  // ssasr-nx (2026-11-27): N18's census after T1 (port 388: the port's map)
+    g_n18_draws.fetch_add(1, std::memory_order_relaxed);
+    g_n18_raw_chunks.fetch_add(uint64_t(std::popcount(sh.compare | sh.blind | sh.check)), std::memory_order_relaxed);
+    if (st | mt | (ft >> 32)) {
+      g_n18_state_tagged.fetch_add(1, std::memory_order_relaxed);
+      if (st && mt == 0 && (ft >> 32) == 0) {
+        g_n18_states_alone.fetch_add(1, std::memory_order_relaxed);
+        for (uint64_t bits = st; bits; bits &= bits - 1)
+          g_n18_tag_draws[std::countr_zero(bits)].fetch_add(1, std::memory_order_relaxed);
+        if (native::g_narrow_tags && (st & ~native::g_narrow_tags) == 0) {
+          uint64_t narrow_tag = 0;
+          for (uint64_t bits = st; bits; bits &= bits - 1)
+            narrow_tag |= native::g_narrow_chunks[std::countr_zero(bits)];
+          for (uint32_t bits = uint32_t(ft); bits; bits &= bits - 1)
+            narrow_tag |= native::kFetchTagChunks.chunks[31 - std::countr_zero(bits)];
+          g_n18_in_map.fetch_add(1, std::memory_order_relaxed);
+          g_n18_chunks_now.fetch_add(uint64_t(std::popcount(sh.compare | sh.blind)), std::memory_order_relaxed);
+          g_n18_chunks_narrow.fetch_add(uint64_t(std::popcount(((narrow_tag & kReadTouchBits) | touched))),
+                                        std::memory_order_relaxed);
+        }
+      }
+    }
+  }
   sh.groups_compared = h50::On(5) ? 1 : 0;
   // ssasr-nx (2026-11-27, the thread batch F1): the chunks only the setters wrote, rebuilt on the worker from the log
   // (none when it overflowed, or this is not its device); at a sparse check they are staged raw too and compared.
@@ -2484,8 +2543,10 @@ std::string SnapshotDeltaReport() {
                         g_log_overflows.exchange(0, std::memory_order_relaxed),
                         g_setter_log_failed.load(std::memory_order_relaxed) ? " (OFF: a rebuilt chunk differed)" : "");
   line += render_thread::SubmitWorkerReport();
-  if (::ssasr::host50::CensusOn())  // ssasr-nx (2026-11-27, the malloc census)
+  if (::ssasr::host50::CensusOn()) {  // ssasr-nx (2026-11-27, the malloc census, N18's)
     line += GrowReport();
+    line += N18Report();
+  }
   if (DeltasVerifyOn()) {
     line += fmt::format("; verify: {} draws checked, {} differ", g_delta_verified.exchange(0, std::memory_order_relaxed),
                         g_delta_differ.exchange(0, std::memory_order_relaxed));
