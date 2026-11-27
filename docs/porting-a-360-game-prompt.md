@@ -219,8 +219,9 @@ The work, in order
       submit worker and setter log (ssasr_submit_worker, ssasr_setter_log: banjo_renut_snapshot_deltas_verify, 0 of the
       draws differ; the worker costs the render thread about 0.9 ms, so only where the game thread is the limit);
       ssasr_draw_runs (Beautiful Katamari's PC renderer presented no frame with it: test it before anything else);
-      ssasr_code_blocks_data (its size again in heap); ssasr_capture_pool_mb (64; its census line, with
-      ssasr_renut_host50_census, shows the pool's churn).
+      and two on by default, each with a line to check: ssasr_code_blocks_data (the data and bss on 2 MB blocks,
+      "[code blocks] ... and data"; its size again in heap, so false in the player's toml for a game short of heap)
+      and ssasr_capture_pool_mb (64; its census line, with ssasr_renut_host50_census, shows the pool's churn).
    Run CG-13's census (step 1) and these again after any large change to the code generation, and note in the report
    which forms are on.
 8. Smaller game files: the movies to H.265 and the audio to Opus (docs/media-compression.md, all of it, before any

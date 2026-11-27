@@ -356,12 +356,22 @@ its console).
 
 ## 13. ssasr-nx's switches (ports 372-385), off by the same rule
 
+On since port 387 (the user, 2026-11-27): `ssasr_code_blocks_data` (the data and bss on 2 MB blocks; their size again
+in heap, Beautiful Katamari 34 MB, so `= false` in the player's toml for a game short of heap; with no memory for the
+copy, the code alone, and the status line says so) and `ssasr_capture_pool_mb` (64, since port 385). ssasr-nx's console
+TLB test: the data on 2 MB blocks costs nothing (-0.2 ns a scattered access); the host heap +6.9 ns, as text and
+read-only data had, but nothing moves it. ssasr-nx's console, Seaside Hill at 1,200 draws: the setter log and draw runs
+together with the submit worker 31.3 ms a frame against 30.4 with the worker alone (+1.7 ms at 1,700 draws); each alone
+against the worker alone (30.6, four races): the setter log 31.7 / 31.8 (+1.2 ms: logging every setter write costs the
+game thread more than the rebuilt chunks save), draw runs 30.7 / 30.6 (neutral). Both stay off; the worker alone
+-0.9 ms. ssasr-nx's host bundle (port 385's malloc growth, relaxed counters and SsFilter lookup, with its N18 tags
+narrowing) against the build before it: 30.6 against 30.5 over four races each, exact but no console gain there.
+
 | Key | Port | What it does when on |
 |---|---|---|
-| `ssasr_code_blocks_data` (toml only, `= true`) | 373 | the data and bss on 2 MB blocks (their size again in heap) |
 | `ssasr_submit_worker` | 376 | the submit worker (the render thread +0.9 ms in ssasr-nx: check per game) |
-| `ssasr_setter_log` | 376 | chunks only the setters wrote rebuilt on the worker |
-| `ssasr_draw_runs` | 376 | staged draws in runs (Beautiful Katamari's PC renderer presented no frame with it) |
+| `ssasr_setter_log` | 376 | chunks only the setters wrote rebuilt on the worker (ssasr-nx's console: +1.2 ms a frame, the loser) |
+| `ssasr_draw_runs` | 376 | staged draws in runs (Beautiful Katamari's PC renderer presented no frame with it; ssasr-nx's console: +0.1 ms, neutral) |
 | `ssasr_renut_depth_slices` | 378 | depth resolves into stacked slices beyond 0 (a picture change) |
 | `ssasr_diag_watch_cs`, `ssasr_diag_watch_hooks`, `switch_profile_addresses` | 372, 381 | diagnostics |
 | `SSASR_CALL_RELOADS=1` (env, post_codegen) | 379 | reloads after calls forwarded by the call write summaries |

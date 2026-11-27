@@ -309,7 +309,7 @@ void Apply(Handle proc, bool with_data) {
     with_data = false;  // not the loader's writable mapping of the module: left alone
     have_relro = false;
   }
-  const u64 total = text.size + ro.size + (have_relro ? relro.size : 0);  // what is copied before the allocations
+  u64 total = text.size + ro.size + (have_relro ? relro.size : 0);  // what is copied before the allocations
   const u64 total_all = total + (with_data ? rw.size : 0);
 
   /* The loader's copy: the start of the heap, with the permissions svcMapProcessCodeMemory leaves. */
@@ -329,8 +329,21 @@ void Apply(Handle proc, bool with_data) {
     snprintf(data_note, sizeof(data_note), "; data left: the stack is in it (0x%llX)", static_cast<unsigned long long>(sp));
     with_data = false;
   }
-  const u64 size_all = with_data ? total_all : total;
+  u64 size_all = with_data ? total_all : total;
   void* raw = memalign(kBlock, size_all + kBlock + kPage);
+  if (!raw && with_data) {
+    // (2026-11-27, the data on by default) no room for the data's copy as well: the text and read-only data alone, as
+    // with ssasr_code_blocks_data = false (the relocation part goes with them only when the data moves)
+    snprintf(data_note, sizeof(data_note), "; data left: no memory for its copy (%llu KB)",
+             static_cast<unsigned long long>(rw.size >> 10));
+    with_data = false;
+    if (have_relro) {
+      total -= relro.size;
+      have_relro = false;
+    }
+    size_all = total;
+    raw = memalign(kBlock, size_all + kBlock + kPage);
+  }
   if (!raw) return skip("no memory for the copy", size_all);
   const u64 copy = reinterpret_cast<u64>(raw) + ((text_va - reinterpret_cast<u64>(raw)) & (kBlock - 1));
   memcpy(reinterpret_cast<void*>(copy), reinterpret_cast<const void*>(text_va), total);
@@ -387,7 +400,7 @@ __attribute__((constructor(101))) void RexCodeBlocksInit() {
     snprintf(g_status, sizeof(g_status), "[code blocks] off (banjo_code_blocks = false)");
     return;
   }
-  Apply(proc, TomlSays("ssasr_code_blocks_data", "true"));  // renut-ultimate: off unless the toml says true
+  Apply(proc, !TurnedOffInToml("ssasr_code_blocks_data"));  // on unless the toml says false (the user, 2026-11-27)
 }
 
 }  // namespace

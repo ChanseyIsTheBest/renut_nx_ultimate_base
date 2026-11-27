@@ -469,3 +469,6 @@ Ports 1-43 are the first round: the universal fixes of the other ports' renderer
 - Port 385 (ssasr-nx's 7c0cd28b and bcf8edc0): the capture pool's churn (rounded growth, a 64 MB cap by default,
   ssasr_capture_pool_mb), the hooks' fast-path counters relaxed, SsFilter's anisotropy lookup only when needed.
 - Port 386: the porting prompt's not-exact censuses (step 7) and media step (step 8); the loose barriers' keep list per port.
+- Port 387: the data and bss on 2 MB blocks on by default (`ssasr_code_blocks_data`; `= false` in the player's toml
+  keeps them on 4 KB pages; with no heap for the copy, the code alone); the rebasing prompt's not-exact censuses and
+  media step.

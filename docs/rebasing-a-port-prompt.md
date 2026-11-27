@@ -113,7 +113,7 @@ The work, in order
         promotions, title update and DLC code, the game's own fixes and enhancements, its tomls, the icon, the player's
         folder;
      b. general work the base already has in some form: left behind, with the base's form named (its port number);
-     c. general work the base has in no form: grafted (and written up as a handoff for the base, step 10), or left
+     c. general work the base has in no form: grafted (and written up as a handoff for the base, step 11), or left
         behind with the reason.
    - The original project's work since the point the base last took anything from it: each piece sorted the same way.
    - The base's Katamari layer, which goes: app\src\katamari_keys.cpp and its hooks, the Katamari lists and natives,
@@ -175,20 +175,56 @@ The work, in order
       "[census] near-exact" lines (#3 / #4 FPSCR writes and reads, #32 compare-and-swaps, #38 card marks) are the
       evidence for the related exact items: record them.
    c. BLUR_NX_R1_ASSUME=1 (post-codegen environment; #9, r1_preserve.py --near-exact): how many more functions it takes
-      as preserving r1, then PC verify and the run.
+      as preserving r1, then PC verify and the run: the r1 mirror check of the guard build must show 0 differences
+      (ssasr-nx: 20,157 of 20,490 functions taken, against 8,264 proven; 391.6 M calls checked, 0 differences).
    d. BLUR_LOCALIZE_ABI_TRUST=1 (post-codegen environment; port 150): the machine copies trust the PowerPC ABI's
       non-volatile registers across calls. The case it changes is a callee that breaks the ABI (hand-written assembly,
-      setjmp / longjmp): look for any in the game's code (step 4's censuses, the XDK's assembly routines), then PC
-      verify with it on.
+      setjmp / longjmp): look for any in the game's code (step 4's censuses, the XDK's assembly routines), then the PC
+      guard race with it on (banjo_cpu_verify, a dense guard): any non-volatile register difference fails it.
    e. The stack-frame elisions (BANJO_GEN_LR_MOVES_ELIDE, BANJO_GEN_NV_SAVES_ELIDE, BANJO_GEN_BACK_CHAIN_ELIDE;
       tools\frame_traffic.py) and SASRT_HOT_LR_ELIDE. sa2-nx's non-volatile saves elision tinted its characters: the
       game read a stack word it never wrote, every self-check passed, and only a lockstep frame comparison showed it.
       So these need a frame-exact test of every scene the PC can reach (a lockstep capture with and without, compared
       frame by frame), and SASRT_HOT_LR_ELIDE a guard run with 0 differences. The link register's half first; the
-      non-volatile saves only if the capture is exact.
+      non-volatile saves only if the capture is exact. First, the stale-read census (ssasr-nx's, port 380): a PC build
+      with CMake SSASR_STALE_CENSUS=ON (tools\ssasr_stale_census.py) has the elided stores write 0xDEADBEEF and every
+      4- and 8-byte guest load count reads of it; the "[census] ssasr stale" lines and RexStaleHit list the readers by
+      return address (exit-block restores left out). Every reader must be a dead restore or the guard's own compare:
+      classify all of them. One that uses the value (a stack walk through the back chain, a read of the link register)
+      keeps that elision off.
    f. BANJO_GENERATED_NO_TRAPPING_MATH: -fno-trapping-math on the generated code. The files that write the guest FPSCR
       keep -ftrapping-math (tools\fp_env_files.py, app\generated\fp_env_files.txt): check that it lists every file
       where the host's float mode changes, in every module. PC verify and the census runs with it on.
+   ssasr-nx's switches (ports 372-385; docs/off-by-default.md section 13, all off; its figures as examples):
+   g. Loose loop barriers (CMake SSASR_NON_EXACT: REX_SSASR_LOOSE_BARRIERS, tools\ssasr_loose_barriers.py): run
+      tools\find_self_loops.py on the Switch ELF and on one built with every barrier kept. A new branch to itself in a
+      recompiled function is a poll GCC turned into an endless spin once its barrier was gone: a console hang. Put each
+      such function in app\config\loose_barriers_keep.txt and build again until there are none (ssasr-nx had ten). The
+      barrier is a compiler barrier only: the CPU's memory ordering does not change.
+   h. NaN signs and loose stack forwarding (the same switch: REX_SSASR_NAN_SIGN_FREE, REX_SSASR_FWD_LOOSE): the guard
+      race on the PC and the guard on ARM (tools\build_switch_guard.bat, in Ryujinx): x86 and ARM give a NaN its sign
+      differently (ssasr-nx took two natives off for NaN signs only the ARM guard showed). The base's guard already
+      shows a few NaN-sign-only differences in vector code (Beautiful Katamari: three, NaN inputs through vmaddfp /
+      vnmsubfp): that class is known; any other difference is a fault.
+   i. Relaxed floats (CMake SSASR_RELAXED_FLOATS: contraction, reciprocals, single operations in float, one Newton
+      step on the VMX estimates). It can change the picture: my decision, after its censuses. CMake
+      SSASR_GUARD_RELAXED_FLAGS=ON (the flags on the copies only, the guard against the exact originals; ssasr-nx: 72
+      differences in 67 copies, all a zero's sign), the "[census] ssasr non-exact" count of single operations whose
+      inputs are not singles (ssasr-nx: 28,140 of 129 M, at most one ulp apart), and sasrt_test_vmx_fuzz (vrsqrtefp
+      within 196 ulp, vrefp within 129).
+   j. The float copies' denormal flush (REX_SSASR_PURE_FLUSH): only where its census (REX_NX_CENSUS 40) is 0 in every
+      window; those copies move any 4 bytes, and a small integer is a denormal single (ssasr-nx: 467,812 a race: off).
+   k. LiveOut trimming (exact by construction, but the liveness model has holes): the poison race
+      (banjo_hot_poison_dead = true, banjo_hot_guard_calls = 0, banjo_hot_guard_period = 1048576), where registers
+      dead after a return get garbage: the picture right to the end, only known artefacts.
+   And the exact options that still need this game's check: SSASR_CALL_RELOADS=1 (post-codegen; checked with
+   REX_STACK_FWD_VERIFY in the hooked builds); the submit worker and setter log (ssasr_submit_worker,
+   ssasr_setter_log: banjo_renut_snapshot_deltas_verify 0 of the draws differ; the worker costs the render thread about
+   0.9 ms, so only where the game thread is the limit); ssasr_draw_runs (Beautiful Katamari's PC renderer presented no
+   frame with it: test it before anything else). On by default, with a log line to check: ssasr_code_blocks_data
+   (the data and bss on 2 MB blocks: "[code blocks] ... and data"; their size again in heap, so false in the player's
+   toml for a game short of heap) and ssasr_capture_pool_mb (64; with ssasr_renut_host50_census its line shows whether
+   the pool still makes and deletes captures).
    Also the measurement tools for where the generated code's time goes: tools\codegen_census.py and
    tools\generated_code_census.py (they want a console profile: list them for the console step) and
    tools\loop_body_census.py, tools\arm_cost_census.py on the build.
@@ -199,9 +235,28 @@ The work, in order
    differences, counts showing it was reached; a guard build with banjo_hot_poison_dead on). The original project's
    hand-written natives are grafted only where the base's machine copies do not already cover them, each checked
    against the generated code.
-8. PGO + LTO: the original project's profile does not fit the new code (and a compile-time switch from step 6 needs a
+8. Smaller game files, if the last release has not done them: the movies to H.265 and the audio to Opus
+   (docs/media-compression.md, all of it, before any code). Each re-encode is a stand-in, NAME.x, that the SDK shows to
+   the game as NAME: the same size, every header, index and table byte as the game reads it, only the picture or sound
+   data replaced (ASF movies are rewritten instead: section 1). It changes the picture and the sound: an option for me,
+   ticked by default in the installer.
+   - Measure first (the files by kind and size), and keep the guide's order and rules: the movies, raw PCM music,
+     compressed audio (XMA, ADX), then LZ4 / ZXC packing of what compresses; the 95 % and 5 % rules, not smaller means
+     not changed, small files plain, default.xex (and .xexp) never packed, re-encoded movies ZXC-packed (my rule).
+   - The runtime: the base reads every stand-in kind (section 9); the movie hook is each game's, from the port whose
+     container matches (section 5's "Container by container" and section 9's table), with the decode at priority
+     0x2C, read-ahead on a libnx thread, and nxvideo's VIC copy and clocks kept. Where the original project already
+     has its own media code, check it against the base's readers.
+   - Make each kind on the PC for a test into a copy of the game folder (never pack a linked folder in place; never
+     leave a plain NAME beside its stand-in); test on the PC (libopus-0.dll beside renut.exe), in Ryujinx with the
+     software decoder (no H.265 NVDEC there), and on the console for the real decode (rr6-nx: about 5.4 ms of NVDEC a
+     frame); watch every movie and listen to a sample of the sounds, loops and seeks included.
+   - The installer's part (game.json's movies and audio, the writers of the matching port, its output equal to the PC
+     tools' byte for byte): list it with step 10's installer list; change nothing there in this session. Game data is
+     never committed, uploaded or shared. Record each kind's size before and after, and the decode's cost.
+9. PGO + LTO: the original project's profile does not fit the new code (and a compile-time switch from step 6 needs a
    new one too). Leave the tree ready for an instrumented build and my console session (building.md), and say so.
-9. A package for my console, built and checked in Ryujinx:
+10. A package for my console, built and checked in Ryujinx:
    - the NRO in the same folder and under the same name as the last release (<PLAYER_FILES>), so a player's install
      keeps working
    - the toml with the shipped settings, a play toml with the diagnostics off, an A/B toml with 30 s halves and a
@@ -212,7 +267,7 @@ The work, in order
    The web installer (<PORT_INSTALLER>): list what it needs for the rebased build (the base's installer,
    <INSTALLER_DIR>, takes several games through game.json, title updates, and .lz4b packs, so the port could move onto
    it); change nothing there in this session.
-10. Fixes that are not the game's own (an SDK bug, a renderer fault any game could hit, a faster exact form, a census
+11. Fixes that are not the game's own (an SDK bug, a renderer fault any game could hit, a faster exact form, a census
    finding that applies to all games, general work of list c): write a handoff for the ultimate base (a patch against
    <BASE_DIR> and a note: what, why, how it was tested, its key and default) in <WORKTREE>\out, and name it in the final
    report.
@@ -250,6 +305,7 @@ When done, report:
   was left behind and why
 - how the modules are generated and post-processed, if there is more than one
 - each census: its numbers, the sites, the verdict, and which not-exact forms the build has on
+- the media step (step 8): each kind's size before and after, the decode's cost, what the installer needs
 - what was measured, and how (no console numbers unless I gave the word for a console run)
 - what is next, with the console steps (the A/B of the rebased build against the last release, the cleared forms, PGO)
 - the fixes handed off for the ultimate base
