@@ -123,6 +123,13 @@ The work, in order
    - MSAA is off (msaa_level 1). The game's own count is a decision for me (it changes the picture).
    - The keys of off-by-default.md section 1 fix one game's picture: turn one on in this game's toml only after its
      own A/B shows the same fault.
+   - The device layout: d3d.h's Device is Beautiful Katamari's XDK's, and every delta path copies the float constants
+     from where it puts them (m_Constants +0x480, the vertex shader's at +0x780, the pixel shader's at +0x1780). Check
+     this game's XDK against it (its D3D functions' stores: m_Constants, the fetch constants, the private state)
+     before trusting the delta paths, and fix it in d3d.h, the one place every path reads, never path by path (a Gears
+     of War port's constants lay elsewhere: a grey picture with every verify passing). The layout guard's line says
+     which: "delta layout guard ... retired" is right; its error line means the constants are elsewhere
+     (renut_delta_layout_guard, 0 once the layout is known right).
 4. Test in Ryujinx. Build the NRO and run it with tools/run_ryujinx.ps1 and this port's own data folder, to the title
    screen and an attract loop or first gameplay, with captures every 15 s and the verify keys on. Fix every visual
    difference against the PC build, each found in a RenderDoc capture first (Appendix B). A new shader package means the

@@ -150,6 +150,11 @@ The work, in order
    own A/B shows the same fault. Keys the last release had on and the base has off, and fixes the original project
    made for its own scenes: check each against the base's form, one by one. The base's rule: a key that breaks any
    game's picture is off in the base, and the game that needs it turns it on in its own toml.
+   The device layout: d3d.h's Device is Beautiful Katamari's XDK's, and every delta path copies the float constants from
+   where it puts them (m_Constants +0x480, VertexShaderF +0x300). If the game's XDK differs, its layout goes into d3d.h,
+   the one place every path reads, never path by path (a Gears of War port fixed two paths and left a third reading the
+   wrong place). Check the layout guard's line: "delta layout guard ... retired" is right; its error line means the
+   constants are elsewhere (renut_delta_layout_guard, 0 once the layout is known right).
    The three keys decided from the log (the base's porting prompt, step 5) and the stereo check (audio_channel_census,
    audio_speaker_config = 1): from this port's own logs in gameplay windows.
 6. The not-exact code generation, with its censuses (do it thoroughly). The PC build counts what each form would

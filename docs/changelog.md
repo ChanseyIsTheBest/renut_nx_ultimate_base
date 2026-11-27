@@ -479,3 +479,6 @@ Ports 1-43 are the first round: the universal fixes of the other ports' renderer
   log a loss, draw runs and N18 nothing) and a rule: less work on the PC is a candidate until the console's A/B.
 - Port 390: asura-nx's clamped generic pipelines off by default (`asura_renut_generic_keeps_clamps`): a draw waited for
   their compile, stalling the render thread up to half a second in a Gears of War port.
+- Port 391: a guard that checks the float constants are where d3d.h says (`renut_delta_layout_guard`, every 256th
+  capture, retiring after 1024 clean looks; 0 turns it off): a game whose constants lie elsewhere gets an error line
+  and the newer delta paths off instead of a grey picture. Both prompts check the device layout first.

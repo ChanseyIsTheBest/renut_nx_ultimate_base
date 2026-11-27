@@ -5,6 +5,7 @@
 #include "renut_engine/gpu/host_batch.h"  // blur-nx (2026-11-18, the Renut host batch)
 #include "renut_engine/gpu/ssasr_host50.h"  // ssasr-nx (2026-11-26, batch 4)
 #include "renut_engine/gpu/backend/latched_switch.h"  // ssasr-nx (2026-11-27, loads batch L107)
+#include "renut_engine/gpu/backend/delta_layout_guard.h"  // port 391 (2026-11-28)
 
 #include <algorithm>
 #include <array>
@@ -89,6 +90,20 @@ REXCVAR_DEFINE_BOOL(deadpool_delta_copies, true, "Banjo/Enhancements",
                     "the render thread; PrefetchDeltaLines (banjo_renut_delta_prefetch) primes one line in four of the "
                     "guest device's compared runs and none of the shadow, and only when the chain is on this device. "
                     "The same bytes. false: the base's copies and prefetches")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// Port 391 (2026-11-28, the user: "Yes, add the guard"; backend/delta_layout_guard.h): a Gears of War port's float
+// constants lay where d3d.h's Device does not put them, and every delta path drew with the wrong bytes (a grey picture)
+// while every verify passed. The guard looks every Nth capture of the chain's device: a constant group that changed with
+// no dirty mark trips it (an error line; the marked deltas and the group copies off for the run).
+REXCVAR_DEFINE_INT32(renut_delta_layout_guard, 256, "Banjo/Enhancements",
+                     "The delta chain's float constant layout guard: every Nth capture (1-65536) checks that each "
+                     "constant group whose bytes changed was marked dirty (an 8 KB compare and copy a look); one that was "
+                     "not means the constants are not where d3d.h's Device puts them for this game's XDK: logged, and "
+                     "the marked deltas and group copies turned off. 0: off (once a port's layout is known right)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_INT32(renut_delta_layout_guard_looks, 1024, "Banjo/Enhancements",
+                     "With renut_delta_layout_guard: the clean looks (with changed groups seen) after which it stops "
+                     "looking for the rest of the run (1024 at 256: about 262,000 captures). 0: it looks all run")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 // bangaio-nx (2026-10-29, v6): see PrefetchDeltaLines.
 REXCVAR_DEFINE_BOOL(banjo_renut_delta_prefetch, true, "Banjo/Enhancements",
@@ -801,9 +816,14 @@ inline void ShortChunkCopy(u8 *dst, const u8 *src, u32 size) {
   for (u32 k = 0; k < size; ++k)
     dst[k] = src[k];
 }
+// Port 391: set once when the layout guard trips (LayoutGuardReport); read by the paths it turns off. The guard itself
+// (backend/delta_layout_guard.h) is touched only under the chain's serialisation (CaptureDelta, ClearPending and
+// ForgetSnapshotDeltas: g_delta.mutex while the deltas are on).
+std::atomic<bool> g_layout_mismatch{false};
+layout_guard::Guard g_layout_guard;
 inline bool DeltaCopiesOn() {
   static const bool on = REXCVAR_GET(deadpool_delta_copies);
-  return on;
+  return on && !g_layout_mismatch.load(std::memory_order_relaxed);  // port 391: off at a layout trip
 }
 constexpr DeltaRuns kDeltaAllRuns = MakeDeltaRuns(kDeltaAllChunks);
 constexpr DeltaRuns kDeltaReadRuns = MakeDeltaRuns(kDeltaReadChunks);
@@ -1021,6 +1041,8 @@ void ClearPending(d3d::Device *device, u32 device_va) {
     if (slot == native::g_log_slot) [[unlikely]]
       native::g_log_raw |= bits;
   }
+  // Port 391: the marks this whole capture consumes still count for the layout guard's window on this device.
+  g_layout_guard.Fold(device, uint64_t(device->m_Pending[0]), uint64_t(device->m_Pending[1]));
   for (auto &mask : device->m_Pending)
     mask = 0;
 }
@@ -1589,7 +1611,8 @@ inline bool DeltaMarksSink(u32 device_va) {
 // ssasr-nx (2026-11-27, batch 5 H6): inline (a call twice a draw: 0.05-0.09 ms a frame in the console tables).
 [[gnu::always_inline]] inline bool MarkedDeltasOn(u32 device_va) {
   return ::ssasr::host50::On(2) && DeltasNarrowOn() &&
-         !::ssasr::host50::g_marks_failed.load(std::memory_order_relaxed) && DeltaMarksSink(device_va);
+         !::ssasr::host50::g_marks_failed.load(std::memory_order_relaxed) &&
+         !g_layout_mismatch.load(std::memory_order_relaxed) && DeltaMarksSink(device_va);  // port 391
 }
 void TakeDeltaMarks(u32 device_va) {
   if (::ssasr::host50::On(2) && DeltaMarksSink(device_va))
@@ -2319,11 +2342,58 @@ void FinishStagedCapture(void *arg) {
   }
 }
 
+// Port 391 (2026-11-28): the float constants' layout guard (backend/delta_layout_guard.h), on the chain's captures
+// (CaptureDelta's callers serialise them, as the chain itself).
+static_assert(kDeltaPixelF == kDeltaVertexF + layout_guard::kStageBytes);
+void LayoutGuardInit() {
+  const int32_t period = REXCVAR_GET(renut_delta_layout_guard), looks = REXCVAR_GET(renut_delta_layout_guard_looks);
+  g_layout_guard.period = period <= 0 ? 0u : uint32_t(std::min<int32_t>(period, 65536));
+  g_layout_guard.retire_after = looks <= 0 ? 0u : uint32_t(looks);
+}
+[[gnu::cold, gnu::noinline]] void LayoutGuardReport(layout_guard::Result r) {
+  const layout_guard::Guard &g = g_layout_guard;
+  switch (r) {
+    case layout_guard::Result::kTripped:
+      g_layout_mismatch.store(true, std::memory_order_relaxed);
+      RGPU_ERROR("[renut] delta layout guard: float constant groups changed with no dirty mark (vertex {:016X}, pixel "
+                 "{:016X}; bit 63 - group) at look {}: this game's float constants are not where d3d.h's Device puts "
+                 "them (m_Constants +0x480, VertexShaderF +0x300: device +0x{:X}), or a path lost a mark. The marked "
+                 "deltas and the group copies are off from now on{}. Fix d3d.h's layout for this game's XDK "
+                 "(renut_delta_layout_guard)",
+                 g.unmarked_vs, g.unmarked_ps, g.looks, kDeltaVertexF,
+                 StagingOn() ? "; the staged deltas cannot change in a run: set ssasr_submit_worker = false" : "");
+      break;
+    case layout_guard::Result::kNeverChanges:
+      RGPU_WARN("[renut] delta layout guard: {} marked float constant groups over {} looks, and none changed at device "
+                "+0x{:X} (d3d.h's VertexShaderF): check this game's XDK device layout (renut_delta_layout_guard)",
+                g.marked, g.looks, kDeltaVertexF);
+      break;
+    case layout_guard::Result::kRetired:
+      RGPU_INFO("[renut] delta layout guard: {} clean looks ({} marked groups, {} changed, every change marked): "
+                "retired for this run (renut_delta_layout_guard_looks)",
+                g.looks, g.marked, g.changed);
+      break;
+    case layout_guard::Result::kNone:
+      break;
+  }
+}
+
 [[gnu::hot]] DrawCapture *CaptureDelta(u32 device_va, const DrawCall &call) {
   auto *device = GuestPtr<d3d::Device>(device_va);
   if (!device)
     return nullptr;
   DeltaChain &c = g_delta;
+  // Port 391: the layout guard, before any path below consumes the marks (a pointer compare, two ORs and a count; a
+  // look every Nth capture; nothing once off or retired).
+  static const bool layout_guard_init = (LayoutGuardInit(), true);
+  (void)layout_guard_init;
+  if (g_layout_guard.period != 0) {
+    const layout_guard::Result r =
+        g_layout_guard.Note(device, reinterpret_cast<const u8 *>(device) + kDeltaVertexF,
+                            c.vs | uint64_t(device->m_Pending[0]), c.ps | uint64_t(device->m_Pending[1]));
+    if (r != layout_guard::Result::kNone) [[unlikely]]
+      LayoutGuardReport(r);
+  }
   // ssasr-nx (batch 5 N23): a Begin*Vertices draw's capture (QueueDeferredDraw) from the big ones: its vertices follow.
   // ssasr-nx (2026-11-27, the malloc follow-up's fix): a rebase too (the whole device, 12,888 bytes): it took a small
   // capture and grew it (the PC census: up to three in four of the rebases), which then went back to the big ones.
@@ -2484,6 +2554,7 @@ void ForgetSnapshotDeltas(const void *device) {
     return;
   std::lock_guard lock(g_delta.mutex);
   g_delta.device.store(nullptr, std::memory_order_relaxed);
+  g_layout_guard.Restart(device);  // port 391: the masks went to a command buffer, which the guard does not see
 }
 
 std::string SnapshotDeltaReport() {
