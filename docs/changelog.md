@@ -482,3 +482,7 @@ Ports 1-43 are the first round: the universal fixes of the other ports' renderer
 - Port 391: a guard that checks the float constants are where d3d.h says (`renut_delta_layout_guard`, every 256th
   capture, retiring after 1024 clean looks; 0 turns it off): a game whose constants lie elsewhere gets an error line
   and the newer delta paths off instead of a grey picture. Both prompts check the device layout first.
+- Port 392: the porting prompt's first census run also takes the relaxed-float, delta-chunk, call-verify, indirect-call
+  and audio-channel censuses; step 7 decides from its numbers.
+- Port 393: the rebasing prompt's first census run takes the other censuses too; the indirect call census a file a
+  scene in both prompts.

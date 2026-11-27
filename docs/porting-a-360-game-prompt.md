@@ -95,12 +95,48 @@ The work, in order
    Then CG-13's census, as soon as the PC build reaches gameplay: the Switch build runs all of the game's float code in
    the host's flush mode (BLUR_FPCR_ONE_MODE, on by default there: no `msr fpcr` between its VMX and scalar code, a
    large CPU saving), which turns a scalar denormal into zero where the Xenon keeps it. Run
-   `tools/cg13_census.ps1 -Seconds 300` with this game's input script, in gameplay and in its most physics- and
-   audio-heavy scenes (the PC build keeps the option off so the census can count; building.md section 6). 0 in every
-   window: keep it on. Any window with a count: the script lists the sites; look at what each computes (a value
-   decaying to zero is harmless; a division or normalisation of it, a guard against zero, an input-based replay's
-   simulation is not), write them down in the notes, and if one matters tell me before building the Switch folder with
-   -DBLUR_FPCR_ONE_MODE=OFF. Run it again after a large change to the code generation.
+   `tools/cg13_census.ps1 -Seconds 300 -Extra "--ssasr_renut_host50_census=true --ssasr_submit_worker=true
+   --banjo_renut_snapshot_deltas_verify=true --renut_delta_layout_guard_looks=32 --audio_channel_census=true
+   --banjo_diag_indirect_census=<WORK_DIR>/indirect_<scene>.txt"` with this game's input script, in gameplay and in its
+   most physics- and audio-heavy scenes (a census file a scene; the PC build keeps the option off so the census can
+   count: building.md section 6). 0 in every window: keep it on. Any window with a count: the script lists the sites;
+   look at what each computes (a value decaying to zero is harmless; a division or normalisation of it, a guard against
+   zero, an input-based replay's simulation is not), write them down in the notes, and if one matters tell me before
+   building the Switch folder with -DBLUR_FPCR_ONE_MODE=OFF. Run it again after a large change to the code generation.
+   The same run (banjo_diag_runtime_census, every 10 s) is the census of everything else that is not exact, so read
+   its log for all of it now and write each down in docs/<SHORT>-near-exact.md; step 7 decides the switches from these
+   numbers and builds only what a census build or a guard has to add.
+   - The relaxed floats and the float copies' flush, "[census] ssasr non-exact": the denormal singles through float
+     copies (the flush, step 7 h: 0 in every window or it stays off; ssasr-nx: 467,812 a race) and the single
+     operations with an input that is not a single, with how far the relaxed result lands from the exact one (step 7
+     g: one ulp or less, more, NaN or infinite where the exact one is finite; ssasr-nx: 28,140 of 129 M, all within
+     one ulp). Beside it the "[census] near-exact" counters (step 7 a).
+   - The delta chain's chunks: "delta layout guard ... retired" (the float constants where d3d.h's Device puts them;
+     an error line instead stops the work here: step 3's device layout, fixed in d3d.h; 32 looks here, as the census
+     runs about a tenth as fast: Beautiful Katamari drew some 150 draws a second, and the census's slow start means
+     the input script's presses come later than in a plain run), the snapshot verify ("verify: N draws checked, 0
+     differ": the chunks and constant groups each delta takes rebuild the device exactly), the
+     "N18 census" (how many staged draws carry a state tag and which tags come alone: none, as in Beautiful Katamari,
+     means no tag narrowing in step 7 j) and the capture pool's line (whether it still makes and deletes captures at
+     64 MB). The submit worker is on for this run only, for the N18 line; the run is a census, not a speed
+     measurement.
+   - The calls: "[verify] r1 mirror checked after N calls ... 0 differences" and "stack forwards ... checked against the
+     real load: N; 0 differences" (the forms this build has; step 7 b's BLUR_NX_R1_ASSUME and j's SSASR_CALL_RELOADS
+     change the code generation and are checked again there), and the indirect call census (one line a call site):
+     `python tools/indirect_promotions.py --census <every scene's file> --gen app/generated` makes this game's
+     app/indirect_promotions.txt (Katamari's was taken out above; step 6).
+   - The audio: "[audio] channels with sound" (step 5's stereo check, its first half: which of the six channels the
+     game fills).
+   Beautiful Katamari's run of this command (2026-11-28, 300 s): CG-13 0 in 26 windows; denormal singles through
+   float copies 0; 17,120 of 31.6 M single operations with an input that is not a single; the guard retired after 32
+   looks (188 changed groups, all marked); the verify 0 of 1,472 draws differ; no staged draw with a state tag; FL FR C
+   filled, LFE and the rears 0; the r1 mirror 0 differences in 21.5 M calls; 860,933 stack forwards, 0 differences.
+   It ran at about a tenth of the plain build's speed, so time the input script's presses for that.
+   Not in this run, as each changes what runs or needs its own build: the stale-read and memo censuses (step 7 d; one
+   PC census build can carry both, SSASR_STALE_CENSUS=ON and SSASR_MEMO_CENSUS=ON); the guard races of step 7 c, f
+   and g (the guard build; SSASR_GUARD_RELAXED_FLAGS is a guard build of its own, so its differences are the flags'
+   alone); the poison race (step 7 i: dead registers get garbage); the guard on ARM (Ryujinx);
+   sasrt_test_vmx_fuzz (a test program); and audio_speaker_config = 1 (step 5's second half: it changes the mix).
 2. Check the calling convention before trusting the machine copies' liveness: run tools/cc_entry_census.py and
    tools/cc_exit_census.py on the generated tree. The entry census must say none; every read the exit census lists must be
    value-independent (look at each). If not, generate with SASRT_REG_LIVENESS_EXIT_ABI=0 (and HOOKS_ABI=0 for a vector
@@ -141,8 +177,8 @@ The work, in order
    those off-by-default.md lists; each still gets checked on this game (its key and in-run A/B target, in the emulator
    with the verify keys: 0 differences). The section 4 trials (vivapinata_shader_noearly's A/B 151 and the like) are per
    game: measure them on the console before turning one on. The ones that change the picture become configs for me.
-   Audio (blur-nx's stereo check, port 135): race on the PC with audio_channel_census = true; the 10 s "[audio]
-   channels with sound" line shows which of the six channels the game fills. Again with audio_speaker_config = 1
+   Audio (blur-nx's stereo check, port 135): the 10 s "[audio] channels with sound" line of step 1's census run shows
+   which of the six channels the game fills (audio_channel_census = true). Again with audio_speaker_config = 1
    (analog stereo): if the centre, LFE and rear channels drop to 0, the game mixes stereo itself when told, which
    saves its mixer work (blur-nx: ~+8 % fps from its mixer doing 2 channels, not 6); measure it on the console and
    match the old loudness with audio_stereo_frame_gain (compare audio_dump_s dumps, folded). A game that ignores it
@@ -210,13 +246,14 @@ The work, in order
       already shows a few such differences in vector code (Katamari: three, NaN inputs through vmaddfp / vnmsubfp): a
       difference that is a NaN's sign alone is that class; anything else is a real fault.
    g. Relaxed floats (CMake SSASR_RELAXED_FLOATS: contraction, reciprocals, single operations in float, one Newton step
-      on the VMX estimates). It can change the picture: my decision, after these. CMake SSASR_GUARD_RELAXED_FLAGS=ON
-      (the flags on the copies only, the guard against the exact originals; ssasr-nx: 72 differences in 67 copies, all
-      a zero's sign); the "[census] ssasr non-exact" count of single operations whose inputs are not singles (at most
-      one ulp apart; ssasr-nx: 28,140 of 129 M); sasrt_test_vmx_fuzz (vrsqrtefp within 196 ulp, vrefp within 129).
-   h. The denormal flush of the float copies (REX_SSASR_PURE_FLUSH): only where its census (REX_NX_CENSUS 40) is 0
-      in every window. Those copies move any 4 bytes, and a small integer is a denormal single (ssasr-nx: 467,812 a
-      race: off).
+      on the VMX estimates). It can change the picture: my decision, after these. Its count is step 1's census run
+      ("[census] ssasr non-exact": single operations whose inputs are not singles, at most one ulp apart; ssasr-nx:
+      28,140 of 129 M); what it adds here: CMake SSASR_GUARD_RELAXED_FLAGS=ON (the flags on the copies only, the
+      guard against the exact originals; ssasr-nx: 72 differences in 67 copies, all a zero's sign) and
+      sasrt_test_vmx_fuzz (vrsqrtefp within 196 ulp, vrefp within 129).
+   h. The denormal flush of the float copies (REX_SSASR_PURE_FLUSH): only where its census (REX_NX_CENSUS 40, step 1's
+      run: "denormal singles through float copies") is 0 in every window. Those copies move any 4 bytes, and a small
+      integer is a denormal single (ssasr-nx: 467,812 a race: off).
    i. LiveOut trimming (exact by construction, but the liveness model has holes): the poison race (banjo_hot_poison_dead
       = true, banjo_hot_guard_calls = 0, banjo_hot_guard_period = 1048576), where registers dead after a return get
       garbage. The picture right to the end, with only known artefacts (ssasr-nx: sub_82507AE0's r11, the __savevmx
@@ -229,8 +266,8 @@ The work, in order
       +1.2 ms a frame, as logging every setter write costs the game thread more than the rebuilt chunks save, so only
       with this game's own console A/B showing a gain); ssasr_draw_runs (Beautiful Katamari's PC renderer presented no
       frame with it: test it before anything else; ssasr-nx's console: +0.1 ms, nothing); ssasr_tags_narrow with the
-      game's own ssasr_tags_narrow_map: first the "N18 census" line (ssasr_renut_host50_census with the submit
-      worker); if no staged draw carries a state tag (Beautiful Katamari: 0 of about 134,000 every 10 s) there is
+      game's own ssasr_tags_narrow_map: first the "N18 census" line (step 1's census run); if no staged draw carries
+      a state tag (Beautiful Katamari: 0 of about 134,000 every 10 s) there is
       nothing to narrow, so stop there. Otherwise it names the state tags that come alone; every store in the game's
       code that sets one gives its ranges; the D3D library's processors that set tags from run-time masks get a
       mid-asm hook calling native::MarkStateTagsWide; then the guard race with banjo_renut_tags_check = 1: no
@@ -242,8 +279,8 @@ The work, in order
       Less work on the PC is not a console gain: ssasr-nx's exact host changes (port 385: the capture pool's rounded
       growth, relaxed hook counters, SsFilter's lookup) with N18 measured 30.6 against 30.5 ms over four console races
       each, nothing. Keep them for exactness and consistency; spend the effort on what the console's profile samples.
-   Run CG-13's census (step 1) and these again after any large change to the code generation, and note in the report
-   which forms are on.
+   Run step 1's census run (CG-13, the float and delta lines) and these again after any large change to the code
+   generation, and note in the report which forms are on.
 8. Smaller game files: the movies to H.265 and the audio to Opus (docs/media-compression.md, all of it, before any
    code). Each re-encode is a stand-in, NAME.x, that the SDK shows to the game as NAME: the same size, every header,
    index and table byte as the game reads it, only the picture or sound data replaced, so the game's own player, mixer
