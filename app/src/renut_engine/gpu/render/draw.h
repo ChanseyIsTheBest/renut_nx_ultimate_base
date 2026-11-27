@@ -322,8 +322,14 @@ extern ChainHint g_chain_hint;
 // banjo-nx (2026-10-20): the next ChainHint::seq, shared by every producer of hints (backend/queued.cpp's delta chain,
 // guest/command_buffers.cpp's replays): a producer whose number is not its previous one + 1 had another draw in between
 // and marks every chunk changed. banjo-nx (2026-10-27, render thread night): inline (a call into draw.cpp a draw).
-inline uint64_t g_chain_seq_counter = 1;  // the first hint is 2
-inline uint64_t NextChainSeq() { return ++g_chain_seq_counter; }
+// ssasr-nx (2026-11-27, batch 5 N6): a cache line of its own. The render thread adds to it at every delta it applies
+// (backend/queued.cpp); the linker had put it on the line of render_thread.cpp's g_wake_batch and g_notify_idle, which
+// every push on the game thread reads (the console's 5B profile: 14 samples on that load in QueuePrefetchedPlain).
+struct alignas(64) ChainSeqCounter {
+  uint64_t value = 1;  // the first hint is 2
+};
+inline ChainSeqCounter g_chain_seq_counter;
+inline uint64_t NextChainSeq() { return ++g_chain_seq_counter.value; }
 constexpr u32 kChainHeadChunks = 30;
 constexpr u32 kChainTailBegin = 10112;
 // The chain chunk of a device byte outside the float constants.

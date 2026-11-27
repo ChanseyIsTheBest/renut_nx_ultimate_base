@@ -7,6 +7,7 @@
  * which the game's inline SetRenderState / SetSamplerState call through).
  * The rest are D3DDevice_Set* and the CDevice internals that write the ring.
  */
+#include "renut_engine/gpu/ssasr_host50.h"  // ssasr-nx (2026-11-26, batch 4)
 #include <cstring>
 
 #include <rex/hook.h>
@@ -78,11 +79,19 @@ void ViewportLogAfter(const char *what, u32 device) {
 
 template <u32 State>
 void SetRenderStateHook(u32 device, u32 value) {
+  if (::ssasr::host50::On(11)) {  // ssasr-nx (2026-11-26, batch 4 #11): the state's function at compile time
+    native::SetRenderStateFixed<State>(native::DeviceAt(device), value);
+    return;
+  }
   native::SetRenderState(native::DeviceAt(device), State, value);
 }
 
 template <u32 State>
 void SetSamplerStateHook(u32 device, u32 sampler, u32 value) {
+  if (::ssasr::host50::On(10)) {  // ssasr-nx (2026-11-26, batch 4 #10)
+    native::SetSamplerStateFixed<State>(native::DeviceAt(device), sampler, value);
+    return;
+  }
   native::SetSamplerState(native::DeviceAt(device), sampler, State, value);
 }
 
@@ -247,6 +256,23 @@ void D3DDevice_EndIndexedVertices_hook(u32 device) {
 //     UINT64 PendingMask3) [0x821FE558]; the mask is the sampler's fetch
 // constant bit, which the port derives from Sampler.
 void D3DDevice_SetTexture_hook(u32 device, u32 sampler, u32 texture) {
+  namespace h50 = ::ssasr::host50;
+  if (h50::CensusOn()) [[unlikely]] {  // ssasr-nx (2026-11-26, batch 4 #50, #8): its time, and whether it changed anything
+    const native::Device d = native::DeviceAt(device);
+    const uint64_t before = d ? native::g_touch[d.slot].chunks : 0;
+    if (d)
+      native::g_touch[d.slot].chunks = 0;
+    const uint64_t t0 = h50::Ticks();
+    native::SetTexture(d, sampler, texture);
+    h50::Add(h50::kTextureTicks, h50::Ticks() - t0);
+    h50::Add(h50::kTextureCalls);
+    if (d) {
+      if (!native::g_touch[d.slot].chunks)
+        h50::Add(h50::kTextureSame);
+      native::g_touch[d.slot].chunks |= before;
+    }
+    return;
+  }
   native::SetTexture(native::DeviceAt(device), sampler, texture);
 }
 
@@ -254,6 +280,23 @@ void D3DDevice_SetTexture_hook(u32 device, u32 sampler, u32 texture) {
 //     UINT OffsetInBytes, UINT Stride, UINT64 PendingMask3) [0x821F9438]
 void D3DDevice_SetStreamSource_hook(u32 device, u32 stream, u32 vertex_buffer, u32 offset,
                                     u32 stride) {
+  namespace h50 = ::ssasr::host50;
+  if (h50::CensusOn()) [[unlikely]] {  // ssasr-nx (2026-11-26, batch 4 #50, #12)
+    const native::Device d = native::DeviceAt(device);
+    const uint64_t before = d ? native::g_touch[d.slot].chunks : 0;
+    if (d)
+      native::g_touch[d.slot].chunks = 0;
+    const uint64_t t0 = h50::Ticks();
+    native::SetStreamSource(d, stream, vertex_buffer, offset, stride);
+    h50::Add(h50::kStreamTicks, h50::Ticks() - t0);
+    h50::Add(h50::kStreamCalls);
+    if (d) {
+      if (!native::g_touch[d.slot].chunks)
+        h50::Add(h50::kStreamSame);
+      native::g_touch[d.slot].chunks |= before;
+    }
+    return;
+  }
   native::SetStreamSource(native::DeviceAt(device), stream, vertex_buffer, offset, stride);
 }
 

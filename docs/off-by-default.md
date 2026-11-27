@@ -354,6 +354,44 @@ would gain it nothing: a port whose game shows candidates can copy pokersmash-nx
 port 341's offset table and run its check key. Idea only: the base's memcpy native fits XDK 2.0.6534's memcpy (-52 % on
 its console).
 
+## 13. ssasr-nx's switches (ports 372-385), off by the same rule
+
+| Key | Port | What it does when on |
+|---|---|---|
+| `ssasr_code_blocks_data` (toml only, `= true`) | 373 | the data and bss on 2 MB blocks (their size again in heap) |
+| `ssasr_submit_worker` | 376 | the submit worker (the render thread +0.9 ms in ssasr-nx: check per game) |
+| `ssasr_setter_log` | 376 | chunks only the setters wrote rebuilt on the worker |
+| `ssasr_draw_runs` | 376 | staged draws in runs (Beautiful Katamari's PC renderer presented no frame with it) |
+| `ssasr_renut_depth_slices` | 378 | depth resolves into stacked slices beyond 0 (a picture change) |
+| `ssasr_diag_watch_cs`, `ssasr_diag_watch_hooks`, `switch_profile_addresses` | 372, 381 | diagnostics |
+| `SSASR_CALL_RELOADS=1` (env, post_codegen) | 379 | reloads after calls forwarded by the call write summaries |
+| CMake `SSASR_RELAXED_FLOATS` | 380 | floats in single, contracted and reciprocal (the picture can change: the user's call per port) |
+| CMake `SSASR_NON_EXACT` | 380 | NaN-sign freedom, loose stack forwarding, loose loop barriers |
+| CMake `SSASR_STALE_CENSUS`, `SSASR_MEMO_CENSUS`, `SSASR_GUARD_RELAXED_FLAGS`, `SSASR_NO_AB` | 380 | census and test builds |
+| CMake `SSASR_NO_THREADSAFE_STATICS_MORE` | 383 | ten more renderer files without thread-safe statics |
+| `RENUT_INTERPOLATOR_POSITION1` (define) | 382 | POSITION1 as an interpolator (re-keys every shader) |
+
+Before a port turns a non-exact switch on, its census on the port's own race (ssasr-nx's list): ABI trust and r1
+assume, the guard race and the r1 mirror (0 differences); the frame elisions, SSASR_STALE_CENSUS (every reader a dead
+restore or the guard's own compare); loose barriers, tools/find_self_loops.py on the Switch ELF against a build with
+every barrier kept (a new branch to itself is a poll turned into a spin: a console hang; each port lists its own in
+app/config/loose_barriers_keep.txt, ssasr-nx had ten; the barrier is a compiler barrier only, so CPU ordering is unchanged); relaxed floats,
+SSASR_GUARD_RELAXED_FLAGS and the "[census] ssasr non-exact" count (ssasr-nx: 72 differences, all a zero's sign);
+NaN signs and loose forwarding, the guard on ARM too; the near-exact cases, the PC race's counters; denormal flush
+(REX_SSASR_PURE_FLUSH) only where its census is 0 (ssasr-nx: 467,812 a race); LiveOut trimming, the poison race.
+Not taken (ssasr-nx's game layer): its hook addresses and device layout (XDK 2.0.9328), its hand natives and their
+keys, its CRI USM movie hook, its resampler NaN guard and job-pool lock (at its addresses), its tomls, scripts and
+packaging. An idea for other ports: a rare crash calling guest 0x3 around a thread burst can be a free list popped
+without its lock.
+
+On, and checked on Beautiful Katamari (2026-11-27): a fresh code generation with the new passes (2,653 copy members
+taking their registers by reference, 3,985 calls without a hand-over), the PC guard race (159.6 M copy calls compared;
+the generated-code self-checks, the r1 mirror and 4.7 M stack forwards 0 differences). Three copies differed in a
+NaN's sign only (sub_8221AC68, sub_8221AE70, and sub_8221BC58, which inlines both; inputs 0x7FC00000 / 0xFFC00000
+through vmaddfp / vnmsubfp): the two copies' own text has nothing from this sync (no reference member, forward, vector
+copy or float rewrite), so the NaN-sign class already known, not a change of these ports; the guard turned them off.
+`ssasr_capture_pool_mb` 64 (port 385) is a default, not an off switch: 32 gives the old cap.
+
 ## Keeping this page
 
 When a port reports that a key breaks its picture (with a comparison against the reference), its default goes to false

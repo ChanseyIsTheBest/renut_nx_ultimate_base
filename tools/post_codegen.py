@@ -150,12 +150,18 @@ def main():
     run(tool('hot_layout.py'), '--gen', gen, '--restore')
     # sasrt-nx (2026-11-12, its idea 2; port 121): the forwarded stack-slot vector loads out too (put back below).
     run(tool('stack_forward.py'), '--gen', gen, '--restore')
+    # ssasr-nx (2026-11-27, loads batch, idea 4): the guest reloads forwarded across calls out too (put back below).
+    run(tool('call_reloads.py'), '--gen', gen, '--restore')
     # renut-ultimate (2026-11-16, port 144): the negated fused multiply-adds' macro out too (single_floats.py and
     # fma_single.py read the forms it wraps; put back below).
     run(tool('fnm_sign.py'), '--gen', gen, '--restore')
     run(tool('pch_no_volatile.py'), pch)
     run(tool('indirect_calls.py'), '--gen', gen, '--promote', PROMOTIONS)
     # REQUIRED with pch_no_volatile.py: without barriers GCC turns guest polling loops into infinite loops.
+    # ssasr-nx (2026-11-26, batch 4 row 24): REX_LOOP_BARRIER_W back to the plain form first (loop_barriers.py and the
+    # copies know only that); tools/ssasr_loose_barriers.py marks them again at the end.
+    run(tool('ssasr_loose_barriers.py'), '--gen', gen, '--restore')
+    run(tool('ssasr_stale_census.py'), '--gen', gen, '--restore')  # batch 4: its _R exit restores back too
     run(tool('loop_barriers.py'), gen)
     run(tool('pch_cold_traps.py'), pch)
     # Undo and redo in one pass: a function hooked since the last run (a new native) must be called through its hook
@@ -229,6 +235,10 @@ def main():
     # REX_FNEG_FUSED(...), the plain negation by default (the same code); CMake TW2DE_FNMADD_SIGN=ON (off by default)
     # gives the PowerPC's sign of zero and NaN (sdk/include/rex/ppc/fpu_fma.h). After fma_single.py, before the copies.
     run(tool('fnm_sign.py'), '--gen', gen)
+    # ssasr-nx (2026-11-26, the non-exact batch): the single operations single_floats.py could not prove single as
+    # REX_F*S_L macros, the same expression by default; CMake SSASR_RELAXED_FLOATS (REX_SSASR_SINGLE_LOOSE) computes them
+    # in float on the inputs rounded to single. Before the copies, so they take the same forms.
+    run(tool('ssasr_float_loose.py'), '--gen', gen)
     # sasrt-nx (2026-11-12, its docs/cpu-moonshots-1112.md idea 2; port 121): a vector load of a stack slot that four
     # 4-byte stores of the same block just wrote takes the stored values (the stores stay; REX_STACK_FWD4 checks the
     # address, REX_STACK_FWD_VERIFY compares with the real load in the hooked builds). Before the copies, so they take
@@ -245,6 +255,13 @@ def main():
     # switch changes as helpers whose default is the generator's expression (#42: vmaxfp / vminfp as rex::ppc::VMaxFp /
     # VMinFp, sdk/include/rex/ppc/diet_ops.h). Before the copies, so they take the same forms.
     run(tool('near_exact.py'), '--gen', gen)
+    # ssasr-nx (2026-11-27, loads batch; the user's idea 4, "knowing what a call can write"): a guest reload after a call
+    # takes the value its block read or wrote before the call, when the callee's write summary (whole-program, exact)
+    # cannot reach that address (REX_CALL_FWD_<T>; REX_CALL_FWD_OFF: the loads; checked with REX_STACK_FWD_VERIFY in the
+    # hooked builds). Last before the liveness and the copies, so the copies take the same form. SSASR_CALL_RELOADS=0:
+    # not run. renut-ultimate: only with SSASR_CALL_RELOADS=1 (exact, but 103 sites and no measured gain in ssasr-nx).
+    if os.environ.get('SSASR_CALL_RELOADS', '0') == '1':
+        run(tool('call_reloads.py'), '--gen', gen)
     if not scratch:
         # sasrt-nx (2026-11-12, its calling-convention stages 1-1d; port 121): whole-program liveness with the vector
         # registers, right before the copies are made from this same text (localize_native.py checks the stamp):
@@ -317,6 +334,22 @@ def main():
     if scratch:
         print(f'post_codegen: optimised codegen steps done on {gen}')
         return
+    # the second batch's natives from their copies (app/src/cpu/hot/ssasr_natives.txt -> app/generated/hot/
+    # ssasr_native_<FUNC>.h and ssasr_natives_all.h)
+    run(tool('ssasr_native_gen.py'), '--list')
+    # ssasr-nx (2026-11-26, the non-exact batch rows 4-5): the same exact rewrites (vector copies as bytes, stack loads
+    # taking the stored value) in every copy's running form; last, after the generators that check a copy's text.
+    run(tool('ssasr_copy_rewrites.py'))
+    # batch 4 #28: a hand native's call in a copy without the reloads of what it stored, when the native ran.
+    run(tool('ssasr_native_reloads.py'), '--gen', gen)
+    # ssasr-nx (2026-11-26, batch 4): the stale-read census of the frame elisions (nothing without REX_SSASR_STALE_CENSUS);
+    # last, after every step that writes the store and load macros.
+    # batch 4 row 11: the redundancy census's hook at the top of every copy (nothing without REX_SSASR_MEMO_CENSUS).
+    run(tool('ssasr_memo_census.py'))
+    # batch 4 row 24: the barriers of loops that write guest memory as REX_LOOP_BARRIER_W (nothing with
+    # REX_SSASR_LOOSE_BARRIERS), on the final text of the generated files and the copies.
+    run(tool('ssasr_loose_barriers.py'), '--gen', gen)
+    run(tool('ssasr_stale_census.py'), '--gen', gen)
     config = open(os.path.join(APP, 'renut_config.toml'), encoding='utf-8').read()
     extras = [name for key, name in (('non_volatile_as_local', 'non-volatile locals'), ('non_argument_as_local', 'non-argument locals'),
                                      ('fp_mode_lookahead', 'fp mode lookahead'), ('div_inline', 'CPU rounds 1-3'))

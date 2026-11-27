@@ -576,9 +576,16 @@ void FmaSingle(Tally& t) {
         ++checked_exact;
       }
     }
-    // an input that is not a float: the double form, bit for bit
+    // an input that is not a float: the double form, bit for bit. ssasr-nx (2026-11-26, batch 4): not with
+    // SSASR_RELAXED_FLOATS (REX_SSASR_SINGLE_LOOSE), whose FmaddsSingle takes the float form for every input by design
+    // (one ulp at most from the double form in the PC census): every start reported 200 such results as failures
+    // (banjo_selfcheck_failed.txt on the card) though each is the form the build chose.
     const double wide = Opaque(double(a) * (1.0 + 0x1p-40));
+#if defined(REX_SSASR_SINGLE_LOOSE)
+    if (false) {
+#else
     if (!rex::ppc::IsExactSingle(wide)) {
+#endif
       t.Expect("FmaddsSingle wide", in, std::bit_cast<uint64_t>(rex::ppc::FmaddsSingle(wide, db, dc)),
                std::bit_cast<uint64_t>(rex::ppc::FmaddsDouble(wide, db, dc)));
     }

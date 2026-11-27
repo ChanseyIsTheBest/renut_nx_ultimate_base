@@ -40,6 +40,7 @@
 #include <rex/system/xtypes.h>
 #include <rex/thread/atomic.h>
 #include <rex/thread/mutex.h>
+#include <rex/kernel/guest_block_hook.h>  // ssasr-nx (the thread batch F3)
 
 REXCVAR_DEFINE_BOOL(thread_suspend_log, false, "Kernel",
                     "Diagnostic (culdcept-nx, 2026-11-19): log every NtResumeThread and every NtSuspendThread a thread "
@@ -404,6 +405,7 @@ u32 KeQueryPerformanceFrequency_entry() {
 }
 
 u32 KeDelayExecutionThread_entry(u32 processor_mode, u32 alertable, mapped_u64 interval_ptr) {
+  rex::kernel::RunGuestBlockHook();  // ssasr-nx (the thread batch F3): a held draw run published first
   XThread* thread = XThread::GetCurrentThread();
 
   if (alertable) {
@@ -420,6 +422,7 @@ u32 KeDelayExecutionThread_entry(u32 processor_mode, u32 alertable, mapped_u64 i
 }
 
 u32 NtYieldExecution_entry() {
+  rex::kernel::RunGuestBlockHook();  // ssasr-nx (the thread batch F3): a held draw run published first
   rex::thread::MaybeYield();
   return X_STATUS_SUCCESS;
 }
@@ -849,6 +852,7 @@ u32 NtCancelTimer_entry(u32 timer_handle, mapped_u32 current_state_ptr) {
 
 uint32_t xeKeWaitForSingleObject(void* object_ptr, uint32_t wait_reason, uint32_t processor_mode,
                                  uint32_t alertable, uint64_t* timeout_ptr) {
+  rex::kernel::RunGuestBlockHook();  // ssasr-nx (the thread batch F3): a held draw run published first
   auto object = XObject::GetNativeObject<XObject>(REX_KERNEL_STATE(), object_ptr);
 
   if (!object) {
@@ -882,6 +886,7 @@ u32 KeWaitForSingleObject_entry(mapped_void object_ptr, u32 wait_reason, u32 pro
 
 u32 NtWaitForSingleObjectEx_entry(u32 object_handle, u32 wait_mode, u32 alertable,
                                   mapped_u64 timeout_ptr) {
+  rex::kernel::RunGuestBlockHook();  // ssasr-nx (the thread batch F3): a held draw run published first
   X_STATUS result = X_STATUS_SUCCESS;
 
   auto object = REX_KERNEL_OBJECTS()->LookupObject<XObject>(object_handle);
@@ -904,6 +909,7 @@ static constexpr uint32_t kInlineWaitObjects = 64;
 u32 KeWaitForMultipleObjects_entry(u32 count, mapped_u32 objects_ptr, u32 wait_type,
                                    u32 wait_reason, u32 processor_mode, u32 alertable,
                                    mapped_u64 timeout_ptr, mapped_void wait_block_array_ptr) {
+  rex::kernel::RunGuestBlockHook();  // ssasr-nx (the thread batch F3): a held draw run published first
   assert_true(wait_type <= 1);
 
   // port 59 (2026-11-10, from LostOdysseyRecomp 299ac550): no heap allocation per call: up to 64 objects
@@ -939,6 +945,7 @@ u32 KeWaitForMultipleObjects_entry(u32 count, mapped_u32 objects_ptr, u32 wait_t
 uint32_t xeNtWaitForMultipleObjectsEx(uint32_t count, rex::be<uint32_t>* handles,
                                       uint32_t wait_type, uint32_t wait_mode, uint32_t alertable,
                                       uint64_t* timeout_ptr) {
+  rex::kernel::RunGuestBlockHook();  // ssasr-nx (the thread batch F3): a held draw run published first
   assert_true(wait_type <= 1);
 
   // port 59 (2026-11-10, from LostOdysseyRecomp 299ac550): no heap allocation per call: up to 64 objects
@@ -977,6 +984,7 @@ u32 NtWaitForMultipleObjectsEx_entry(u32 count, mapped_u32 handles, u32 wait_typ
 
 u32 NtSignalAndWaitForSingleObjectEx_entry(u32 signal_handle, u32 wait_handle, u32 alertable,
                                            u32 r6, mapped_u64 timeout_ptr) {
+  rex::kernel::RunGuestBlockHook();  // ssasr-nx (the thread batch F3): a held draw run published first
   X_STATUS result = X_STATUS_SUCCESS;
 
   auto signal_object = REX_KERNEL_OBJECTS()->LookupObject<XObject>(signal_handle);

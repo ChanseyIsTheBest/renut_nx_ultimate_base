@@ -2,6 +2,7 @@
  * @file    gpu/backend/render_thread.cpp
  */
 #include "renut_engine/gpu/backend/render_thread.h"
+#include "renut_engine/gpu/ssasr_host50.h"  // ssasr-nx (2026-11-26, batch 4)
 #include "renut_engine/gpu/stage_census.h"  // blur-nx (2026-11-17, the Renut audit's census)
 #include "renut_engine/gpu/host_batch.h"  // blur-nx (2026-11-18, the Renut host batch)
 #include "renut_engine/gpu/sasrt_gpu_round.h"  // sasrt-nx (2026-11-20): the second render-thread round
@@ -9,6 +10,8 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <functional>
+#include <memory>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -26,6 +29,7 @@
 #include "renut_engine/display_sync.h"  // sa2-nx (2026-10-28): LateInputGuardUs
 
 #include <rex/cvar.h>
+#include <rex/kernel/guest_block_hook.h>  // ssasr-nx (the thread batch F3)
 
 // banjo-nx (2026-10-20, from sa2-nx): see g_done_waiters and Run.
 // rr6-nx (2026-11-03, from sasrt-nx, which found this on its console): the game running ahead of the render thread can
@@ -82,6 +86,31 @@ REXCVAR_DEFINE_BOOL(dishonored_renut_lockfree_queue, true, "Banjo/Enhancements",
                     "thread took and the render thread took back (two lock round trips a draw on two cores, and the "
                     "wake decision under the lock). Same order, same wakes. Off: the mutex and the vector")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// ssasr-nx (2026-11-27, the thread batch T1 / T6 / T7: out/thread_plan.md; the user: "I am ok moving them to another
+// thread as long as it as not the render thread").
+REXCVAR_DEFINE_BOOL(ssasr_submit_worker, false, "Banjo/Renut",
+                    "Every push from a thread other than the render thread goes to a submit ring, in the order of the "
+                    "pushes, and a submit worker thread (not the render thread) hands it on to the render thread's "
+                    "ring, finishing a staged draw capture first (queued.cpp: the shadow compare, the delta and the "
+                    "shadow's upkeep), so the game thread only copies the chunks a draw marked. Exact: the same captures "
+                    "in the same order. Needs dishonored_renut_lockfree_queue")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(ssasr_setter_log, false, "Banjo/Renut",
+                    "With ssasr_submit_worker: the drawing device's setter writes are logged, and the submit worker "
+                    "rebuilds the chunks only the setters wrote from its shadow and the log instead of the game thread "
+                    "copying them from the device at the draw (the thread batch F1). Exact; checked at the sparse mark "
+                    "check (a difference turns it off for the run)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(ssasr_draw_runs, false, "Banjo/Renut",
+                    "With ssasr_submit_worker: the drawing thread's staged draws go to the submit ring in runs of up to "
+                    "six, one slot each, claimed at the run's first draw (its place in the order) and published when "
+                    "full, before any other push, before a wait for the render thread and before the thread blocks in "
+                    "the kernel (the thread batch F3). The same items in the same order. renut-ultimate (2026-11-27): Beautiful Katamari's PC renderer presented no frame with it on (the submit worker and the setter log alone ran right): checked in ssasr-nx only")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_INT32(ssasr_submit_worker_core, 2, "Banjo/Renut",
+                     "The submit worker's core (ssasr_submit_worker; -1: not pinned). The render thread is on core 1 "
+                     "(banjo_ring_core) and the game thread on core 0")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 #if defined(_WIN32)
 #ifndef NOMINMAX
@@ -109,10 +138,24 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
+// ssasr-nx (2026-11-27, loads batch L123): the closure behind a pointer (a std::function item is rare: the race's pushes
+// are 100 % plain), so that an item is 48 bytes and a ring slot with its sequence one cache line (it was 72 and two):
+// half the lines a push writes and the render thread reads.
+using Work = std::unique_ptr<std::function<void()>>;
+inline Work MakeWork(std::function<void()> &&f) {
+  return f ? std::make_unique<std::function<void()>>(std::move(f)) : Work();
+}
 struct Item {
-  std::function<void()> work;
+  Work work;
   bool locked = true;  // run with State().mutex held
+  // ssasr-nx (2026-11-27, the thread batch T1): in the submit ring, the item is a draw (the render ring's wake batch);
+  // in the padding after 'locked' (an item stays 48 bytes).
+  bool submit_draw = false;
   const void *prefetch[2] = {};  // banjo-nx (2026-10-20, from sa2-nx, banjo_renut_prefetch_next): fetched while the item before runs
+  // ssasr-nx (2026-11-26, batch 4 #1): a plain item instead (QueuePrefetchedPlain: the game's draws): a function and
+  // its argument, no std::function to build, move into the ring, call through its invoker and destroy.
+  void (*plain)(void *) = nullptr;
+  void *arg = nullptr;
 };
 
 // banjo-nx (2026-10-20, from sa2-nx, banjo_renut_prefetch_next): the next item's data into the cache (its first lines).
@@ -124,8 +167,7 @@ inline void PrefetchItem(const Item &item) {
     // caller, QueueCapture): its call's second line (with its binding) and its stack headers' count (blur-nx's, port 76),
     // which the lambda reads first. (sasrt-nx's +320 and +384, its recorded surfaces' headers, are the stack headers'
     // own here, read only when the count is not 0: not fetched.)
-    __builtin_prefetch(a + 128);
-    __builtin_prefetch(a + 256);
+    __builtin_prefetch(a + 128);  // (and the stack headers' count: on this line since loads batch L122, not at +256)
   }
   if (const auto *b = static_cast<const char *>(item.prefetch[1])) {
     __builtin_prefetch(b);
@@ -204,28 +246,62 @@ std::vector<Item> g_queue;
 // runs its own item at once instead (logged: never expected).
 // Latched by Start before the thread is made and before g_started's release, which every Push reads first (acquire): a
 // plain load per push.
-bool g_lockfree = false;
+// ssasr-nx (2026-11-27, batch 5 N17): the three latched words every push reads on a cache line of their own (the console's
+// 5C profile: 54 samples, 1.1 % of the game thread, on the load of g_notify_idle after the publish; its line held
+// video.cpp's .data too).
+struct alignas(64) PushConfig {
+  bool lockfree = false;
+  bool notify_idle = true;
+  bool submit = false;  // ssasr-nx (2026-11-27, the thread batch T1): the submit ring takes the pushes (Start latches it)
+  size_t wake_batch = 16;
+};
+PushConfig g_push_config;
+bool &g_lockfree = g_push_config.lockfree;
 bool LockfreeOn() {
   return g_lockfree;
 }
 // The same for the two PushRing reads at every push: QueueNotifyIdleOn and WakeBatch, latched by Start.
-bool g_notify_idle = true;
-size_t g_wake_batch = 16;
+bool &g_notify_idle = g_push_config.notify_idle;
+size_t &g_wake_batch = g_push_config.wake_batch;
 // sa2-nx (2026-10-28, the console's first run of the ring): with 32,768 slots (2 MB) every push's slot was a line from
 // memory (a slot came round again nine frames later, long out of the caches): 30 of PushRing's 86 samples were the load
 // of its sequence. A push now prefetches the slot kRingAhead positions on for writing, a few draws before it needs it,
 // and the ring is 16,384 slots (1 MB): still more than two frames of the two-player race's items (about 3,500 a frame),
 // so that a pusher never waits on a full ring while it may hold a lock the render thread's item needs.
-constexpr uint64_t kRingSlots = uint64_t(1) << 14;
+// ssasr-nx (2026-11-27, loads batch L94): 8,192 one-line slots (512 KB; it was 16,384 of two lines, 2 MB, the size of
+// the cores' shared L2, a slot coming round again eight frames later, long gone from it): still more than three frames
+// of this race's items (~2,400 a frame at its start).
+constexpr uint64_t kRingSlots = uint64_t(1) << 14;  // renut-ultimate: the base's 16,384 kept (ssasr-nx's L94 took it to 8,192: a game with more items a frame than its race fills it sooner)
 constexpr uint64_t kRingAhead = 8;
+// ssasr-nx (2026-11-27, batch 5 N20): the publish as dmb ishst and a plain store (AArch64 only; elsewhere the release).
+#if defined(__aarch64__)
+constexpr bool kStoreBarrierPublish = true;
+#else
+constexpr bool kStoreBarrierPublish = false;
+#endif
 struct alignas(64) RingSlot {
   std::atomic<uint64_t> seq{0};
   Item item;
 };
+static_assert(sizeof(RingSlot) == 64, "a ring slot is one cache line (L123)");
 RingSlot *g_ring = nullptr;                      // made by Start, before the thread runs
-alignas(64) std::atomic<uint64_t> g_enqueue{0};  // the next position a push claims (the items queued)
+// ssasr-nx (2026-11-27, batch 5 N4): with the pushers' first position whose draw may need a wake (PushRingWith) on the
+// same line, which only the pushers write (a thread_local was a call at every push on the Switch: __aarch64_read_tp).
+// Any pusher's look holds for every position (it is about the render thread's state), so one word serves them all.
+struct alignas(64) EnqueueLine {
+  std::atomic<uint64_t> pos{0};
+  std::atomic<uint64_t> next_wake_check{0};
+};
+EnqueueLine g_enqueue_line;
+std::atomic<uint64_t> &g_enqueue = g_enqueue_line.pos;  // the next position a push claims (the items queued)
 alignas(64) std::atomic<uint64_t> g_dequeue{0};  // the next position the render thread takes (its own)
-std::atomic<bool> g_waiting{false};              // the render thread is going to sleep, or asleep, in g_work_cv
+// ssasr-nx (2026-11-27, batch 5 N7): g_waiting on a cache line of its own. The render thread writes it at every sleep
+// and wake; the linker had put it on the line of g_started and g_accepting, which every push reads.
+struct alignas(64) WaitingLine {
+  std::atomic<bool> flag{false};
+};
+WaitingLine g_waiting_line;
+std::atomic<bool> &g_waiting = g_waiting_line.flag;  // the render thread is going to sleep, or asleep, in g_work_cv
 std::atomic<bool> g_accepting{false};            // started and not stopping: pushes go to the ring
 // The slot at 'pos' holds a published item.
 inline bool RingReady(uint64_t pos) {
@@ -272,14 +348,34 @@ Clock::duration g_busy{};
 Clock::time_point g_item_start{};
 Clock::duration g_waited{};
 thread_local bool t_render_thread = false;
+#if defined(__SWITCH__) && defined(__aarch64__)
+// ssasr-nx (2026-11-27, the thread batch T1): the calling thread without a TLS call (__aarch64_read_tp is a call at
+// every use on the Switch, batch 5 N14): its thread region's address, which the kernel keeps in tpidrro_el0, one per
+// thread. The render thread's and the submit worker's, for SubmitRouted.
+inline uintptr_t ThreadRegion() {
+  uintptr_t tp;
+  __asm__ volatile("mrs %0, tpidrro_el0" : "=r"(tp));
+  return tp;
+}
+std::atomic<uintptr_t> g_render_region{0}, g_submit_region{0};
+#endif
 
 void Execute(Item &item) {
   ::renut::gpu::census::Scope census_scope(::renut::gpu::census::kRunItem);  // blur-nx (2026-11-17)
+  if (item.plain) {  // ssasr-nx (2026-11-26, batch 4 #1)
+    if (item.locked) {
+      std::lock_guard lock(State().mutex);
+      item.plain(item.arg);
+    } else {
+      item.plain(item.arg);
+    }
+    return;
+  }
   if (item.locked) {
     std::lock_guard lock(State().mutex);
-    item.work();
+    (*item.work)();
   } else {
-    item.work();
+    (*item.work)();
   }
 }
 
@@ -359,7 +455,10 @@ void RunRing() {
       if (!batch_clock)
         g_item_start = item_start;
       Execute(slot.item);
-      slot.item.work = nullptr;  // the closure's captures go now, as the batch's cleared vector freed them
+      if (slot.item.plain)  // ssasr-nx (2026-11-26, batch 4 #1): nothing to destroy
+        slot.item.plain = nullptr;
+      else
+        slot.item.work = nullptr;  // the closure's captures go now, as the batch's cleared vector freed them
       slot.seq.store(pos + kRingSlots, std::memory_order_release);
       ++pos;
       g_dequeue.store(pos, std::memory_order_relaxed);
@@ -411,6 +510,9 @@ void Run() {
 #endif
   banjo::renut_gpu::OnRenderThreadStart();  // banjo-nx: its core and priority on the Switch
   t_render_thread = true;
+#if defined(__SWITCH__) && defined(__aarch64__)
+  g_render_region.store(ThreadRegion(), std::memory_order_relaxed);  // ssasr-nx (the thread batch T1): SubmitRouted
+#endif
   if (LockfreeOn()) {  // dishonored-nx (port 105, dishonored_renut_lockfree_queue)
     RunRing();
     return;
@@ -476,6 +578,8 @@ void Run() {
   g_done_cv.notify_all();
 }
 
+void StartSubmitWorker();  // ssasr-nx (2026-11-27, the thread batch T1): below
+
 void Start() {
   std::call_once(g_start_once, [] {
     InstallLateInput();  // banjo-nx (2026-10-19, banjo_late_input): the delay function (it reads the key per frame)
@@ -490,6 +594,7 @@ void Start() {
       g_ring = new RingSlot[kRingSlots];
       for (uint64_t i = 0; i < kRingSlots; ++i)
         g_ring[i].seq.store(i, std::memory_order_relaxed);
+      StartSubmitWorker();  // ssasr-nx (2026-11-27, the thread batch T1): before anything is accepted
       g_accepting.store(true, std::memory_order_release);
     }
     // Never joined or destroyed: the renderer's objects are left at exit too
@@ -507,8 +612,11 @@ void Start() {
 
 // banjo-nx (2026-10-20, from sa2-nx, banjo_renut_wake_batch): before a thread waits for the render thread, the draws queued without a
 // wake are handed over. Requires g_mutex.
+void WakeSubmitForWait();  // ssasr-nx (2026-11-27, the thread batch T1): below
+
 void WakeForWaitLocked() {
   if (LockfreeOn()) {  // dishonored-nx (port 105, dishonored_renut_lockfree_queue)
+    WakeSubmitForWait();  // ssasr-nx (the thread batch T1): the worker's draws waiting for their batch, handed on now
     if (AddressWakeOn()) {  // blur-nx (2026-11-17, audit #11): the sleeper holds no g_mutex; g_waiting says it sleeps
       if (g_waiting.load(std::memory_order_seq_cst) && g_ring && RingReady(g_dequeue.load(std::memory_order_relaxed)))
         WakeRenderAddress();
@@ -527,7 +635,11 @@ std::atomic<void (*)()> g_before_push{nullptr};
 // banjo-nx (2026-11-23, banjo_renut_tile_twin_merge): a second one (queued.cpp's held tile twin), called first.
 std::atomic<void (*)()> g_before_push2{nullptr};
 
+// ssasr-nx (2026-11-27, batch 5 N14): the hooks read first and the thread only when one is set (t_render_thread is a
+// call at every push on the Switch, __aarch64_read_tp, for two hooks that are null in a race). The same calls.
 [[gnu::always_inline]] inline void BeforePush() {
+  if (!(g_before_push2.load(std::memory_order_relaxed) || g_before_push.load(std::memory_order_relaxed))) [[likely]]
+    return;
   if (t_render_thread)
     return;
   if (void (*hook)() = g_before_push2.load(std::memory_order_relaxed)) [[unlikely]]
@@ -540,7 +652,219 @@ std::atomic<void (*)()> g_before_push2{nullptr};
 // item was not queued (the ring is full and this is the render thread, which cannot wait for itself). The wake decision
 // is Push's: a non-draw item, or WakeBatch draws not yet taken, wakes a render thread that is going to sleep (RunRing
 // says why no wake is lost).
-bool PushRing(Item &&item, bool draw) {
+// ssasr-nx (2026-11-27, batch 5 H12): the slot filled by 'fill' (PushRing moves an Item in; a plain draw writes its
+// four fields straight into the slot, no std::function moved or destroyed).
+template <typename Fill>
+bool PushRingWith(Fill &&fill, bool draw);
+
+[[gnu::hot]] bool PushRing(Item &&item, bool draw) {
+  return PushRingWith([&item](Item &slot_item) { slot_item = std::move(item); }, draw);
+}
+
+// ---------------------------------------------------------------------------
+// ssasr-nx (2026-11-27, the thread batch T1 / T6 / T7; out/thread_plan.md): the submit worker. With
+// ssasr_submit_worker, every push from a thread other than the render thread and the worker goes to the submit ring
+// (the render ring's form: claimed positions, published by their sequence) and the worker takes the positions in order,
+// runs an item's 'pre' (queued.cpp's finish of a staged draw capture) and pushes it on to the render ring: the render
+// thread gets the same items in the same order, one stage later. The game thread's push is the same kind of push as
+// before; what it no longer does is the capture's compare and delta (on the worker) and the render ring's publish and
+// wakes (the worker's).
+// ---------------------------------------------------------------------------
+struct alignas(64) SubSlot {
+  std::atomic<uint64_t> seq{0};
+  Item item;
+  void (*pre)(void *) = nullptr;
+};
+static_assert(sizeof(SubSlot) == 64, "a submit slot is one cache line");
+constexpr uint64_t kSubSlots = uint64_t(1) << 12;  // 256 KB; the worker is a few items behind at most
+SubSlot *g_sub_ring = nullptr;                    // made by Start before the worker runs
+EnqueueLine g_sub_enqueue_line;
+std::atomic<uint64_t> &g_sub_enqueue = g_sub_enqueue_line.pos;
+alignas(64) std::atomic<uint64_t> g_sub_dequeue{0};    // the next position the worker takes (its own)
+alignas(64) std::atomic<uint64_t> g_sub_forwarded{0};  // the positions handed on to the render ring (Drain)
+WaitingLine g_sub_waiting_line;
+std::atomic<bool> &g_sub_waiting = g_sub_waiting_line.flag;
+alignas(64) std::atomic<uint32_t> g_sub_wake_word{0};
+std::atomic<bool> g_sub_stop{false};
+std::mutex g_sub_mutex;  // the condition variable's (off the Switch)
+std::condition_variable g_sub_cv;
+std::atomic<uint64_t> g_sub_pre_count{0}, g_sub_sleeps{0}, g_sub_wakes{0}, g_sub_full{0};
+thread_local bool t_submit_worker = false;
+
+inline bool SubReady(uint64_t pos) {
+  return g_sub_ring[pos & (kSubSlots - 1)].seq.load(std::memory_order_acquire) == pos + 1;
+}
+inline bool SubReadySc(uint64_t pos) {
+  return g_sub_ring[pos & (kSubSlots - 1)].seq.load(std::memory_order_seq_cst) == pos + 1;
+}
+// The submit ring takes this thread's pushes: it is on, and this is neither the render thread nor the worker.
+[[gnu::always_inline]] inline bool SubmitRouted() {
+  if (!g_push_config.submit) [[likely]]
+    return false;
+#if defined(__SWITCH__) && defined(__aarch64__)
+  const uintptr_t me = ThreadRegion();
+  return me != g_render_region.load(std::memory_order_relaxed) && me != g_submit_region.load(std::memory_order_relaxed);
+#else
+  return !t_render_thread && !t_submit_worker;
+#endif
+}
+void WakeSubmit() {
+  g_sub_wakes.fetch_add(1, std::memory_order_relaxed);
+#if defined(__SWITCH__)
+  if (AddressWakeOn()) {
+    g_sub_wake_word.fetch_add(1, std::memory_order_seq_cst);
+    RexSwitchWakeAddress(reinterpret_cast<volatile uint32_t *>(&g_sub_wake_word), 1);
+    return;
+  }
+#endif
+  {
+    std::lock_guard lock(g_sub_mutex);
+  }
+  g_sub_cv.notify_one();
+}
+
+// A submit slot claimed (its position in 'pos'): the order of the claims is the order of the work.
+[[gnu::hot]] SubSlot *SubmitClaim(uint64_t &pos) {
+  pos = g_sub_enqueue.load(std::memory_order_relaxed);
+  SubSlot *slot;
+  for (;;) {
+    slot = &g_sub_ring[pos & (kSubSlots - 1)];
+    const uint64_t seq = slot->seq.load(std::memory_order_acquire);
+    const int64_t diff = int64_t(seq - pos);
+    if (diff == 0) {
+      if (g_sub_enqueue.compare_exchange_weak(pos, pos + 1, std::memory_order_relaxed))
+        break;
+    } else if (diff < 0) {
+      g_sub_full.fetch_add(1, std::memory_order_relaxed);
+      if (g_sub_waiting.load(std::memory_order_seq_cst))
+        WakeSubmit();
+      std::this_thread::yield();
+      pos = g_sub_enqueue.load(std::memory_order_relaxed);
+    } else {
+      pos = g_sub_enqueue.load(std::memory_order_relaxed);
+    }
+  }
+  __builtin_prefetch(&g_sub_ring[(pos + kRingAhead) & (kSubSlots - 1)], 1);
+  return slot;
+}
+void SubmitPublish(SubSlot *slot, uint64_t pos);
+
+// ssasr-nx (2026-11-27, the thread batch F3, ssasr_draw_runs): the drawing thread's staged draws in runs of up to
+// kRunDraws, one submit slot each. A run's slot is claimed at its first draw, so its place in the order is the place
+// of that draw's push, as before; it is published when the run is full, before the thread's next push of anything
+// else, before it waits for the render thread (Drain, a frame, a fence) and before it blocks or yields in the kernel
+// (rex::kernel's guest block hook): it never blocks while its open run holds up the worker and what others queued
+// after it. One claim, one line and one publish for up to six draws instead of one each (the push's cost was its
+// line traffic: the load after its stlr, 30 % of its samples, and its slot's sequence, 10 %). The worker hands each
+// draw on as its own item, as the draw pushes did: the same items in the same order.
+constexpr u32 kRunDraws = 6;
+struct alignas(64) DrawRun {
+  void (*fn)(void *) = nullptr;
+  void (*pre)(void *) = nullptr;
+  u32 count = 0;
+  u32 pad = 0;
+  struct {
+    void *arg;
+    const void *prefetch1;
+  } draw[kRunDraws] = {};
+};
+static_assert(sizeof(DrawRun) == 128, "a draw run is two lines");
+constexpr uint64_t kRuns = kSubSlots;  // (as many as the slots: a run's buffer is free again before its slot is)
+DrawRun *g_runs = nullptr;
+std::atomic<uintptr_t> g_run_owner{0};  // the one thread that makes runs (the first to push a staged draw)
+thread_local bool t_run_owner = false;  // (off the Switch: the same, by TLS)
+// The owner's own state.
+uint64_t g_run_next = 0;          // the run being filled (index into g_runs)
+SubSlot *g_run_slot = nullptr;    // its claimed submit slot; null: none open
+uint64_t g_run_pos = 0;           // that slot's position
+alignas(64) std::atomic<uint64_t> g_runs_done{0};  // runs the worker has handed on (their buffers free)
+std::atomic<uint64_t> g_runs_published{0}, g_run_draws{0};
+void RunMarker(void *) {}  // a run's slot's 'pre' (never called: the worker's sign)
+
+[[gnu::always_inline]] inline bool RunOwnerIsMe() {
+#if defined(__SWITCH__) && defined(__aarch64__)
+  const uintptr_t owner = g_run_owner.load(std::memory_order_relaxed);
+  return owner && owner == ThreadRegion();
+#else
+  return t_run_owner;
+#endif
+}
+
+// The open run published (the owner's).
+void FlushRun() {
+  SubSlot *const slot = g_run_slot;
+  if (!slot)
+    return;
+  g_run_slot = nullptr;
+  DrawRun &run = g_runs[g_run_next % kRuns];
+  ++g_run_next;
+  slot->item.locked = true;
+  slot->item.plain = nullptr;
+  slot->item.arg = &run;
+  slot->item.prefetch[0] = run.draw[0].arg;
+  slot->item.prefetch[1] = run.draw[0].prefetch1;
+  slot->item.submit_draw = true;
+  slot->pre = &RunMarker;
+  g_runs_published.fetch_add(1, std::memory_order_relaxed);
+  g_run_draws.fetch_add(run.count, std::memory_order_relaxed);
+  SubmitPublish(slot, g_run_pos);
+}
+[[gnu::always_inline]] inline void FlushRunIfOwner() {
+  if (g_runs && g_run_slot && RunOwnerIsMe())
+    FlushRun();
+}
+// The guest block hook (rex::kernel): a run held by this thread published before it blocks.
+void FlushRunBeforeBlock() {
+  FlushRunIfOwner();
+}
+
+// A push into the submit ring: claimed, filled, published; the worker woken when it sleeps and this is not a draw, or
+// a wake batch of draws is waiting, or someone waits for the render thread (a frame, a fence, Drain).
+template <typename Fill>
+[[gnu::hot]] bool SubmitPushWith(Fill &&fill, bool draw, void (*pre)(void *)) {
+  FlushRunIfOwner();  // ssasr-nx (the thread batch F3): this thread's open run first (its slot is ahead of this one)
+  uint64_t pos;
+  SubSlot *slot = SubmitClaim(pos);
+  fill(slot->item);
+  slot->item.submit_draw = draw;
+  slot->pre = pre;
+  SubmitPublish(slot, pos);
+  return true;
+}
+
+// The publish and the worker's wake.
+[[gnu::hot]] void SubmitPublish(SubSlot *slot, uint64_t pos) {
+  slot->seq.store(pos + 1, std::memory_order_seq_cst);
+  // The render ring's N4: a push below the position a look said cannot need a wake skips the ordered load. Every item
+  // waits for the wake batch here, draws or not (the PC check's first run: 101,049 wakes for 249,673 items, the
+  // non-draw items each waking a sleeping worker, a kernel call on the Switch): a thread that waits for the render
+  // thread wakes the worker itself (WakeForWaitLocked), and the worker's 2 ms slice bounds the rest. Same order.
+  std::atomic<uint64_t> &next = g_sub_enqueue_line.next_wake_check;
+  bool wake;
+  if (g_done_waiters.load(std::memory_order_relaxed) == 0) {
+    const uint64_t next_check = next.load(std::memory_order_relaxed);
+    if (pos < next_check && next_check - pos <= g_wake_batch) {
+      wake = false;
+    } else if (!g_sub_waiting.load(std::memory_order_seq_cst)) {
+      wake = false;
+      next.store(pos + g_wake_batch, std::memory_order_relaxed);
+    } else {
+      const uint64_t done = g_sub_dequeue.load(std::memory_order_relaxed);
+      wake = pos + 1 - done >= g_wake_batch;
+      next.store(wake ? pos + 1 : done + g_wake_batch - 1, std::memory_order_relaxed);
+    }
+  } else {
+    wake = g_sub_waiting.load(std::memory_order_seq_cst);
+  }
+  if (wake)
+    WakeSubmit();
+}
+
+template <typename Fill>
+[[gnu::hot]] bool PushRingWith(Fill &&fill, bool draw) {
+  // ssasr-nx (2026-11-27, the thread batch T1): the submit ring first, while it is on (the worker pushes here itself).
+  if (SubmitRouted())
+    return SubmitPushWith(fill, draw, nullptr);
   uint64_t pos = g_enqueue.load(std::memory_order_relaxed);
   RingSlot *slot;
   for (;;) {
@@ -578,17 +902,68 @@ bool PushRing(Item &&item, bool draw) {
   // The slot kRingAhead positions on, into this core's cache for writing while this one is filled (its line was last
   // the render thread's).
   __builtin_prefetch(&g_ring[(pos + kRingAhead) & (kRingSlots - 1)], 1);
-  slot->item = std::move(item);
+  // ssasr-nx (2026-11-27, batch 5 N5): and its second line (a slot is 128 bytes: a plain draw's last two words, at 64
+  // and 72, are there). The console's batch4d profile: 42 of PushRing's 75 samples on the ldar of g_waiting after the
+  // publish, which waits for the fill's stores, the second line's a miss on the line the render thread wrote last.
+  if (sizeof(RingSlot) > 64 && ::ssasr::host50::On(::ssasr::host50::N(5)))  // (L123: a slot is one line now)
+    __builtin_prefetch(reinterpret_cast<const char *>(&g_ring[(pos + kRingAhead) & (kRingSlots - 1)]) + 64, 1);
+  fill(slot->item);
   // Published, then g_waiting read: a sequentially consistent store and load (stlr, ldar: no dmb), RunRing's order.
-  slot->seq.store(pos + 1, std::memory_order_seq_cst);
+  // ssasr-nx (2026-11-27, batch 5 N20): on AArch64 the publish as a store barrier and a plain store (dmb ishst; str):
+  // the console's A57 holds every load after an stlr until the stores before it have drained (5E: 37 samples on the
+  // first load after the publish, a word on a line of its own). The render thread's acquire of the sequence still sees
+  // the item: every store before the barrier is observed before the sequence's. The one order the release also gave,
+  // the publish before the load of g_waiting (RunRing's guarantee against a lost wake), is a full barrier before that
+  // load below, where one is made (with N4, about one draw in the wake batch).
+  const bool store_barrier = kStoreBarrierPublish && ::ssasr::host50::On(::ssasr::host50::N(20));
+  if (store_barrier) {
+#if defined(__aarch64__)
+    __asm__ volatile("dmb ishst" ::: "memory");
+#endif
+    slot->seq.store(pos + 1, std::memory_order_relaxed);
+  } else {
+    slot->seq.store(pos + 1, std::memory_order_seq_cst);
+  }
+  // (N20: the store before any load of g_waiting, as the release gave it)
+  const auto waiting_after_publish = [store_barrier] {
+    if (store_barrier)
+      std::atomic_thread_fence(std::memory_order_seq_cst);
+    return g_waiting.load(std::memory_order_seq_cst);
+  };
   // blur-nx (2026-11-18, the Renut host batch's #28, blur_renut_wake_batch_all / A/B 238): with a wake batch (the render
   // thread then looks every 2 ms by itself), any item may wait for the batch as draws do: command buffer runs and
   // resolves woke it at once, each a kernel call on the pushing thread (the Game Master's), with the render thread idle
   // half the time.
   const bool as_draw = draw || (g_wake_batch > 1 && ::renut::gpu::host_batch::On(::renut::gpu::host_batch::kWakeBatchAll));
-  const bool wake = (g_waiting.load(std::memory_order_seq_cst) &&
-                     (!as_draw || pos + 1 - g_dequeue.load(std::memory_order_relaxed) >= g_wake_batch)) ||
-                    !g_notify_idle;
+  // ssasr-nx (2026-11-27, batch 5 N4): the ordered load of g_waiting (an ldar after the publish's stlr, which waits for
+  // every store before it: 42 of PushRing's 75 samples in the console's batch4d profile) left out at the draws that
+  // cannot wake. A look that read g_waiting false after publishing position P: the render thread cannot sleep before it
+  // has taken P (its last look before sleeping comes after its store of true, so it sees P), so a draw at a position
+  // below P + batch finds at most batch - 1 queued after its sleep and wakes nothing. A look that read it true with
+  // 'done' taken and no wake: no draw below done + batch - 1 has a batch queued (done only grows). Any other draw
+  // looks as before; g_dequeue is read no more often than before (only after g_waiting read true). The same wakes with
+  // one pusher (the race's game thread); with several, a slot below P still being filled by another can let the render
+  // thread sleep before P, and a wake may then come that other push's few positions later (its 2 ms slice still
+  // bounds the wait). The picture is the same either way.
+  bool wake;
+  if (as_draw && g_notify_idle && ::ssasr::host50::On(::ssasr::host50::N(4))) {
+    std::atomic<uint64_t> &next = g_enqueue_line.next_wake_check;
+    const uint64_t next_check = next.load(std::memory_order_relaxed);
+    if (pos < next_check && next_check - pos <= g_wake_batch) {  // (a valid one is never further)
+      wake = false;
+    } else if (!waiting_after_publish()) {
+      wake = false;
+      next.store(pos + g_wake_batch, std::memory_order_relaxed);
+    } else {
+      const uint64_t done = g_dequeue.load(std::memory_order_relaxed);
+      wake = pos + 1 - done >= g_wake_batch;
+      next.store(wake ? pos + 1 : done + g_wake_batch - 1, std::memory_order_relaxed);
+    }
+  } else {
+    wake = (waiting_after_publish() &&
+            (!as_draw || pos + 1 - g_dequeue.load(std::memory_order_relaxed) >= g_wake_batch)) ||
+           !g_notify_idle;
+  }
   if (wake) {
     const bool hb_census = ::renut::gpu::host_batch::CensusOn();  // blur-nx (2026-11-18, the census's #28)
     const uint64_t t0 = hb_census ? ::renut::gpu::host_batch::Ticks() : 0;
@@ -608,13 +983,20 @@ bool PushRing(Item &&item, bool draw) {
   return true;
 }
 
+// ssasr-nx (2026-11-26, batch 4 #1): the ring's push of a ready item (Push's and PushPlain's).
+void PushItem(Item &&item, bool draw) {
+  if (g_accepting.load(std::memory_order_acquire) && PushRing(std::move(item), draw))
+    return;
+  Execute(item);  // stopping, or the render thread's own item in a full ring: run here, as Push does
+}
+
 void Push(std::function<void()> work, bool locked, const void *prefetch0 = nullptr,
           const void *prefetch1 = nullptr, bool draw = false) {
   BeforePush();  // vivapinata-nx (2026-11-11): a held tile run goes in first
   if (!g_started.load(std::memory_order_acquire)) [[unlikely]]
     Start();  // bangaio-nx (2026-10-29, v6): only until it has run (g_started; acquire since port 105's ring)
   if (LockfreeOn()) {  // dishonored-nx (port 105, dishonored_renut_lockfree_queue)
-    Item item{std::move(work), locked, {prefetch0, prefetch1}};
+    Item item{MakeWork(std::move(work)), locked, false, {prefetch0, prefetch1}};
     if (g_accepting.load(std::memory_order_acquire) && PushRing(std::move(item), draw))
       return;
     // Stopping, or the render thread's own item in a full ring: run here, as a push while stopping did.
@@ -625,7 +1007,7 @@ void Push(std::function<void()> work, bool locked, const void *prefetch0 = nullp
     std::unique_lock lock(g_mutex);
     // (Work queued by the render thread's own work runs after it.)
     if (g_running && !g_stopping) {
-      g_queue.push_back({std::move(work), locked, {prefetch0, prefetch1}});
+      g_queue.push_back({MakeWork(std::move(work)), locked, false, {prefetch0, prefetch1}});
       ++g_items_queued;
       // banjo-nx (from sa2-nx) (banjo_renut_wake_batch): a draw wakes a sleeping render thread once enough are queued.
       const bool wake = (g_render_waiting && (!draw || g_queue.size() >= WakeBatch())) ||
@@ -637,11 +1019,229 @@ void Push(std::function<void()> work, bool locked, const void *prefetch0 = nullp
     }
   }
   // Shutting down: nothing takes work any more, so run it here.
-  Item item{std::move(work), locked, {}};
+  Item item{MakeWork(std::move(work)), locked, false, {}};
   Execute(item);
 }
 
+// ssasr-nx (2026-11-27, the thread batch T1): the submit worker's loop. The positions in order: an item's 'pre' (a
+// staged capture finished: queued.cpp), then the render ring's push (its publish and its wakes, T6). While anyone
+// waits for the render thread (a frame's, a fence's, Drain), every item it hands on wakes the render thread (a draw no
+// longer waits for its wake batch: the waiter's WakeForWaitLocked looked at the render ring before the item was in it).
+// With the ring empty it says it is going to sleep, looks once more, and sleeps (the render thread's protocol, RunRing).
+void SubmitRun() {
+#if defined(__SWITCH__) && defined(__aarch64__)
+  g_submit_region.store(ThreadRegion(), std::memory_order_relaxed);
+#endif
+  t_submit_worker = true;
+  banjo::renut_gpu::OnSubmitWorkerStart(REXCVAR_GET(ssasr_submit_worker_core));
+  uint64_t pos = g_sub_dequeue.load(std::memory_order_relaxed);
+  for (;;) {
+    if (!SubReady(pos)) {
+      g_sub_waiting.store(true, std::memory_order_seq_cst);
+      g_sub_sleeps.fetch_add(1, std::memory_order_relaxed);
+#if defined(__SWITCH__)
+      if (AddressWakeOn()) {
+        for (;;) {
+          const uint32_t word = g_sub_wake_word.load(std::memory_order_seq_cst);
+          if (SubReadySc(pos) || g_sub_stop.load(std::memory_order_acquire))
+            break;
+          RexSwitchWaitIfEqual(reinterpret_cast<volatile uint32_t *>(&g_sub_wake_word), word, 2'000'000);
+        }
+      } else
+#endif
+      {
+        std::unique_lock lock(g_sub_mutex);
+        while (!SubReadySc(pos) && !g_sub_stop.load(std::memory_order_acquire))
+          g_sub_cv.wait_for(lock, std::chrono::milliseconds(2));
+      }
+      g_sub_waiting.store(false, std::memory_order_relaxed);
+      if (!SubReady(pos)) {
+        if (g_sub_stop.load(std::memory_order_acquire))
+          break;
+        continue;
+      }
+    }
+    do {
+      SubSlot &slot = g_sub_ring[pos & (kSubSlots - 1)];
+      Item item = std::move(slot.item);
+      void (*const pre)(void *) = slot.pre;
+      slot.item.plain = nullptr;
+      slot.item.arg = nullptr;
+      slot.pre = nullptr;
+      slot.seq.store(pos + kSubSlots, std::memory_order_release);
+      ++pos;
+      g_sub_dequeue.store(pos, std::memory_order_relaxed);
+      if (pre == &RunMarker) {  // ssasr-nx (the thread batch F3): a draw run, each draw handed on as its own item
+        DrawRun *const run = static_cast<DrawRun *>(item.arg);
+        for (u32 k = 0; k < run->count; ++k) {
+          void *const arg = run->draw[k].arg;
+          if (run->pre) {
+            run->pre(arg);
+            g_sub_pre_count.fetch_add(1, std::memory_order_relaxed);
+          }
+          Item each;
+          each.locked = true;
+          each.prefetch[0] = arg;
+          each.prefetch[1] = run->draw[k].prefetch1;
+          each.plain = run->fn;
+          each.arg = arg;
+          const bool draw_each = g_done_waiters.load(std::memory_order_seq_cst) == 0;
+          if (!(g_accepting.load(std::memory_order_acquire) && PushRing(std::move(each), draw_each)))
+            Execute(each);
+        }
+        run->count = 0;
+        g_runs_done.fetch_add(1, std::memory_order_release);
+        g_sub_forwarded.store(pos, std::memory_order_release);
+        continue;
+      }
+      if (pre) {
+        pre(item.arg);
+        g_sub_pre_count.fetch_add(1, std::memory_order_relaxed);
+      }
+      const bool draw = item.submit_draw && g_done_waiters.load(std::memory_order_seq_cst) == 0;
+      item.submit_draw = false;
+      if (!(g_accepting.load(std::memory_order_acquire) && PushRing(std::move(item), draw)))
+        Execute(item);  // stopping: run here, as a push while stopping does
+      g_sub_forwarded.store(pos, std::memory_order_release);
+    } while (SubReady(pos));
+    // A waiter that counted itself after this batch's last look at g_done_waiters (it woke this thread before counting:
+    // QueueFrame, Drain, the fence waits): the render thread, asleep with items, is woken now rather than at its slice.
+    if (g_done_waiters.load(std::memory_order_seq_cst) > 0 && g_waiting.load(std::memory_order_seq_cst) &&
+        RingReady(g_dequeue.load(std::memory_order_relaxed))) {
+      if (AddressWakeOn()) {
+        WakeRenderAddress();
+      } else {
+        {
+          std::lock_guard lock(g_mutex);
+        }
+        g_work_cv.notify_one();
+      }
+    }
+  }
+}
+
+// Start's part (under g_mutex, before the render ring accepts): the ring, each slot free for its position, and the
+// worker; then pushes are routed to it.
+void StartSubmitWorker() {
+  if (!LockfreeOn() || !REXCVAR_GET(ssasr_submit_worker))
+    return;
+  g_sub_ring = new SubSlot[kSubSlots];
+  for (uint64_t i = 0; i < kSubSlots; ++i)
+    g_sub_ring[i].seq.store(i, std::memory_order_relaxed);
+  if (REXCVAR_GET(ssasr_draw_runs)) {  // ssasr-nx (the thread batch F3)
+    g_runs = new DrawRun[kRuns];
+    rex::kernel::SetGuestBlockHook(&FlushRunBeforeBlock);
+  }
+  banjo::renut_gpu::StartLongLivedThread(SubmitRun, 256 * 1024);
+  g_push_config.submit = true;
+  RGPU_INFO("Submit worker started (ssasr_submit_worker): the game's pushes go through it to the render thread{}",
+            g_runs ? "; staged draws in runs of up to 6 (ssasr_draw_runs)" : "");
+}
+
+// A thread about to wait for the render thread (WakeForWaitLocked): a sleeping worker with items is woken (it then
+// hands them on with a wake each, g_done_waiters being counted by then or soon after: the 2 ms slices bound the rest).
+void WakeSubmitForWait() {
+  if (g_push_config.submit && g_sub_waiting.load(std::memory_order_seq_cst) &&
+      SubReady(g_sub_dequeue.load(std::memory_order_relaxed)))
+    WakeSubmit();
+}
+
+// Waits until the worker has handed on every push claimed so far (Drain's first half).
+void DrainSubmit() {
+  if (!g_push_config.submit || !SubmitRouted())
+    return;
+  const uint64_t target = g_sub_enqueue.load(std::memory_order_acquire);
+  while (g_sub_forwarded.load(std::memory_order_acquire) < target) {
+    if (g_sub_waiting.load(std::memory_order_seq_cst))
+      WakeSubmit();
+    std::this_thread::yield();
+  }
+}
+
 } // namespace
+
+// ssasr-nx (2026-11-27, the thread batch T1)
+bool SubmitWorkerOn() {
+  static const bool on = REXCVAR_GET(ssasr_submit_worker) && REXCVAR_GET(dishonored_renut_lockfree_queue);
+  return on;
+}
+
+bool SetterLogOn() {  // ssasr-nx (2026-11-27, the thread batch F1)
+  static const bool on = SubmitWorkerOn() && REXCVAR_GET(ssasr_setter_log);
+  return on;
+}
+
+void QueuePrefetchedPlainPre(const void *prefetch0, const void *prefetch1, void (*fn)(void *), void *arg,
+                             void (*pre)(void *)) {
+  if (!g_started.load(std::memory_order_acquire)) [[unlikely]]
+    Start();
+  // ssasr-nx (2026-11-27, the thread batch F3): into the drawing thread's run (prefetch0 is the capture: 'arg').
+  if (g_runs && pre && prefetch0 == arg && SubmitRouted() && g_accepting.load(std::memory_order_acquire)) {
+    if (!RunOwnerIsMe()) {
+      uintptr_t none = 0;
+#if defined(__SWITCH__) && defined(__aarch64__)
+      g_run_owner.compare_exchange_strong(none, ThreadRegion(), std::memory_order_relaxed);
+#else
+      if (g_run_owner.compare_exchange_strong(none, 1, std::memory_order_relaxed))
+        t_run_owner = true;
+#endif
+    }
+    if (RunOwnerIsMe()) {
+      BeforePush();  // (the hooks' held work is a push of its own: it publishes this thread's open run before it)
+      if (g_run_slot) {
+        const DrawRun &open = g_runs[g_run_next % kRuns];
+        if (open.fn != fn || open.pre != pre)
+          FlushRun();
+      }
+      if (!g_run_slot) {
+        while (g_run_next - g_runs_done.load(std::memory_order_acquire) >= kRuns) {
+          if (g_sub_waiting.load(std::memory_order_seq_cst))
+            WakeSubmit();
+          std::this_thread::yield();
+        }
+        DrawRun &fresh = g_runs[g_run_next % kRuns];
+        fresh.fn = fn;
+        fresh.pre = pre;
+        fresh.count = 0;
+        g_run_slot = SubmitClaim(g_run_pos);
+      }
+      DrawRun &run = g_runs[g_run_next % kRuns];
+      run.draw[run.count].arg = arg;
+      run.draw[run.count].prefetch1 = prefetch1;
+      if (++run.count == kRunDraws)
+        FlushRun();
+      return;
+    }
+  }
+  if (!pre || !SubmitRouted() || !g_accepting.load(std::memory_order_acquire)) {
+    if (pre)
+      pre(arg);  // (the worker is off, or this thread is not routed: finished here, then queued as before)
+    QueuePrefetchedPlain(prefetch0, prefetch1, fn, arg);
+    return;
+  }
+  BeforePush();
+  const auto fill = [&](Item &slot_item) {
+    slot_item.locked = true;
+    slot_item.prefetch[0] = prefetch0;
+    slot_item.prefetch[1] = prefetch1;
+    slot_item.plain = fn;
+    slot_item.arg = arg;
+  };
+  SubmitPushWith(fill, true, pre);
+}
+
+std::string SubmitWorkerReport() {
+  if (!g_push_config.submit)
+    return std::string();
+  return fmt::format("; submit worker: {} items handed on, {} captures finished, {} sleeps, {} wakes, {} full waits{}",
+                     g_sub_forwarded.load(std::memory_order_relaxed), g_sub_pre_count.load(std::memory_order_relaxed),
+                     g_sub_sleeps.load(std::memory_order_relaxed), g_sub_wakes.load(std::memory_order_relaxed),
+                     g_sub_full.load(std::memory_order_relaxed),
+                     g_runs ? fmt::format("; draw runs: {} published, {} draws in them",
+                                          g_runs_published.load(std::memory_order_relaxed),
+                                          g_run_draws.load(std::memory_order_relaxed))
+                            : std::string());
+}
 
 void SetBeforePushHook(void (*hook)()) {
   g_before_push.store(hook, std::memory_order_relaxed);
@@ -666,6 +1266,43 @@ void QueueUnlocked(std::function<void()> work) {
 
 void QueuePrefetched(const void *prefetch0, const void *prefetch1, std::function<void()> work) {
   Push(std::move(work), true, prefetch0, prefetch1, true);  // banjo-nx (from sa2-nx): the game's draws (banjo_renut_wake_batch)
+}
+
+// ssasr-nx (2026-11-26, batch 4 #1, ssasr_renut_host50): a draw as a plain item (a function and its argument).
+[[gnu::hot]] void QueuePrefetchedPlain(const void *prefetch0, const void *prefetch1, void (*fn)(void *), void *arg) {
+  namespace h50 = ::ssasr::host50;
+  if (h50::CensusOn()) {
+    h50::Add(h50::kPushes);
+    if (h50::On(1) && LockfreeOn())
+      h50::Add(h50::kPlainPushes);
+  }
+  if (!h50::On(1) || !LockfreeOn()) {
+    Push([fn, arg] { fn(arg); }, true, prefetch0, prefetch1, true);
+    return;
+  }
+  BeforePush();
+  if (!g_started.load(std::memory_order_acquire)) [[unlikely]]
+    Start();
+  if (h50::On(h50::H(12)) && g_accepting.load(std::memory_order_acquire)) {
+    // ssasr-nx (2026-11-27, batch 5 H12): straight into the slot (its std::function is empty: the render thread
+    // empties it after running a std::function item, and a plain one never fills it).
+    const auto fill = [&](Item &slot_item) {
+      slot_item.locked = true;
+      slot_item.prefetch[0] = prefetch0;
+      slot_item.prefetch[1] = prefetch1;
+      slot_item.plain = fn;
+      slot_item.arg = arg;
+    };
+    if (PushRingWith(fill, true))
+      return;
+  }
+  Item item;
+  item.locked = true;
+  item.prefetch[0] = prefetch0;
+  item.prefetch[1] = prefetch1;
+  item.plain = fn;
+  item.arg = arg;
+  PushItem(std::move(item), true);
 }
 
 void QueueFenceCompletion(u32 completion_va, u32 fence, uint64_t after_callback) {
@@ -726,6 +1363,7 @@ void CallbacksRun(uint64_t seq) {
 
 bool WaitForFenceProgress(std::chrono::milliseconds timeout) {
   BeforePush();  // vivapinata-nx (2026-11-11): nothing waits on work still held back
+  FlushRunIfOwner();  // ssasr-nx (the thread batch F3)
   std::unique_lock lock(g_mutex);
   if (!g_running || g_stopping)
     return false;
@@ -866,6 +1504,8 @@ uint64_t FramesDone() {
 
 void Drain() {
   BeforePush();  // vivapinata-nx (2026-11-11): nothing waits on work still held back
+  FlushRunIfOwner();  // ssasr-nx (the thread batch F3): this thread's open run published (Drain waits for it)
+  DrainSubmit();  // ssasr-nx (2026-11-27, the thread batch T1): everything pushed so far in the render ring first
   std::unique_lock lock(g_mutex);
   if (!g_running || std::this_thread::get_id() == g_thread_id)
     return;
@@ -897,6 +1537,10 @@ void Stop() {
     WakeRenderAddress();  // blur-nx (2026-11-17, audit #11)
   g_work_cv.notify_all();
   g_done_cv.notify_all();
+  if (g_push_config.submit) {  // ssasr-nx (2026-11-27, the thread batch T1): the worker hands on what it has and ends
+    g_sub_stop.store(true, std::memory_order_release);
+    WakeSubmit();
+  }
 }
 
 } // namespace renut::gpu::render_thread

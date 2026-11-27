@@ -19,6 +19,7 @@
  * a new one), so the game may record the next frame's while it replays.
  */
 #pragma once
+#include <atomic>
 
 #include <string>
 
@@ -34,6 +35,8 @@ bool IsRecordingCommandBuffer(u32 device_va);
 // halo3-nx (2026-11-03, banjo_renut_recorded_binds; d3d/hooks/shader.cpp): a game thread, at a draw: the id of the
 // D3DVertexShader_Bind its shader has now (0: none). The render thread, before that draw: the shader record takes it.
 u32 LastBindingOf(u32 shader_va);
+// ssasr-nx (2026-11-27, batch 5 H9): raised when a shader's last binding may have changed (d3d/hooks/shader.cpp).
+extern std::atomic<uint32_t> g_last_binding_gen;
 void ApplyBindingLocked(u32 id);
 
 // After the original BeginCommandBuffer: drops what the buffer held before.
@@ -70,6 +73,13 @@ std::string RecordLockReport();  // blur-nx (2026-11-17): NewOp's memo census an
 // Copies the data of the device's recorded Begin*Vertices draw, if any. Any
 // thread, with or without State().mutex.
 void FlushRecordedVertices(u32 device_va);
+// ssasr-nx (2026-11-26, batch 4 #15): FlushRecordedVertices' fast path inline: nothing of this device's waits
+// (blur_renut_flush_fast_local's count; the caller tests HookFastPathsOn).
+extern std::atomic<u32> *const g_recorded_pending_by_device;
+inline bool RecordedVerticesNoneFor(u32 device_va) {
+  // ssasr-nx (2026-11-27): relaxed (was acquire): nonzero goes on to FlushRecordedVertices and its lock.
+  return g_recorded_pending_by_device[(device_va * 2654435761u) >> 26].load(std::memory_order_relaxed) == 0;
+}
 
 // D3DDevice_RunCommandBuffer on a device that is not recording: queues the
 // buffer's replay on it, with the device's state now (the constants the

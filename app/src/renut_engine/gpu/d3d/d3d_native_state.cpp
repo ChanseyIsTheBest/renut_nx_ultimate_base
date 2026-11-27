@@ -9,6 +9,7 @@
  * packets, which N&B's D3D writes into the ring, are left out.
  */
 #include "renut_engine/gpu/d3d/d3d_native.h"
+#include "renut_engine/gpu/ssasr_host50.h"  // ssasr-nx (2026-11-26, batch 4)
 #include "renut_engine/gpu/host_batch.h"  // blur-nx (2026-11-18, the Renut host batch: the census's #35)
 
 #include <algorithm>
@@ -18,6 +19,7 @@
 #include <limits>
 
 #include <rex/cvar.h>  // asura-nx: asura_renut_set_texture_null_clears_fetch (backend/video.cpp)
+#include <rex/logging.h>  // ssasr-nx (2026-11-27): the PC self-check of SsFilter's shortcut
 
 namespace renut::gpu::native {
 
@@ -596,13 +598,28 @@ void SsBorderColor(Device d, u32 s, u32 v) {  // 0x82636B90
 // MinFilter (21-22, flag at 11); the aniso filter (dword 3 bits 25-27) is set
 // while either is anisotropic.
 void SsFilter(Device d, u32 s, u32 v, bool mag) {  // 0x821FE308 / 0x821FE3D0
-  const u32 aniso = kAnisoFilter[d.B(kMaxAnisotropy + s) % kAnisoFilter.size()];
   const u32 anisotropic = v >> 2;
   const u32 dword4 = d.W(Fetch(s, 4));
   const u32 other = Extract(dword4, mag ? 11 : 10, 1);
   const u32 new4 = Insert(dword4, anisotropic, mag ? 10 : 11, 1);
   d.SetW(Fetch(s, 4), new4);
-  const u32 aniso_field = aniso & ~((other | anisotropic) - 1);
+  // ssasr-nx (2026-11-27, the host follow-up; the console's samples: 18.5 % of SsFilter on the table load after the
+  // device byte and its modulo): aniso & ~(m - 1) is 0 when neither filter is anisotropic (m == 0), so the byte and the
+  // table are read only when one is. The same value either way (the byte, at kMaxAnisotropy + s, is not the fetch word the
+  // setter above writes).
+  const u32 m = other | anisotropic;
+  const u32 aniso_field = m ? kAnisoFilter[d.B(kMaxAnisotropy + s) % kAnisoFilter.size()] & ~(m - 1) : 0u;
+#if !defined(__SWITCH__)
+  {  // PC self-check: the original form's value
+    const u32 aniso = kAnisoFilter[d.B(kMaxAnisotropy + s) % kAnisoFilter.size()];
+    static bool said = false;
+    if ((aniso & ~(m - 1)) != aniso_field && !said) {
+      said = true;
+      REXLOG_ERROR("[d3d] SsFilter's shortcut differs: sampler {} value {} mag {}: {:#x} not {:#x}", s, v, mag,
+                   aniso_field, aniso & ~(m - 1));
+    }
+  }
+#endif
   u32 dword3 = d.W(Fetch(s, 3));
   if (mag) {
     const u32 bits = (aniso_field << 6) | anisotropic | v;
@@ -760,6 +777,158 @@ void SetSamplerState(Device device, u32 sampler, u32 state, u32 value) {
     kSamplerStateFns[state](device, sampler, value);
 }
 
+// ssasr-nx (2026-11-26, batch 4 #10, #11, #50; ssasr_renut_host50): a hooked setter's state as a template argument, so
+// its function is the table's entry at compile time (a direct call, which the compiler may inline) instead of
+// SetRenderState's census test and an indirect call through the table. The hooks (hooks/state.cpp) call these for
+// the states they hook; the census (#50) times them.
+template <u32 State>
+[[gnu::hot]] void SetRenderStateFixed(Device device, u32 value) {
+  static_assert(State < kRenderStates);
+  if (::ssasr::host50::CensusOn()) [[unlikely]] {
+    const uint64_t t0 = ::ssasr::host50::Ticks();
+    if (device)
+      kRenderStateFns[State](device, value);
+    ::ssasr::host50::Add(::ssasr::host50::kStateCalls);
+    ::ssasr::host50::Add(::ssasr::host50::kStateTicks, ::ssasr::host50::Ticks() - t0);
+    return;
+  }
+  if (device)
+    kRenderStateFns[State](device, value);
+}
+template <u32 State>
+[[gnu::hot]] void SetSamplerStateFixed(Device device, u32 sampler, u32 value) {
+  static_assert(State < kSamplerStates);
+  if (::ssasr::host50::CensusOn()) [[unlikely]] {
+    const uint64_t before = device ? g_touch[device.slot].chunks : 0;
+    if (device)
+      g_touch[device.slot].chunks = 0;
+    const uint64_t t0 = ::ssasr::host50::Ticks();
+    if (device && sampler < kTextureSamplers)
+      kSamplerStateFns[State](device, sampler, value);
+    ::ssasr::host50::Add(::ssasr::host50::kSamplerCalls);
+    ::ssasr::host50::Add(::ssasr::host50::kSamplerTicks, ::ssasr::host50::Ticks() - t0);
+    if (device) {
+      if (!g_touch[device.slot].chunks)
+        ::ssasr::host50::Add(::ssasr::host50::kSamplerSame);  // #10: it wrote no new value
+      g_touch[device.slot].chunks |= before;
+    }
+    return;
+  }
+  if (device && sampler < kTextureSamplers)
+    kSamplerStateFns[State](device, sampler, value);
+}
+template void SetRenderStateFixed<10>(Device, u32);
+template void SetRenderStateFixed<11>(Device, u32);
+template void SetRenderStateFixed<12>(Device, u32);
+template void SetRenderStateFixed<13>(Device, u32);
+template void SetRenderStateFixed<14>(Device, u32);
+template void SetRenderStateFixed<15>(Device, u32);
+template void SetRenderStateFixed<16>(Device, u32);
+template void SetRenderStateFixed<17>(Device, u32);
+template void SetRenderStateFixed<18>(Device, u32);
+template void SetRenderStateFixed<19>(Device, u32);
+template void SetRenderStateFixed<20>(Device, u32);
+template void SetRenderStateFixed<21>(Device, u32);
+template void SetRenderStateFixed<22>(Device, u32);
+template void SetRenderStateFixed<23>(Device, u32);
+template void SetRenderStateFixed<24>(Device, u32);
+template void SetRenderStateFixed<25>(Device, u32);
+template void SetRenderStateFixed<26>(Device, u32);
+template void SetRenderStateFixed<27>(Device, u32);
+template void SetRenderStateFixed<28>(Device, u32);
+template void SetRenderStateFixed<29>(Device, u32);
+template void SetRenderStateFixed<30>(Device, u32);
+template void SetRenderStateFixed<31>(Device, u32);
+template void SetRenderStateFixed<32>(Device, u32);
+template void SetRenderStateFixed<33>(Device, u32);
+template void SetRenderStateFixed<34>(Device, u32);
+template void SetRenderStateFixed<35>(Device, u32);
+template void SetRenderStateFixed<36>(Device, u32);
+template void SetRenderStateFixed<37>(Device, u32);
+template void SetRenderStateFixed<38>(Device, u32);
+template void SetRenderStateFixed<39>(Device, u32);
+template void SetRenderStateFixed<40>(Device, u32);
+template void SetRenderStateFixed<41>(Device, u32);
+template void SetRenderStateFixed<42>(Device, u32);
+template void SetRenderStateFixed<43>(Device, u32);
+template void SetRenderStateFixed<44>(Device, u32);
+template void SetRenderStateFixed<45>(Device, u32);
+template void SetRenderStateFixed<46>(Device, u32);
+template void SetRenderStateFixed<47>(Device, u32);
+template void SetRenderStateFixed<48>(Device, u32);
+template void SetRenderStateFixed<49>(Device, u32);
+template void SetRenderStateFixed<50>(Device, u32);
+template void SetRenderStateFixed<51>(Device, u32);
+template void SetRenderStateFixed<52>(Device, u32);
+template void SetRenderStateFixed<53>(Device, u32);
+template void SetRenderStateFixed<54>(Device, u32);
+template void SetRenderStateFixed<55>(Device, u32);
+template void SetRenderStateFixed<56>(Device, u32);
+template void SetRenderStateFixed<57>(Device, u32);
+template void SetRenderStateFixed<58>(Device, u32);
+template void SetRenderStateFixed<59>(Device, u32);
+template void SetRenderStateFixed<60>(Device, u32);
+template void SetRenderStateFixed<61>(Device, u32);
+template void SetRenderStateFixed<62>(Device, u32);
+template void SetRenderStateFixed<63>(Device, u32);
+template void SetRenderStateFixed<64>(Device, u32);
+template void SetRenderStateFixed<65>(Device, u32);
+template void SetRenderStateFixed<66>(Device, u32);
+template void SetRenderStateFixed<67>(Device, u32);
+template void SetRenderStateFixed<68>(Device, u32);
+template void SetRenderStateFixed<69>(Device, u32);
+template void SetRenderStateFixed<70>(Device, u32);
+template void SetRenderStateFixed<71>(Device, u32);
+template void SetRenderStateFixed<72>(Device, u32);
+template void SetRenderStateFixed<73>(Device, u32);
+template void SetRenderStateFixed<74>(Device, u32);
+template void SetRenderStateFixed<75>(Device, u32);
+template void SetRenderStateFixed<76>(Device, u32);
+template void SetRenderStateFixed<77>(Device, u32);
+template void SetRenderStateFixed<78>(Device, u32);
+template void SetRenderStateFixed<79>(Device, u32);
+template void SetRenderStateFixed<80>(Device, u32);
+template void SetRenderStateFixed<81>(Device, u32);
+template void SetRenderStateFixed<82>(Device, u32);
+template void SetRenderStateFixed<83>(Device, u32);
+template void SetRenderStateFixed<84>(Device, u32);
+template void SetRenderStateFixed<85>(Device, u32);
+template void SetRenderStateFixed<86>(Device, u32);
+template void SetRenderStateFixed<87>(Device, u32);
+template void SetRenderStateFixed<88>(Device, u32);
+template void SetRenderStateFixed<89>(Device, u32);
+template void SetRenderStateFixed<90>(Device, u32);
+template void SetRenderStateFixed<91>(Device, u32);
+template void SetRenderStateFixed<92>(Device, u32);
+template void SetRenderStateFixed<93>(Device, u32);
+template void SetRenderStateFixed<94>(Device, u32);
+template void SetRenderStateFixed<95>(Device, u32);
+template void SetRenderStateFixed<96>(Device, u32);
+template void SetRenderStateFixed<97>(Device, u32);
+template void SetRenderStateFixed<98>(Device, u32);
+template void SetRenderStateFixed<99>(Device, u32);
+template void SetRenderStateFixed<100>(Device, u32);
+template void SetSamplerStateFixed<0>(Device, u32, u32);
+template void SetSamplerStateFixed<1>(Device, u32, u32);
+template void SetSamplerStateFixed<2>(Device, u32, u32);
+template void SetSamplerStateFixed<3>(Device, u32, u32);
+template void SetSamplerStateFixed<4>(Device, u32, u32);
+template void SetSamplerStateFixed<5>(Device, u32, u32);
+template void SetSamplerStateFixed<6>(Device, u32, u32);
+template void SetSamplerStateFixed<7>(Device, u32, u32);
+template void SetSamplerStateFixed<8>(Device, u32, u32);
+template void SetSamplerStateFixed<9>(Device, u32, u32);
+template void SetSamplerStateFixed<10>(Device, u32, u32);
+template void SetSamplerStateFixed<11>(Device, u32, u32);
+template void SetSamplerStateFixed<12>(Device, u32, u32);
+template void SetSamplerStateFixed<13>(Device, u32, u32);
+template void SetSamplerStateFixed<14>(Device, u32, u32);
+template void SetSamplerStateFixed<15>(Device, u32, u32);
+template void SetSamplerStateFixed<16>(Device, u32, u32);
+template void SetSamplerStateFixed<17>(Device, u32, u32);
+template void SetSamplerStateFixed<18>(Device, u32, u32);
+template void SetSamplerStateFixed<19>(Device, u32, u32);
+
 // The getters (0x82635478-0x82636E40), each a read of the state's storage.
 // Entries 0-9 of the table share a getter returning 0.
 u32 GetRenderState(Device d, u32 state) {
@@ -913,9 +1082,18 @@ void TagResourceFence(Device device, u32 resource, bool read_fence) {
   if (!header)
     return;
   if (const u32 fence = device.W(off::FenceTag)) {
-    header[2] = fence;  // Fence
-    if (read_fence)
-      header[3] = fence;  // ReadFence
+    // ssasr-nx (2026-11-27, batch 5 H19, H20): written only when it holds another value (a store to a resource's
+    // header line at every set otherwise; the same word either way).
+    if (!::ssasr::host50::On(::ssasr::host50::H(19))) {
+      header[2] = fence;  // Fence
+      if (read_fence)
+        header[3] = fence;  // ReadFence
+    } else {
+      if (u32(header[2]) != fence)
+        header[2] = fence;
+      if (read_fence && u32(header[3]) != fence)
+        header[3] = fence;
+    }
   }
   // Otherwise (a device recording a command buffer) N&B's D3D adds the
   // resource to the buffer's list, which fences it when the buffer runs; the
@@ -926,10 +1104,14 @@ void TagResourceFence(Device device, u32 resource, bool read_fence) {
 //     UINT64 PendingMask3) [0x821FE558]. The fetch constant takes the texture's
 // header, keeping the sampler state bits; its mip range is narrowed by the
 // sampler's MaxMipLevel / MinMipLevel.
-void SetTexture(Device device, u32 sampler, u32 texture) {
+[[gnu::hot]] void SetTexture(Device device, u32 sampler, u32 texture) {
   if (!device || sampler >= kTextureSamplers)
     return;
   const u32 previous = device.W(off::Textures + sampler * 4);
+  // ssasr-nx (2026-11-27, batch 5 H72): the previous texture's header line asked for now (TagResourceFence reads and
+  // may write its fence words at the end: a miss on a random header line, behind this one's own work).
+  if (previous && previous != texture && ::ssasr::host50::On(::ssasr::host50::H(72)))
+    __builtin_prefetch(GuestPtr<const u8>(previous) + 8);
   if (const auto *header = GuestPtr<const be_u32>(texture)) {
     const u32 t0 = header[7];   // +0x1C, the header's fetch constant
     const u32 t1 = header[8];
@@ -977,7 +1159,7 @@ void SetTexture(Device device, u32 sampler, u32 texture) {
 
 // void D3DDevice_SetStreamSource(D3DDevice*, UINT StreamNumber, D3DVertexBuffer*,
 //     UINT OffsetInBytes, UINT Stride, UINT64 PendingMask3) [0x821F9438]
-void SetStreamSource(Device device, u32 stream, u32 vertex_buffer, u32 offset, u32 stride) {
+[[gnu::hot]] void SetStreamSource(Device device, u32 stream, u32 vertex_buffer, u32 offset, u32 stride) {
   if (!device || stream >= 16)
     return;
   if (const auto *buffer = GuestPtr<const be_u32>(vertex_buffer)) {
@@ -998,7 +1180,7 @@ void SetStreamSource(Device device, u32 stream, u32 vertex_buffer, u32 offset, u
 }
 
 // void D3DDevice_SetIndices(D3DDevice*, D3DIndexBuffer*) [0x821DE438]
-void SetIndices(Device device, u32 index_buffer) {
+[[gnu::hot]] void SetIndices(Device device, u32 index_buffer) {
   if (!device)
     return;
   if (const u32 previous = device.W(off::IndexBuffer))

@@ -75,6 +75,7 @@ extern "C" const bool g_banjo_store_cards = false;
 
 #include <rex/cvar.h>
 #include <rex/logging.h>
+#include <rex/system/xthread.h>  // ssasr-nx (2026-11-27): ssasr_diag_watch_hooks
 
 #include "cpu/banjo_enhancements.h"
 #include "me/me_verify.h"
@@ -117,6 +118,14 @@ REXCVAR_DEFINE_INT32(sasrt_test_vmx_fuzz, 0, "Banjo/Enhancements",
 // functions whose hook the guard never switches off. It still compares them and logs a repeated difference (the first
 // few per hook), but the hook stays on. A list of guest addresses or names, comma separated ("8230AD50,822DA210" or
 // "sub_8230AD50"); empty: the guard as before.
+// ssasr-nx (2026-11-27, the race-start crash: the material cache's entry pool, sub_824619B0, found corrupt): copies whose
+// calls are watched (PC builds; the Switch build's copies are in place and never read it). Each guest thread's first
+// call is logged, and so is a call that begins while another guest thread is inside the same copy. The copy itself
+// runs as it does without the watch (its fast form). Comma-separated sub_ names; empty: none.
+REXCVAR_DEFINE_STRING(ssasr_diag_watch_hooks, "", "SSASR/Diagnostics",
+                      "Diagnostics (PC builds): native copies (sub_ names, comma-separated) whose calls are watched: "
+                      "each guest thread's first call logged, and any call made while another thread is inside it")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_STRING(banjo_hot_guard_keep, "", "Banjo/Enhancements",
                       "The guard: functions (comma-separated guest addresses or sub_ names) whose native copy it never "
                       "switches off; a difference is logged and the copy stays on")
@@ -788,6 +797,70 @@ void PoisonDead(PPCContext& ctx, const RegSkip& skip) {
     }
 }
 
+// ssasr-nx (2026-11-27): ssasr_diag_watch_hooks' watches (at most four hooks).
+struct HookWatch {
+  const Hook* hook = nullptr;
+  std::atomic<int> inside{0};
+  std::atomic<uint32_t> owner{0};
+  std::atomic<uint64_t> calls{0}, overlaps{0};
+  std::mutex mutex;
+  uint32_t seen[64] = {};
+  uint32_t seen_count = 0;
+};
+HookWatch g_hook_watches[4];
+std::atomic<uint32_t> g_hook_watch_count{0};
+std::mutex g_hook_watch_mutex;
+
+bool HookWatchNamed(const char* name) {
+  const std::string list = REXCVAR_GET(ssasr_diag_watch_hooks);
+  if (list.empty()) return false;
+  size_t at = 0;
+  while (at <= list.size()) {
+    size_t end = list.find(',', at);
+    if (end == std::string::npos) end = list.size();
+    std::string item = list.substr(at, end - at);
+    while (!item.empty() && std::isspace(uint8_t(item.front()))) item.erase(item.begin());
+    while (!item.empty() && std::isspace(uint8_t(item.back()))) item.pop_back();
+    if (!item.empty() && item == name) return true;
+    at = end + 1;
+  }
+  return false;
+}
+
+HookWatch* HookWatchOf(const Hook& h) {
+  const uint32_t n = g_hook_watch_count.load(std::memory_order_acquire);
+  for (uint32_t i = 0; i < n; ++i)
+    if (g_hook_watches[i].hook == &h) return &g_hook_watches[i];
+  return nullptr;
+}
+
+void Watched(HookWatch& w, Hook& h, PPCContext& ctx, uint8_t* base) {
+  const uint32_t me = rex::system::XThread::GetCurrentThreadHandle();
+  {
+    std::lock_guard lock(w.mutex);
+    bool seen = false;
+    for (uint32_t i = 0; i < w.seen_count; ++i) seen |= w.seen[i] == me;
+    if (!seen && w.seen_count < std::size(w.seen)) {
+      w.seen[w.seen_count++] = me;
+      REXLOG_INFO("[diag] {} first called on guest thread {:08X} (the {} thread to call it; r3 {:08X} r4 {:08X} r5 "
+                  "{:08X}, lr {:08X})",
+                  h.name, me, w.seen_count, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, uint32_t(ctx.lr));
+    }
+  }
+  const int before = w.inside.fetch_add(1, std::memory_order_acq_rel);
+  const uint32_t other = w.owner.exchange(me, std::memory_order_acq_rel);
+  w.calls.fetch_add(1, std::memory_order_relaxed);
+  if (before > 0 && other != me) {
+    const uint64_t n = w.overlaps.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (n <= 32 || n % 1000 == 0)
+      REXLOG_WARN("[diag] {} entered on guest thread {:08X} while thread {:08X} is inside it ({} at once; overlap {} "
+                  "of {} calls)",
+                  h.name, me, other, before + 1, n, w.calls.load(std::memory_order_relaxed));
+  }
+  h.native(ctx, base);
+  w.inside.fetch_sub(1, std::memory_order_acq_rel);
+}
+
 uint8_t InitHook(Hook& h, uint8_t* base) {
   StartVmxFuzzOnce();
   g_poison_dead.store(REXCVAR_GET(banjo_hot_poison_dead), std::memory_order_relaxed);  // sasrt-nx (2026-11-12; port 121)
@@ -828,6 +901,19 @@ uint8_t InitHook(Hook& h, uint8_t* base) {
   const bool direct = !forms || !guard_asked;
   uint8_t state = on ? (direct ? kDirect : kOn) : kOff;
   if (on && REXCVAR_GET(banjo_hot_count) && h.native_counted) state = kCount;
+  // ssasr-nx (2026-11-27): a watched hook takes the counting state's path (Counted), which hands it to Watched.
+  if (on && HookWatchNamed(h.name)) {
+    std::lock_guard lock(g_hook_watch_mutex);
+    if (!HookWatchOf(h)) {
+      const uint32_t n = g_hook_watch_count.load(std::memory_order_relaxed);
+      if (n < std::size(g_hook_watches)) {
+        g_hook_watches[n].hook = &h;
+        g_hook_watch_count.store(n + 1, std::memory_order_release);
+        REXLOG_INFO("[diag] {} ({}): its calls watched (ssasr_diag_watch_hooks)", h.name, h.key);
+      }
+    }
+    if (HookWatchOf(h)) state = kCount;
+  }
   if (on && h.bulk) {
     // The bulk hooks say so in the summary of the reports (hundreds of first calls would each be a line).
   } else if (on && state == kDirect && h.state.load(std::memory_order_relaxed) == kUninit) {
@@ -849,6 +935,10 @@ uint8_t InitHook(Hook& h, uint8_t* base) {
 }
 
 void Counted(Hook& h, PPCContext& ctx, uint8_t* base) {
+  if (HookWatch* w = HookWatchOf(h)) [[unlikely]] {  // ssasr-nx (2026-11-27): ssasr_diag_watch_hooks
+    Watched(*w, h, ctx, base);
+    return;
+  }
   h.native_counted(ctx, base);
   if ((h.uses.fetch_add(1, std::memory_order_relaxed) & 0xFFF) == 0) Report();
 }
@@ -1289,3 +1379,33 @@ void Report() {
 
 // The hooks (tools/localize_native.py writes one BANJO_HOT_HOOK line per function of localized.txt).
 #include "hot/banjo_hot_list.inc"
+
+// ssasr-nx (2026-11-26, batch 4 row 11): the copies' redundancy census (cpu/banjo_hot_common.h MemoSite,
+// REX_SSASR_MEMO_CENSUS): the sites register on their first call; every report lists the 25 with the most calls whose
+// arguments repeat one of the copy's last eight sets.
+namespace banjo::hot {
+namespace {
+std::mutex g_memo_mutex;
+MemoSite* g_memo_sites = nullptr;
+}  // namespace
+void MemoRegister(MemoSite* site, uint32_t addr) {
+  std::lock_guard<std::mutex> lock(g_memo_mutex);
+  if (site->addr) return;
+  site->addr = addr;
+  site->link = g_memo_sites;
+  g_memo_sites = site;
+}
+void MemoReport() {
+  std::vector<MemoSite*> all;
+  {
+    std::lock_guard<std::mutex> lock(g_memo_mutex);
+    for (MemoSite* s = g_memo_sites; s; s = s->link) all.push_back(s);
+  }
+  if (all.empty()) return;
+  std::sort(all.begin(), all.end(), [](MemoSite* a, MemoSite* b) { return a->repeats.load() > b->repeats.load(); });
+  std::string line;
+  for (size_t i = 0; i < all.size() && i < 25; ++i)
+    line += fmt::format("{}sub_{:08X} {}/{}", i ? ", " : "", all[i]->addr, all[i]->repeats.load(), all[i]->calls.load());
+  REXLOG_INFO("[census] ssasr memo (cumulative; calls whose arguments repeat one of the last eight / calls): {}", line);
+}
+}  // namespace banjo::hot

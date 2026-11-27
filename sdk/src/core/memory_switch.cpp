@@ -340,7 +340,14 @@ REXCVAR_DEFINE_BOOL(banjo_window_blocks, true, "Banjo/Switch",
                     "false: anywhere, on 4 KB pages, as in version 1.0.0");
 REXCVAR_DEFINE_BOOL(banjo_code_blocks, true, "Banjo/Switch",
                     "The NRO's code and read-only data on 2 MB blocks (ui/switch_code_blocks.cpp, which reads this key "
-                    "from katamari.toml itself, because it runs before the cvars). false: on 4 KB pages, as in version 1.0.0");
+                    "from the player's toml next to the NRO itself, because it runs before the cvars). false: on 4 KB "
+                    "pages, as in version 1.0.0");
+// ssasr-nx (2026-11-27, loads batch L24; the user: "Definetely try and get the host code 2mb pages"): read the same way.
+REXCVAR_DEFINE_BOOL(ssasr_code_blocks_data, false, "Banjo/Switch",
+                    "With banjo_code_blocks: the NRO's data and bss (the host's globals; 35 MB in ssasr-nx) on a copy in line "
+                    "with 2 MB blocks too, swapped with the code (ui/switch_code_blocks.cpp; ssasr-nx: -0.35 ms a "
+                    "frame). The loader's copy stays: the data's size again in heap. renut-ultimate: off unless the "
+                    "player's toml says true (read from it before the cvars)");
 
 bool RexWindowBlocksOn() { return REXCVAR_GET(banjo_window_blocks); }
 

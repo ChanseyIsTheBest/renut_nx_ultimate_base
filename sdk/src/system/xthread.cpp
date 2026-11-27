@@ -46,6 +46,11 @@
 // asura-nx (v1.0.0), off by default (Asura's own layout): with the guest core layout (banjo_renut_core_layout), the
 // main XThread raised to 0x30 (above the 0x3B workers and the timer queue, below the render thread 0x2C and audio), and
 // the other guest threads spread round-robin over the layout's cores instead of all on its preferred core.
+// ssasr-nx (2026-11-26; renut-ultimate's key): an unnamed guest thread named XT@<start address>#<id>, so
+// switch_thread_cores / _priorities can place it by its start ("@XXXXXXXX=..."). false: XThread<id>, as before.
+REXCVAR_DEFINE_BOOL(ssasr_thread_start_names, true, "Threading",
+                    "An unnamed guest thread named XT@<start address>#<id> (switch_thread_cores / _priorities "
+                    "entries \"@XXXXXXXX=...\" place it by its start); false: XThread<id>, as before");
 REXCVAR_DEFINE_BOOL(asura_guest_main_priority_30, false, "Threading",
                     "Guest core layout: the main XThread at priority 0x30 (asura-nx). false: as before")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
@@ -595,7 +600,16 @@ X_STATUS XThread::Create() {
 
   // Set the thread name based on host ID (for easier debugging).
   if (thread_name_.empty()) {
-    set_name(fmt::format("XThread{:04X}", thread_->system_id()));
+    // ssasr-nx (2026-11-26): the start address in the name, so switch_thread_cores / switch_thread_priorities can place
+    // an unnamed guest thread by it ("@XXXXXXXX=..."); first, because the Switch keeps a thread's first 15 characters
+    // (threading_posix.cpp set_name). The log names each such thread once.
+    if (REXCVAR_GET(ssasr_thread_start_names)) {
+      set_name(fmt::format("XT@{:08X}#{:04X}", creation_params_.start_address, thread_->system_id()));
+      REXSYS_INFO("[threads] guest thread {} starts at {:08X} (xapi startup {:08X})", thread_name_,
+                  creation_params_.start_address, creation_params_.xapi_thread_startup);
+    } else {
+      set_name(fmt::format("XThread{:04X}", thread_->system_id()));
+    }
   }
 
 #if !REX_PLATFORM_SWITCH

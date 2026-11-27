@@ -312,6 +312,11 @@ set_source_files_properties(src/build_stamp.cpp PROPERTIES SKIP_PRECOMPILE_HEADE
 # (the game runs but the screen stays black).
 rexglue_setup_target(renut GPU_PLUGINS xenos)
 
+# ssasr-nx (2026-11-27): the generated code's pch includes src/title_midasm_hooks.h when a port has one
+# (sdk/resources/templates/codegen/pch_h.inja: its title's mid-asm hook functions).
+if(TARGET renut_recomp)
+    target_include_directories(renut_recomp PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+endif()
 # banjo-nx (2026-10-17): Ryujinx starts NROs without argv[0]; the SDK then takes the NRO's usual place on the SD
 # (sdk/src/core/filesystem_posix.cpp). A console's hbloader always passes the path, so nothing changes there.
 if(REXGLUE_PLATFORM_SWITCH AND TARGET rexcore)
@@ -502,6 +507,69 @@ if(REXGLUE_PLATFORM_SWITCH AND NOT SASRT_HOT_GUARD_FORMS)
 else()
     set(_sasrt_hot_in_place_default OFF)
 endif()
+# ssasr-nx (2026-11-26, the non-exact batch and batch 4; renut-ultimate: every one OFF): its non-exact switches
+# and census builds (docs/off-by-default.md section 13; each needs its census on the port's own race first).
+option(SSASR_RELAXED_FLOATS "Float results may differ in their last bits (the picture can change; OFF by default)" OFF)
+option(SSASR_NON_EXACT "Non-exact changes that leave float results alone in practice (OFF by default)" OFF)
+if(SSASR_RELAXED_FLOATS)
+    add_compile_definitions(REX_SSASR_SINGLE_LOOSE REX_VMX_ESTIMATE_ONE_STEP)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        if(TARGET renut_recomp)
+            target_compile_options(renut_recomp PRIVATE -ffp-contract=fast -freciprocal-math)
+        endif()
+        set_property(SOURCE ${BANJO_HOT_SOURCES} APPEND PROPERTY COMPILE_OPTIONS
+                     -ffp-contract=fast -freciprocal-math)
+    endif()
+    message(STATUS "ssasr: SSASR_RELAXED_FLOATS ON (float results may differ in their last bits)")
+endif()
+# ssasr-nx (2026-11-26, batch 4; the user: "implement all those censuses"): two census switches for verify builds, OFF.
+#   - SSASR_STALE_CENSUS: the frame elisions' stores write a poison word and every guest load counts the reads of it
+#     (tools/ssasr_stale_census.py; "[census] ssasr stale frame words"). A PC census build (REX_DIET_CENSUS_ON).
+#   - SSASR_GUARD_RELAXED_FLAGS: SSASR_RELAXED_FLOATS's compiler flags on the copies only, so the guard (the copies
+#     against the exact generated originals) shows every difference the flags make. A guard build (PC, or the Switch's
+#     guard build for the fused multiply-adds: x86-64-v2 has none).
+option(SSASR_STALE_CENSUS "Census build: the frame elisions write a poison word, loads count reads of it" OFF)
+option(SSASR_GUARD_RELAXED_FLAGS "Guard build: the relaxed float flags on the copies only" OFF)
+# batch 4 row 11: the copies' redundancy census (cpu/banjo_hot_common.h MemoSite; "[census] ssasr memo"). PC only.
+option(SSASR_MEMO_CENSUS "Census build: count the copies' calls whose arguments repeat" OFF)
+if(SSASR_MEMO_CENSUS)
+    set_property(SOURCE ${BANJO_HOT_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS REX_SSASR_MEMO_CENSUS)
+    message(STATUS "ssasr: SSASR_MEMO_CENSUS ON (a census build)")
+endif()
+if(SSASR_STALE_CENSUS)
+    if(TARGET renut_recomp)
+        target_compile_definitions(renut_recomp PRIVATE REX_SSASR_STALE_CENSUS)
+    endif()
+    set_property(SOURCE ${BANJO_HOT_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS REX_SSASR_STALE_CENSUS)
+    message(STATUS "ssasr: SSASR_STALE_CENSUS ON (a census build)")
+endif()
+if(SSASR_GUARD_RELAXED_FLAGS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set_property(SOURCE ${BANJO_HOT_SOURCES} APPEND PROPERTY COMPILE_OPTIONS
+                 -ffp-contract=fast -freciprocal-math)
+    message(STATUS "ssasr: SSASR_GUARD_RELAXED_FLAGS ON (the relaxed flags on the copies only)")
+endif()
+if(SSASR_NON_EXACT)
+    # REX_SSASR_NAN_SIGN_FREE: a NaN may take either sign (the inverse array's native stores without its NaN test, and
+    # the generated original no longer runs for those arrays).
+    # REX_SSASR_FWD_LOOSE: in the copies, a stack word's load back takes the stored value across stores that do not go
+    # through r1 (tools/ssasr_copy_rewrites.py; the guard compares).
+    # (REX_SSASR_PURE_FLUSH, a denormal single through a float copy pair read as zero, is NOT in the set: the PC census
+    # of 2026-11-26 counted 5,651 in the first minutes, and those pairs move any 4 bytes, integers included: a small
+    # integer is a denormal single, which the flush would turn into 0.)
+    # REX_SSASR_LOOSE_BARRIERS (batch 4, row 24): no loop barrier in loops that write guest memory
+    # (tools/ssasr_loose_barriers.py; tools/find_self_loops.py checks the ELF for polls turned into spins).
+    add_compile_definitions(REX_SSASR_NAN_SIGN_FREE REX_SSASR_FWD_LOOSE REX_SSASR_LOOSE_BARRIERS)
+    message(STATUS "ssasr: SSASR_NON_EXACT ON")
+endif()
+# ssasr-nx (2026-11-26, batch 4 #41; the user: "Do all 50 in current batch please"): no in-run A/B in this build
+# (renut_engine/gpu/ssasr_no_ab.h): the A/B word a constant 0, so every test of it folds away. Exact (the same as a run
+# with banjo_renut_ab off); banjo_renut_ab does nothing in such a build. OFF by default (the A/B stays a tool).
+option(SSASR_NO_AB "No in-run A/B: its tests compiled out (a performance build)" OFF)
+if(SSASR_NO_AB)
+    add_compile_definitions(SSASR_NO_AB)
+    message(STATUS "ssasr: SSASR_NO_AB ON (no in-run A/B)")
+endif()
+
 option(SASRT_HOT_IN_PLACE "Localized copies in place of the generated functions (no hooks, no guard, no per-copy keys); default ON on the Switch without guard forms" ${_sasrt_hot_in_place_default})
 if(SASRT_HOT_IN_PLACE)
     set_property(SOURCE ${BANJO_HOT_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS BANJO_HOT_IN_PLACE=1)

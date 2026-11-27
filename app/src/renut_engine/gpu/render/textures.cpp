@@ -2735,6 +2735,64 @@ HostTexture *GetDepthResolveTextureLocked(u32 texture_va, RenderScale scale,
   return t;
 }
 
+// ssasr-nx (2026-11-25): a 2D depth resolve target (the float image and its words, with their framebuffer) the size of
+// 'like' (a stacked depth destination), for a resolve into one of its slices other than 0: the resolve is drawn here and
+// its float image copied into the slice (render/draw.cpp). Sonic & SEGA All-Stars Racing resolves its three shadow
+// cascades into slices 0-2 of one stacked 1024x1024 texture every frame; slices 1 and 2 were never written. Kept per
+// size and scale.
+HostTexture *GetDepthSliceScratchLocked(const HostTexture &like) {
+  static std::unordered_map<uint64_t, std::unique_ptr<HostTexture>> scratch;
+  const uint64_t key = (uint64_t(like.alloc_width) << 40) ^ (uint64_t(like.alloc_height) << 16) ^
+                       uint64_t(like.host_format);
+  auto &slot = scratch[key];
+  if (slot && slot->texture && slot->words && slot->depth_framebuffer)
+    return slot.get();
+  plume::RenderDevice *device = Video::Device();
+  auto t = std::make_unique<HostTexture>();
+  t->width = like.width;
+  t->height = like.height;
+  t->scale = like.scale;
+  t->alloc_width = like.alloc_width;
+  t->alloc_height = like.alloc_height;
+  t->host_format = like.host_format;
+  t->render_target = true;
+  plume::RenderTextureDesc desc =
+      plume::RenderTextureDesc::Texture2D(like.alloc_width, like.alloc_height, 1, like.host_format);
+  desc.flags |= plume::RenderTextureFlag::RENDER_TARGET;
+  t->texture = device->createTexture(desc);
+  if (!TextureCreated(t->texture.get()))
+    return nullptr;
+  t->texture->setName("ssasr depth slice scratch");
+  auto words = std::make_unique<HostTexture>();
+  words->width = t->width;
+  words->height = t->height;
+  words->scale = t->scale;
+  words->alloc_width = t->alloc_width;
+  words->alloc_height = t->alloc_height;
+  words->host_format = kDepthResolveWordsFormat;
+  plume::RenderTextureDesc wdesc =
+      plume::RenderTextureDesc::Texture2D(t->alloc_width, t->alloc_height, 1, kDepthResolveWordsFormat);
+  wdesc.flags |= plume::RenderTextureFlag::RENDER_TARGET;
+  words->texture = device->createTexture(wdesc);
+  if (!TextureCreated(words->texture.get())) {
+    Video::RetireLocked(std::move(t->texture));
+    return nullptr;
+  }
+  words->texture->setName("ssasr depth slice scratch words");
+  const plume::RenderTexture *targets[] = {t->texture.get(), words->texture.get()};
+  t->depth_framebuffer = device->createFramebuffer(plume::RenderFramebufferDesc(targets, 2));
+  if (!t->depth_framebuffer) {
+    Video::RetireLocked(std::move(words->texture));
+    Video::RetireLocked(std::move(t->texture));
+    return nullptr;
+  }
+  t->words = std::move(words);
+  slot = std::move(t);
+  RGPU_INFO("[renut] depth resolve slice scratch made: {}x{} (format {}; ssasr-nx, the stacked shadow cascades)",
+            slot->alloc_width, slot->alloc_height, u32(slot->host_format));
+  return slot.get();
+}
+
 namespace {
 
 // Single-level color targets the host levels are drawn into (plume's barriers

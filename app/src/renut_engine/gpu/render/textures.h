@@ -131,6 +131,12 @@ struct HostTexture {
   std::unique_ptr<plume::RenderFramebuffer> depth_framebuffer;
   // dmc_devil-nx (dmc_gpu_depth_resolve_float_only_fb): the float target alone, made at its first resolve without words.
   std::unique_ptr<plume::RenderFramebuffer> dmc_depth_float_framebuffer;
+  // ssasr-nx (2026-11-26, ssasr_depth_slice_direct): a stacked depth resolve destination's framebuffers for its slices
+  // other than 0 (a view of that layer of 'texture', and 'words'), made at the first resolve into each; 'slice_images'
+  // the two images they were made over (made again if either changes).
+  std::vector<std::unique_ptr<plume::RenderTextureView>> slice_views;
+  std::vector<std::unique_ptr<plume::RenderFramebuffer>> slice_framebuffers;
+  const plume::RenderTexture *slice_images[2] = {};
   // banjo-nx (2026-10-18): a resolve destination as the target of DrawResolveCopy (draw.cpp), made at its first one.
   std::unique_ptr<plume::RenderFramebuffer> copy_framebuffer;
   uint64_t resolves = 0;
@@ -323,6 +329,9 @@ HostTexture *GetResolveTextureLocked(u32 texture_va, plume::RenderFormat format,
 // through such a header). Bumps 'resolves'.
 HostTexture *GetDepthResolveTextureLocked(u32 texture_va, RenderScale scale,
                                           const d3d::TextureFetchConstant *header_format = nullptr);
+// ssasr-nx (2026-11-25): a 2D depth resolve target the size of a stacked depth destination, for a resolve into one of
+// its slices other than 0 (drawn there, then copied into the slice).
+HostTexture *GetDepthSliceScratchLocked(const HostTexture &like);
 
 // Existing host texture for a guest texture VA, or nullptr.
 HostTexture *FindHostTextureLocked(u32 texture_va);

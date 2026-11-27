@@ -13,6 +13,8 @@
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 
 #include <algorithm>
+#include <cstdlib>
+#include <mutex>
 #include <string>
 
 #include <rex/chrono/chrono_steady_cast.h>
@@ -496,8 +498,51 @@ u32 RtlTryEnterCriticalSection_entry(ppc_ptr_t<X_RTL_CRITICAL_SECTION> cs) {
   return xeTryEnterCriticalSection(cs, XThread::GetCurrentThread()->guest_object());
 }
 
+#if defined(_WIN32)
+// ssasr-nx (2026-11-27, the race-start crash; PC builds only): one critical section watched (a guest address in hex),
+// each guest thread's first entry into it logged with the caller, and the entries a thread made counted in its line.
+REXCVAR_DEFINE_STRING(ssasr_diag_watch_cs, "", "SSASR/Diagnostics",
+                      "Diagnostics (PC builds): a guest critical section (hex address) whose entering threads are logged")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+namespace {
+uint32_t WatchedCriticalSection() {
+  static const uint32_t va = [] {
+    const std::string v = REXCVAR_GET(ssasr_diag_watch_cs);
+    return v.empty() ? 0u : uint32_t(std::strtoul(v.c_str(), nullptr, 16));
+  }();
+  return va;
+}
+[[gnu::noinline, gnu::cold]] void NoteWatchedEntry(PPCContext& ctx) {
+  static std::mutex mutex;
+  static uint32_t seen[64] = {};
+  static uint64_t entries[64] = {};
+  static uint32_t count = 0;
+  const uint32_t me = XThread::GetCurrentThreadHandle();
+  std::lock_guard lock(mutex);
+  for (uint32_t i = 0; i < count; ++i) {
+    if (seen[i] == me) {
+      if ((++entries[i] & (entries[i] - 1)) == 0)  // at 2, 4, 8, ...
+        REXLOG_INFO("[diag] critical section {:08X}: guest thread {:08X} has entered it {} times (lr {:08X})",
+                    ctx.r3.u32, me, entries[i], uint32_t(ctx.lr));
+      return;
+    }
+  }
+  if (count < std::size(seen)) {
+    seen[count] = me;
+    entries[count++] = 1;
+    REXLOG_INFO("[diag] critical section {:08X} entered by guest thread {:08X} (the {} thread to; lr {:08X})", ctx.r3.u32,
+                me, count, uint32_t(ctx.lr));
+  }
+}
+}  // namespace
+#endif
+
 // The raw exports' bodies: the argument as HostToGuestFunction would translate it, the owner from the context.
 void RtlEnterCriticalSection_raw(PPCContext& ctx, uint8_t* base) {
+#if defined(_WIN32)
+  if (const uint32_t w = WatchedCriticalSection(); w && ctx.r3.u32 == w) [[unlikely]]
+    NoteWatchedEntry(ctx);
+#endif
   xeEnterCriticalSection(rex::memory::GuestPtr<X_RTL_CRITICAL_SECTION*>(base, ctx.r3.u32),
                          CriticalSectionOwner(ctx, base), GuestCriticalSection().spin);
 }
@@ -534,6 +579,31 @@ void RtlLeaveCriticalSection_entry(ppc_ptr_t<X_RTL_CRITICAL_SECTION> cs) {
 // (its asserts are compiled out in the release builds).
 void RtlLeaveCriticalSection_raw(PPCContext& ctx, uint8_t* base) {
   auto* cs = rex::memory::GuestPtr<X_RTL_CRITICAL_SECTION*>(base, ctx.r3.u32);
+  if (--cs->recursion_count != 0) {
+    rex::thread::atomic_dec(&cs->lock_count);
+    return;
+  }
+  cs->owning_thread = 0;
+  if (rex::thread::atomic_dec(&cs->lock_count) != -1) {
+    xeKeSetEvent(reinterpret_cast<X_KEVENT*>(cs), 1, 0);
+  }
+}
+
+// ssasr-nx (2026-11-27, the race-start crash): a guest critical section entered and left by host code on the calling
+// guest thread, as the game's own RtlEnterCriticalSection / RtlLeaveCriticalSection calls are (the owner: the thread's
+// guest object, as the raw exports' PCR owner, which the PC self-check finds equal). For the title's mid-asm hooks:
+// app/src/title_midasm_hooks.h. Enter takes nothing and returns false for a section not initialised (header type 1).
+bool xeRtlEnterCriticalSectionAt(uint32_t cs_va) {
+  uint8_t* base = rex::system::kernel_state()->memory()->virtual_membase();
+  auto* cs = rex::memory::GuestPtr<X_RTL_CRITICAL_SECTION*>(base, cs_va);
+  if (cs->header.type != 1) return false;
+  xeEnterCriticalSection(cs, XThread::GetCurrentThread()->guest_object(), GuestCriticalSection().spin);
+  return true;
+}
+
+void xeRtlLeaveCriticalSectionAt(uint32_t cs_va) {
+  uint8_t* base = rex::system::kernel_state()->memory()->virtual_membase();
+  auto* cs = rex::memory::GuestPtr<X_RTL_CRITICAL_SECTION*>(base, cs_va);
   if (--cs->recursion_count != 0) {
     rex::thread::atomic_dec(&cs->lock_count);
     return;

@@ -176,7 +176,42 @@ struct Counting {
   void Hand(uint32_t which, uint32_t n) { ::banjo::hand::Count(which, n); }
 };
 
+// ssasr-nx (2026-11-26, batch 4 row 11): the redundancy census of the copies (REX_SSASR_MEMO_CENSUS, a PC census
+// build; tools/ssasr_memo_census.py puts REX_SSASR_MEMO_NOTE(addr) at the top of every copy's running form). Each copy
+// hashes its argument registers (r3-r10, f1-f8) at entry and counts the calls whose hash is one of its last eight:
+// the most a memo keyed by the arguments could skip (an upper bound: memory the function reads can differ).
+struct MemoSite {
+  uint32_t addr = 0;
+  std::atomic<uint64_t> calls{0}, repeats{0};
+  uint64_t recent[8] = {};
+  uint32_t next = 0;
+  MemoSite* link = nullptr;
+};
+void MemoRegister(MemoSite* site, uint32_t addr);
+[[gnu::always_inline]] inline void MemoNote(MemoSite& site, uint32_t addr, const PPCContext& ctx) {
+  if (site.addr == 0) [[unlikely]] MemoRegister(&site, addr);
+  uint64_t h = 0x9E3779B97F4A7C15ull;
+  const uint64_t words[] = {ctx.r3.u64, ctx.r4.u64, ctx.r5.u64, ctx.r6.u64, ctx.r7.u64, ctx.r8.u64, ctx.r9.u64,
+                            ctx.r10.u64, ctx.f1.u64, ctx.f2.u64, ctx.f3.u64, ctx.f4.u64, ctx.f5.u64, ctx.f6.u64,
+                            ctx.f7.u64, ctx.f8.u64};
+  for (uint64_t w : words) h = (h ^ w) * 0x100000001B3ull;
+  site.calls.fetch_add(1, std::memory_order_relaxed);
+  for (uint64_t r : site.recent)
+    if (r == h) {
+      site.repeats.fetch_add(1, std::memory_order_relaxed);
+      return;
+    }
+  site.recent[site.next++ & 7] = h;
+}
+
 }  // namespace banjo::hot
+
+#if defined(REX_SSASR_MEMO_CENSUS) && !defined(__SWITCH__)
+#define REX_SSASR_MEMO_NOTE(addr) \
+  do { static ::banjo::hot::MemoSite rex_memo_site_; ::banjo::hot::MemoNote(rex_memo_site_, (addr), ctx); } while (0)
+#else
+#define REX_SSASR_MEMO_NOTE(addr) ((void)0)
+#endif
 
 // The stores of the copies (tools/localize_native.py renames REX_STORE_* to these): recorded, then made.
 #define BANJO_HOT_STORE_U8(x, y) (s.Note((u32)(x), 1) ? (void)(REX_STORE_U8(x, y)) : (void)0)
@@ -210,6 +245,16 @@ struct Counting {
   (s.Note((u32)(r) + (u32)(d), 4) ? (void)(REX_STORE_D_F32ANY(r, d, v), REX_CARD((u32)(r) + (u32)(d))) : (void)0)
 // sasrt-nx (2026-11-11, port 74; its idea 52): a prefetch of the guest node a pointer-chasing loop just loaded
 // (tools/localize_native.py, PREFETCH). A hint: it cannot fault. CMake SASRT_HOT_PREFETCH=OFF: nothing.
+// ssasr-nx (2026-11-26, the non-exact batch row 3; tools/ssasr_copy_rewrites.py): a stack word's load back across stores
+// that do not go through r1. REX_SSASR_FWD_LOOSE (CMake SSASR_NON_EXACT): the stored value (the frame assumed not
+// written through the guest's other pointers; the guard compares); otherwise the load, as before.
+#ifndef REX_SFWD_LOOSE
+#if defined(REX_SSASR_FWD_LOOSE)
+#define REX_SFWD_LOOSE(stored, load) (stored)
+#else
+#define REX_SFWD_LOOSE(stored, load) (load)
+#endif
+#endif
 #ifndef REX_PREFETCH_GUEST
 #if defined(SASRT_HOT_PREFETCH_OFF)
 #define REX_PREFETCH_GUEST(a) ((void)0)

@@ -87,6 +87,7 @@ add_library(banjo_renut_gpu OBJECT
     "${CMAKE_SOURCE_DIR}/src/renut_engine/gpu/banjo_renut_tuning.cpp"
     "${CMAKE_SOURCE_DIR}/src/renut_engine/gpu/ultimate.cpp"  # renut-ultimate: the ported fixes' switches
     "${CMAKE_SOURCE_DIR}/src/renut_engine/gpu/sasrt_gpu_round.cpp"  # sasrt-nx's GPU rounds (2026-11-08, night)
+    "${CMAKE_SOURCE_DIR}/src/renut_engine/gpu/ssasr_host50.cpp"  # ssasr-nx (2026-11-26, batch 4): the game thread's host code
     "${CMAKE_SOURCE_DIR}/src/renut_engine/gpu/banjo_renut_checks.cpp"
     "${CMAKE_SOURCE_DIR}/src/renut_engine/gpu/banjo_renut_record.cpp"
     # banjo-nx (2026-10-19, latency batch 3): the display's refresh for the frame limiter (it reads the presents' fences)
@@ -131,6 +132,28 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         "${CMAKE_SOURCE_DIR}/src/renut_engine/gpu/banjo_renut_tuning.cpp"
         "${CMAKE_SOURCE_DIR}/src/renut_engine/gpu/backend/render_thread.cpp"
         TARGET_DIRECTORY banjo_renut_gpu APPEND PROPERTY COMPILE_OPTIONS "-fno-threadsafe-statics")
+# renut-ultimate: ssasr-nx's batch 4 #18 as an option, OFF: it checked its own copies of these files, and the base's
+# have function-local statics from other ports since. A port that checks its statics turns it on.
+option(SSASR_NO_THREADSAFE_STATICS_MORE "Ten more of the game thread's renderer files without thread-safe statics" OFF)
+if(SSASR_NO_THREADSAFE_STATICS_MORE)
+    set_source_files_properties(
+        # ssasr-nx (2026-11-26, batch 4 #18, the user: "Do all 50 in current batch please"): the game thread's per-draw
+        # files too (the delta chain, the setters and their hooks, the callbacks, the stack headers, the gamma note):
+        # their function-local statics are a key's value (the same whichever thread sets it), a log count, or
+        # constant-initialised (std::array, std::vector, std::once_flag); none has a constructor that could run twice.
+        # (hooks/resource.cpp stays out: its Edram static has one.)
+        "${CMAKE_SOURCE_DIR}/src/renut_engine/gpu/backend/queued.cpp"
+        "${CMAKE_SOURCE_DIR}/src/renut_engine/gpu/backend/present.cpp"
+        "${CMAKE_SOURCE_DIR}/src/renut_engine/gpu/d3d/d3d_native_state.cpp"
+        "${CMAKE_SOURCE_DIR}/src/renut_engine/gpu/d3d/hooks/state.cpp"
+        "${CMAKE_SOURCE_DIR}/src/renut_engine/gpu/d3d/hooks/shader.cpp"
+        "${CMAKE_SOURCE_DIR}/src/renut_engine/gpu/d3d/hooks/draw.cpp"
+        "${CMAKE_SOURCE_DIR}/src/renut_engine/gpu/d3d/hooks/device.cpp"
+        "${CMAKE_SOURCE_DIR}/src/renut_engine/gpu/guest/callbacks.cpp"
+        "${CMAKE_SOURCE_DIR}/src/renut_engine/gpu/render/surfaces.cpp"
+        "${CMAKE_SOURCE_DIR}/src/renut_engine/gpu/ssasr_host50.cpp"
+        TARGET_DIRECTORY banjo_renut_gpu APPEND PROPERTY COMPILE_OPTIONS "-fno-threadsafe-statics")
+endif()
 endif()
 # banjo-nx (2026-10-28): BANJO_SWITCH_RENDERER_LINES also gives Renut's hot render-thread files line tables (-g1), so a
 # console profile's samples name source lines (rt_breakdown.py). night_gpu4's ELF had none for them (every sample ":?").

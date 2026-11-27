@@ -49,7 +49,9 @@ MACROS = MARKER + '''
   const float32x4_t v = simde__m128_to_neon_f32(x);
   const float32x4_t e0 = vrsqrteq_f32(v);
   float32x4_t e = vmulq_f32(e0, vrsqrtsq_f32(vmulq_f32(v, e0), e0));
+#if !defined(REX_VMX_ESTIMATE_ONE_STEP)  // ssasr-nx (2026-11-26, SSASR_RELAXED_FLOATS): one step is ~16 bits, the 360's ~12
   e = vmulq_f32(e, vrsqrtsq_f32(vmulq_f32(v, e), e));
+#endif
   // (Batch 3's audit, finding 5: +-0 -> +-inf and +inf -> +0 come from the estimate itself; the Newton steps would
   // turn them into NaN through 0 * inf.)
   const uint32x4_t special = vorrq_u32(vceqq_f32(e0, vdupq_n_f32(0.0f)),
@@ -60,7 +62,9 @@ MACROS = MARKER + '''
   const float32x4_t v = simde__m128_to_neon_f32(x);
   float32x4_t e = vrecpeq_f32(v);
   e = vmulq_f32(e, vrecpsq_f32(v, e));
+#if !defined(REX_VMX_ESTIMATE_ONE_STEP)
   e = vmulq_f32(e, vrecpsq_f32(v, e));
+#endif
   return simde__m128_from_neon_f32(e);
 }
 [[gnu::always_inline]] static inline simde__m128 rex_vmaddfp_fused_(simde__m128 a, simde__m128 b, simde__m128 c) {

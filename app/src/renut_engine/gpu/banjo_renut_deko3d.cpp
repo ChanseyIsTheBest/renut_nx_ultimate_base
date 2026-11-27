@@ -958,9 +958,19 @@ std::string BarrierCauses() {
 
 std::string ReportBody(const plume::Deko3DStats &st, uint64_t compiles);
 
+}  // namespace banjo::renut_gpu::deko3d
+namespace renut::gpu {
+uint64_t SsasrRoundUrgentBuilds();  // render/pipeline.cpp (ssasr-nx, 2026-11-25: ssasr_gpu_round_urgent)
+}
+namespace banjo::renut_gpu::deko3d {
+
 std::string Report() {
   const plume::Deko3DStats &st = plume::GetDeko3DStats();
-  return ReportBody(st, st.shaderCompiles) + BarrierCauses();
+  return ReportBody(st, st.shaderCompiles) +
+         fmt::format("; specialised pipelines a draw asked for, their variants compiled at once "
+                     "(ssasr_gpu_round_urgent): {}",
+                     renut::gpu::SsasrRoundUrgentBuilds()) +
+         BarrierCauses();
 }
 
 std::string ReportBody(const plume::Deko3DStats &st, uint64_t compiles) {

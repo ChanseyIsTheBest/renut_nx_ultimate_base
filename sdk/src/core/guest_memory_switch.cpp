@@ -10,6 +10,7 @@
 #include <switch.h>
 
 #include <algorithm>
+#include <memory>  // ssasr-nx (2026-11-27): the TLB test's heap line
 #include <map>
 #include <set>
 #include <atomic>
@@ -1115,6 +1116,52 @@ extern "C" void RexGmLatencyTest(void (*emit)(const char*)) {
         Shuffle(grouped);
         const double f = ChaseNs(scattered.data(), scattered.size()), n = ChaseNs(grouped.data(), grouped.size());
         EmitPair(emit, "read-only data", f, n, scattered.size(), grouped.size());
+        // ssasr-nx (2026-11-27, loads batch L24): the data and bss after it (on blocks with ssasr_code_blocks_data).
+        // The first writable region after the read-only data: the relocation part (.init_array, .data.rel.ro, .got,
+        // read-only after start) can lie between them (loadsE's census race printed no line: it took that part).
+        MemoryInfo rw = {};
+        u64 at = ro.addr + ro.size;
+        for (int k = 0; k < 3 && R_SUCCEEDED(svcQueryMemory(&rw, &page_info, at)) && rw.size &&
+                        (rw.perm & Perm_Rw) != Perm_Rw;
+             ++k)
+            at = rw.addr + rw.size;
+        if ((rw.perm & Perm_Rw) == Perm_Rw && rw.size >= 64 * kPageSize) {
+            scattered.clear();
+            grouped.clear();
+            CodeAddresses(rw.addr, rw.size, false, scattered, grouped);
+            Shuffle(scattered);
+            Shuffle(grouped);
+            const double f2 = ChaseNs(scattered.data(), scattered.size()), n2 = ChaseNs(grouped.data(), grouped.size());
+            EmitPair(emit, "data and bss", f2, n2, scattered.size(), grouped.size());
+        }
+    }
+    // ssasr-nx (2026-11-27, the 2 MB follow-up; loads batch L80: 72 % of the game thread's heap samples in one 2.2 MB
+    // region, the guest register context and the hot host structures): the host heap's own mapping, from the region
+    // a fresh allocation lands in. 2048 pages over a 64 MB window around it: on 4 KB pages that is a TLB miss a
+    // load, on 2 MB blocks 32 blocks (no miss). Only loads; the heap is committed whole (svcSetHeapSize).
+    {
+        const std::unique_ptr<u8[]> probe(new u8[64]);
+        MemoryInfo heap = {};
+        if (R_SUCCEEDED(svcQueryMemory(&heap, &page_info, reinterpret_cast<u64>(probe.get()))) &&
+            (heap.perm & Perm_Rw) == Perm_Rw && heap.size >= 64 * kPageSize) {
+            constexpr u64 kWindow = 64ull << 20;
+            const u64 at = reinterpret_cast<u64>(probe.get());
+            u64 lo = heap.addr, size = heap.size;
+            if (size > kWindow) {
+                lo = std::max<u64>(heap.addr, (at - std::min<u64>(at - heap.addr, kWindow / 2)) & ~u64(kPageSize - 1));
+                size = std::min<u64>(kWindow, heap.addr + heap.size - lo);
+            }
+            scattered.clear();
+            grouped.clear();
+            CodeAddresses(lo, size, false, scattered, grouped);
+            Shuffle(scattered);
+            Shuffle(grouped);
+            const double f3 = ChaseNs(scattered.data(), scattered.size()), n3 = ChaseNs(grouped.data(), grouped.size());
+            char what[96];
+            snprintf(what, sizeof(what), "host heap (type %u, %llu MB region, %llu MB of it)", unsigned(heap.type),
+                     static_cast<unsigned long long>(heap.size >> 20), static_cast<unsigned long long>(size >> 20));
+            EmitPair(emit, what, f3, n3, scattered.size(), grouped.size());
+        }
     }
 }
 

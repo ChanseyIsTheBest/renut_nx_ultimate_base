@@ -228,7 +228,11 @@ function(renut_xenos_shader_cache TARGET)
         ${early_alpha_commands}
         COMMAND ${early_alpha_env} "${recomp_exe}" "${RENUT_SHADER_DUMP_DIR}" "${cache_cpp}"
                 "${RENUT_SHADER_COMMON_DIR}/shader_common.h"
-        DEPENDS renut_xenos_recomp "${recomp_exe}" "${RENUT_SHADER_COMMON_DIR}/shader_common.h"
+        # ssasr-nx (2026-11-25): the translator's executable, not its ExternalProject target. The target is BUILD_ALWAYS,
+        # so its stamp was new at every build and every PC build translated every shader again (Katamari's 195 in
+        # seconds; this game's 6,745 in 15 minutes). The ordering stays (add_dependencies below); a changed translator
+        # still relinks recomp_exe (BUILD_BYPRODUCTS), which reruns this.
+        DEPENDS "${recomp_exe}" "${RENUT_SHADER_COMMON_DIR}/shader_common.h"
                 "${CMAKE_SOURCE_DIR}/cmake/collect_captured_shaders.cmake"
                 ${dump_outputs} ${shader_inputs} ${captured_inputs} ${early_alpha_depends}
         COMMENT "Recompiling Xenos shaders (RENUT_RECOMP) from ${RENUT_SHADER_DUMP_DIR}"
@@ -236,6 +240,7 @@ function(renut_xenos_shader_cache TARGET)
 
     # 3. Compile into the executable.
     add_custom_target(renut_shader_cache_gen DEPENDS "${cache_cpp}")
+    add_dependencies(renut_shader_cache_gen renut_xenos_recomp)  # ssasr-nx: the translator is built first
     add_dependencies(${TARGET} renut_shader_cache_gen)
     target_sources(${TARGET} PRIVATE "${cache_cpp}")
     # The generated file is large and only holds byte arrays.

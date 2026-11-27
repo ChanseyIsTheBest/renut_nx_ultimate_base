@@ -95,10 +95,16 @@ struct Latched {
 };
 extern Latched g_latched;
 extern std::atomic<bool> g_latched_ready;
+#if defined(SSASR_NO_AB)
+}  // namespace banjo::renut_gpu
+#include "renut_engine/gpu/ssasr_no_ab.h"  // ssasr-nx (2026-11-26, batch 4 #41): the word a constant
+namespace banjo::renut_gpu {
+#else
 extern std::atomic<int> g_ab_off;
 // banjo-nx (2026-11-20, render-thread batch #3): g_ab_off as a plain int, written with it at each A/B switch (AbApply, on
 // the render thread): the draw path's checks read this one, which the compiler can keep in a register between them.
 extern int g_ab_off_plain;
+#endif
 [[gnu::cold, gnu::noinline]] void LatchTuning();
 // banjo-nx (2026-10-19, render-thread proposal 11): always inline (it was emitted out of line and called 7 times a draw).
 // banjo-nx (2026-10-27, render thread night): a plain load of the flag, not a load-acquire: an LDAR at each of the
@@ -121,6 +127,9 @@ void StartLongLivedThread(void (*fn)(), size_t stack_bytes);
 
 // On the render thread, as it starts (backend/render_thread.cpp).
 void OnRenderThreadStart();
+// ssasr-nx (2026-11-27, the thread batch T1): on the submit worker, as it starts: the render thread's priority, pinned
+// to 'core' (ssasr_submit_worker_core; -1: not pinned).
+void OnSubmitWorkerStart(int32_t core);
 // On an untile helper of render/textures.cpp, as it starts (port 171: core 0 or 2, the render thread's priority).
 void OnCopyHelperStart(uint32_t index);
 // On a pipeline prebuild worker, as it starts (render/pipeline.cpp).
@@ -451,6 +460,7 @@ bool SampleGridResolveOn();      // blur_renut_sample_grid_resolve (216, blur-nx
 bool SurfaceSizeGuardOn();       // blur_renut_surface_size_guard (217, blur-nx)
 bool WipeOverwrittenOn();        // blur_renut_wipe_overwritten (218, blur-nx)
 bool ResolveExpBiasOn();         // blur_renut_resolve_exp_bias (219, blur-nx)
+bool DepthSlicesOn();            // ssasr_renut_depth_slices (ssasr-nx): depth resolves into a stacked texture's slices
 bool EdramInheritOn();           // blur_renut_edram_inherit (220, blur-nx)
 bool MsSliceResolveOn();         // blur_renut_ms_slice_resolve (221, blur-nx)
 bool ScanOutHandOverOn();        // banjo_deko3d_scanout_handover (74)

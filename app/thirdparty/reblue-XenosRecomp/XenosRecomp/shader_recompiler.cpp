@@ -144,6 +144,14 @@ static constexpr DeclUsageLocation USAGE_LOCATIONS[] =
 #endif
 };
 
+// renut-ultimate (ssasr-nx's do-while structuring): RENUT_RECOMP_DO_WHILE=0 in the environment, every backward
+// conditional jump a switch(pc) state machine, as before.
+static bool DoWhileOn()
+{
+    static const bool on = [] { const char* v = std::getenv("RENUT_RECOMP_DO_WHILE"); return !(v && v[0] == '0'); }();
+    return on;
+}
+
 static constexpr std::pair<DeclUsage, size_t> INTERPOLATORS[] =
 {
     { DeclUsage::TexCoord, 0 },
@@ -176,6 +184,12 @@ static constexpr std::pair<DeclUsage, size_t> INTERPOLATORS[] =
     { DeclUsage::Fog, 0 },
     // halo3-nx (tools/halo3_shader_usages.py): 2 vertex shaders and 1 pixel shader pass a vector through POSITION2.
     { DeclUsage::Position, 2 },
+    // ssasr-nx (2026-11-25): Sonic & SEGA All-Stars Racing's shaders pass a vector through POSITION1 (286 pixel shaders read
+    // iPosition1, 22 vertex shaders write oPosition1: the first PC build's DXC errors). Last, so every interpolator before
+    // it keeps its location.
+#ifdef RENUT_INTERPOLATOR_POSITION1  // renut-ultimate: opt-in (every shader declares every interpolator)
+    { DeclUsage::Position, 1 },
+#endif
 #endif
 };
 
@@ -2752,7 +2766,8 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
 #ifdef RENUT_RECOMP
     // Per-instruction control flow summary for the structurizer below.
-    enum class CfKind : uint8_t { None, Cond, Uncond, LoopStart, LoopEnd };
+    // ssasr-nx (2026-11-25): BackCond, a conditional jump to an earlier instruction (a do-while's back edge).
+    enum class CfKind : uint8_t { None, Cond, Uncond, LoopStart, LoopEnd, BackCond };
     struct CfSummary
     {
         CfKind kind = CfKind::None;
@@ -2761,6 +2776,8 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     std::vector<CfSummary> cfSummaries;
     std::vector<uint32_t> loopStarts;
     std::unordered_map<uint32_t, uint32_t> loopEndFor;
+    // ssasr-nx (2026-11-25): a do-while's head (the back edge's target) -> its back edge.
+    std::unordered_map<uint32_t, uint32_t> doWhileEndFor;
     uint32_t cfIndex = 0;
 
     while (instrAddress < instrSize)
@@ -2811,6 +2828,22 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
             case ControlFlowOpcode::CondJmp:
             {
+                // ssasr-nx (2026-11-25): a conditional jump back to an earlier instruction closes a do-while loop
+                // [target, this jump] (the compiler's lowering of a loop the Xenos loop instructions do not
+                // carry). Sonic & SEGA All-Stars Racing has 12 pixel shaders with two such loops each; as switch(pc)
+                // state machines their SPIR-V copies thousands of phi values per iteration and uam (deko3d) did not
+                // finish compiling them in 30 minutes (5-13 GB each). One back edge per head; anything else still
+                // falls back to the state machine.
+                if (DoWhileOn() && !cfInstr.condJmp.isUnconditional && cfInstr.condJmp.address <= cfIndex)
+                {
+                    const uint32_t head = uint32_t(cfInstr.condJmp.address);
+                    if (doWhileEndFor.count(head) != 0)
+                        simpleControlFlow = false;
+                    else
+                        doWhileEndFor[head] = cfIndex;
+                    cfSummaries.push_back({ CfKind::BackCond, head });
+                    break;
+                }
                 if (cfInstr.condJmp.direction || cfInstr.condJmp.address <= cfIndex)
                     simpleControlFlow = false;
 
@@ -2854,12 +2887,31 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         if (cfSummaries.size() > instrCount)
             cfSummaries.resize(instrCount);
 
+        // ssasr-nx (2026-11-25): do-while heads whose body is being structured (the recursion meets the head again).
+        std::unordered_set<uint32_t> doWhileOpen;
         std::function<bool(uint32_t, uint32_t, uint32_t)> structure =
             [&](uint32_t lo, uint32_t hi, uint32_t cont) -> bool
         {
             uint32_t i = lo;
             while (i < hi)
             {
+                // ssasr-nx (2026-11-25): a do-while [i, e]: its body [i, e) is a region whose continuation is the back
+                // edge e (a jump to e is the loop's "continue"; one past it would leave the loop: rejected), and the
+                // whole loop must lie inside this region.
+                auto doWhile = doWhileEndFor.find(i);
+                if (doWhile != doWhileEndFor.end() && doWhileOpen.count(i) == 0)
+                {
+                    const uint32_t e = doWhile->second;
+                    if (e >= hi)
+                        return false;
+                    doWhileOpen.insert(i);
+                    doLabels.insert(i);
+                    doWhileEnds.insert(e);
+                    if (!structure(i, e, e))
+                        return false;
+                    i = e + 1;
+                    continue;
+                }
                 const CfSummary& summary = cfSummaries[i];
                 switch (summary.kind)
                 {
@@ -2937,6 +2989,9 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                 case CfKind::LoopEnd:
                     return false; // reached without its LoopStart
 
+                case CfKind::BackCond:
+                    return false; // ssasr-nx: a back edge reached outside its do-while (misnested)
+
                 default:
                     ++i;
                     break;
@@ -2952,6 +3007,8 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     {
         ifEndLabels.clear();
         elseLabels.clear();
+        doLabels.clear();
+        doWhileEnds.clear();
     }
 #else
     while (instrAddress < instrSize)
@@ -3058,6 +3115,15 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                     out += "}\n";
                     indent();
                     out += "else\n";
+                    indent();
+                    out += "{\n";
+                    ++indentation;
+                }
+                // ssasr-nx (2026-11-25): a do-while opens at its head, after the regions closing there.
+                if (doLabels.count(pc) != 0)
+                {
+                    indent();
+                    out += "do\n";
                     indent();
                     out += "{\n";
                     ++indentation;
@@ -3213,6 +3279,28 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                         out += "\t\t\tcontinue;\n";
                     }
                 }
+            #ifdef RENUT_RECOMP
+                // ssasr-nx (2026-11-25): a do-while's back edge (pc was advanced past this instruction): the loop
+                // repeats while the jump would be taken, the state machine's own condition (no inversion).
+                else if (simpleControlFlow && doWhileEnds.count(pc - 1) != 0)
+                {
+                    --indentation;
+                    indent();
+                    if (cfInstr.condJmp.isPredicated)
+                    {
+                        println("}} while ({}p0);", cfInstr.condJmp.condition ? "" : "!");
+                    }
+                    else
+                    {
+                        const bool jumpIfSet = cfInstr.condJmp.condition;
+                        auto findResult = boolConstants.find(cfInstr.condJmp.boolAddress);
+                        if (findResult != boolConstants.end())
+                            println("}} while ({}{});", jumpIfSet ? "" : "!", findResult->second);
+                        else
+                            println("}} while ({}BOOL_BIT({}));", jumpIfSet ? "" : "!", uint32_t(cfInstr.condJmp.boolAddress));
+                    }
+                }
+            #endif
                 else
                 {
                     indent();

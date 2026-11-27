@@ -28,9 +28,13 @@
 
 // katamari-nx (2026-10-30): the in-run A/B's target in its off half (renut_engine/gpu/banjo_renut_tuning.cpp); target 70
 // sends every localized copy's hook to the generated original for that half.
+#if defined(SSASR_NO_AB)
+#include "renut_engine/gpu/ssasr_no_ab.h"  // ssasr-nx (2026-11-26, batch 4 #41)
+#else
 namespace banjo::renut_gpu {
 extern std::atomic<int> g_ab_off;
 }  // namespace banjo::renut_gpu
+#endif
 
 namespace banjo::hot {
 

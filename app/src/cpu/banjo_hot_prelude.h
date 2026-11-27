@@ -43,7 +43,16 @@
     u8* const card = (u8*)(base + page);
     REX_NX_CENSUS(33);
     REX_NX_CENSUS_IF(*card != 0, 34);
+#if defined(SSASR_CARD_ASM_STORE) && defined(__aarch64__)
+    // ssasr-nx (2026-11-27, loads batch L101): the card byte read (volatile: Renut sets it again from another thread)
+    // and cleared outside the compiler's view of guest memory. Written as a plain byte store through base, a card mark
+    // is a char store the compiler must take as changing any guest word, so every guest value it held in a register
+    // was loaded again after each one (a function's first store to a new page). The store is the same instruction
+    // (strb wzr); only what the compiler assumes about the other memory changes.
+    if (*(volatile const u8*)card) __asm__ volatile("strb wzr, [%0]" : : "r"(card));
+#else
     if (*card) *card = 0;
+#endif
   }
 }
 #define REX_CARD_RUN_DECL [[maybe_unused]] u32 rex_card_run = 0x100000u;

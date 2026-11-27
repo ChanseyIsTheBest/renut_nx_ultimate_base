@@ -36,6 +36,11 @@
 #include <rex/perf/counter.h>
 #include <rex/thread/mutex.h>
 #include <rex/system/mmio_handler.h>
+// ssasr-nx (2026-11-27): the title's mid-asm hook functions (its config's [[midasm_hook]] entries), when it has a
+// header of them on the generated code's include path.
+#if __has_include("title_midasm_hooks.h")
+#include "title_midasm_hooks.h"
+#endif
 
 #include <atomic>
 #include <cassert>

@@ -32,8 +32,21 @@ namespace rex::ppc {
 // a * b + c rounded once to single precision when a, b and c are floats; otherwise the double form.
 [[gnu::always_inline]] inline double FmaddsSingle(double a, double b, double c) {
 #if !defined(REX_FMADDS_DOUBLE_ROUNDING)
+#if defined(REX_SSASR_SINGLE_LOOSE)
+  // ssasr-nx (2026-11-26, SSASR_RELAXED_FLOATS): no test of the inputs; an input that is not a single is rounded to
+  // one first (the census, REX_NX_CENSUS 41 / 42 on the PC, counts how often that happens).
+  return double(__builtin_fmaf(float(a), float(b), float(c)));
+#endif
+#if defined(REX_NX_CENSUS_ON)
+  REX_NX_CENSUS(42);
+#endif
   if (__builtin_expect(IsExactSingle(a) & IsExactSingle(b) & IsExactSingle(c), 1))
     return double(std::fmaf(float(a), float(b), float(c)));
+#if defined(REX_NX_CENSUS_ON)
+  REX_NX_CENSUS(41);
+  // batch 4: the relaxed form beside the exact one (rex/ppc/diet_ops.h RexLooseDiffCensus)
+  RexLooseDiffCensus(FmaddsDouble(a, b, c), double(std::fmaf(float(a), float(b), float(c))));
+#endif
 #endif
   return FmaddsDouble(a, b, c);
 }

@@ -164,11 +164,98 @@ The work, in order
      console profile.
    Verify each against the generated code before it is on (tools/run_pc_verify.ps1: 0 differences, with the counts showing
    it was reached; a guard build with banjo_hot_poison_dead on shows a wrong liveness claim the guard cannot see).
-7. PGO + LTO for the Switch build only when I say, in the guide's order: the last batch of machine copies, any
+7. The not-exact switches, each only after its census on this game's own race (docs/off-by-default.md sections 4, 7 and
+   13; rebasing-a-port-prompt.md step 6 has the method in full). Every one is off in the base. The PC build counts what
+   each would change while it runs the exact forms (banjo_diag_runtime_census = true: the "[census]" lines every 10 s),
+   so each census is a PC run of the scenes this port measures (input_script), in gameplay, not menus. For each: the
+   counts per window, the sites when there are any, a verdict, and a row in docs/<SHORT>-near-exact.md. A switch stays
+   off wherever its census is not clean, and one that can change the picture is my decision. Then build with the cleared
+   ones on: PC verify (0 differences), Ryujinx to gameplay (the same picture), and the console A/B on my word.
+   ssasr-nx's results (Sonic & SEGA All-Stars Racing, 2026-11-26/27) are given as examples; this game's own decide.
+   a. BLUR_NEAR_EXACT (CMake, port 140): the "[census] near-exact" counters. #1 signalling NaNs at float copy stores,
+      #2 NaNs into float-to-integer conversions, #17 divisions by zero and INT_MIN / -1, #5 integer compares copying
+      XER[SO]: 0 in every window clears that one (ssasr-nx: all four 0, on). #41 float compares with a NaN and #42 vector
+      max/min lanes that differ: any count keeps it off (ssasr-nx: 39,206, and 19,568 of 203 M lanes: off).
+      BLUR_NX_ONLY / BLUR_NX_SKIP build exactly the cleared set.
+   b. BLUR_NX_R1_ASSUME=1 (post-codegen environment): every function taken as keeping r1 (ssasr-nx: 20,157 of 20,490,
+      against 8,264 proven). The r1 mirror check of the guard build: 0 differences (ssasr-nx: 391.6 M calls).
+   c. BLUR_LOCALIZE_ABI_TRUST=1 (post-codegen environment, port 150): the non-volatile reloads after the copies' real
+      calls left out. Only a callee that breaks the PowerPC ABI (hand-written assembly, setjmp / longjmp) makes it
+      wrong: look for those, then the PC guard race (banjo_cpu_verify, a dense guard): any non-volatile register
+      difference fails it (ssasr-nx: 630-658 reloads left out, no ABI difference).
+   d. The stack-frame elisions (CMake BANJO_GEN_LR_MOVES_ELIDE, BANJO_GEN_NV_SAVES_ELIDE, BANJO_GEN_BACK_CHAIN_ELIDE,
+      SASRT_HOT_LR_ELIDE): a PC build with CMake SSASR_STALE_CENSUS=ON (tools/ssasr_stale_census.py). The elided
+      stores write 0xDEADBEEF and every 4- and 8-byte guest load counts reads of it; the "[census] ssasr stale" lines and
+      RexStaleHit list the readers by their return address (exit-block restores are left out). Every reader must be a
+      dead restore or the guard's own compare: classify all of them, not only the top 40 ssasr-nx did. A reader that
+      uses the value (a game's stack walk through the back chain, a read of the link register) is a real bug: that
+      elision stays off. Last, a lockstep frame capture with and without: sa2-nx's non-volatile saves elision tinted its
+      characters while every self-check passed.
+   e. Loose loop barriers (CMake SSASR_NON_EXACT: REX_SSASR_LOOSE_BARRIERS, tools/ssasr_loose_barriers.py): run
+      tools/find_self_loops.py on the Switch ELF and on one built with every barrier kept. A new branch to itself in a
+      recompiled function is a poll GCC turned into an endless spin once its barrier was gone: a console hang. Put each
+      such function in app/config/loose_barriers_keep.txt and build again until there are none (ssasr-nx had ten). The
+      barrier is a compiler barrier only, so the CPU's memory ordering does not change; an ordering census, if one is
+      ever needed, belongs to the guest fences' translation (sync, lwsync, lwarx / stwcx.), not to these barriers.
+   f. NaN signs and loose stack forwarding (the same switch: REX_SSASR_NAN_SIGN_FREE, REX_SSASR_FWD_LOOSE): the guard
+      race on the PC and the guard on ARM (tools/build_switch_guard.bat, in Ryujinx): x86 and ARM give a NaN its sign
+      differently, and ssasr-nx took two natives off for NaN signs only the ARM guard showed. The base's own guard
+      already shows a few such differences in vector code (Katamari: three, NaN inputs through vmaddfp / vnmsubfp): a
+      difference that is a NaN's sign alone is that class; anything else is a real fault.
+   g. Relaxed floats (CMake SSASR_RELAXED_FLOATS: contraction, reciprocals, single operations in float, one Newton step
+      on the VMX estimates). It can change the picture: my decision, after these. CMake SSASR_GUARD_RELAXED_FLAGS=ON
+      (the flags on the copies only, the guard against the exact originals; ssasr-nx: 72 differences in 67 copies, all
+      a zero's sign); the "[census] ssasr non-exact" count of single operations whose inputs are not singles (at most
+      one ulp apart; ssasr-nx: 28,140 of 129 M); sasrt_test_vmx_fuzz (vrsqrtefp within 196 ulp, vrefp within 129).
+   h. The denormal flush of the float copies (REX_SSASR_PURE_FLUSH): only where its census (REX_NX_CENSUS 40) is 0
+      in every window. Those copies move any 4 bytes, and a small integer is a denormal single (ssasr-nx: 467,812 a
+      race: off).
+   i. LiveOut trimming (exact by construction, but the liveness model has holes): the poison race (banjo_hot_poison_dead
+      = true, banjo_hot_guard_calls = 0, banjo_hot_guard_period = 1048576), where registers dead after a return get
+      garbage. The picture right to the end, with only known artefacts (ssasr-nx: sub_82507AE0's r11, the __savevmx
+      helper's model).
+   j. The exact options that still need this game's check: SSASR_CALL_RELOADS=1 (post-codegen; the reloads after calls
+      forwarded by the whole-program write summaries, checked with REX_STACK_FWD_VERIFY in the hooked builds); the
+      submit worker and setter log (ssasr_submit_worker, ssasr_setter_log: banjo_renut_snapshot_deltas_verify, 0 of the
+      draws differ; the worker costs the render thread about 0.9 ms, so only where the game thread is the limit);
+      ssasr_draw_runs (Beautiful Katamari's PC renderer presented no frame with it: test it before anything else);
+      ssasr_code_blocks_data (its size again in heap); ssasr_capture_pool_mb (64; its census line, with
+      ssasr_renut_host50_census, shows the pool's churn).
+   Run CG-13's census (step 1) and these again after any large change to the code generation, and note in the report
+   which forms are on.
+8. Smaller game files: the movies to H.265 and the audio to Opus (docs/media-compression.md, all of it, before any
+   code). Each re-encode is a stand-in, NAME.x, that the SDK shows to the game as NAME: the same size, every header,
+   index and table byte as the game reads it, only the picture or sound data replaced, so the game's own player, mixer
+   and timing stay as they are (ASF movies are rewritten instead: section 1). A re-encode changes the picture and the
+   sound: it is an option for me, ticked by default in the installer.
+   - Measure first: list the game's files by kind (their first 4 bytes) and size, and do them in the guide's order:
+     the movies (H.265 at about a third), raw PCM music (Opus, about -90 %), compressed audio (XMA, ADX: Opus saves
+     30-70 %), then LZ4 / ZXC packing of whatever is left that compresses. Keep its rules: the 95 % and 5 % rules,
+     not smaller means not changed, small files plain, default.xex (and .xexp) never packed, re-encoded movies
+     ZXC-packed (my rule).
+   - The runtime: the base reads every stand-in kind (lz4_blocks, sfd_hevc, opus_pcm / opus_decoder, .xmo / .xmop,
+     xmo_opus, renut_nxvideo, the VFS index's version 4; section 9). The movie hook is each game's: take the port
+     whose container matches (section 5's "Container by container" and section 9's table: CRI Sofdec .sfd rr6-nx;
+     CRI .usm sasrt-nx, tools/hevc_usm_pack.py; ASF WMV3 culdcept-nx; VC-1 nights-nx; Bink blur-nx and kameo-nx),
+     with the decode at priority 0x2C, read-ahead on a libnx thread, and nxvideo's VIC copy and clocks kept.
+   - Make each kind on the PC for a test (the base's tools/lz4b_pack.py, zxcb_pack.cpp and hevc_usm_pack.py; the
+     others from the port named for that container), into a copy of the game folder: never pack a linked folder in
+     place, and never leave a plain NAME beside its stand-in (it wins).
+   - Test: the PC (libopus-0.dll beside renut.exe, or its Opus sounds are silent); Ryujinx with the software decoder
+     (it has no H.265 NVDEC: its "decoded" pictures are empty); the console for the real decode (rr6-nx: about 5.4 ms
+     of NVDEC a frame). Watch every movie and listen to a sample of the sounds against the originals, loops and
+     seeks included.
+   - The web installer makes them from the player's own disc: game.json lists the movies (match, fraction, gop, zxc)
+     and the audio (match, zxc_min_saving, bitrates), with the writers of the port whose container matches
+     (section 7); its output must equal the PC tools' byte for byte (test/*_node.mjs, test/check_zip.py). Game data is
+     never committed, uploaded or shared.
+   - In the notes: each kind's size before and after, the decode's cost, and anything the guide's traps (section 8)
+     caught.
+9. PGO + LTO for the Switch build only when I say, in the guide's order: the last batch of machine copies, any
    hand-written natives, the instrumented build, my console session, then the optimised build (building.md). Nothing in
    the tree changes between the training race and the final build; a fix found after training means a new training run.
    That includes BLUR_FPCR_ONE_MODE: the profile is trained with the setting the build ships with.
-8. A package for my console by <STOP_TIME>:
+10. A package for my console by <STOP_TIME>:
    - the NRO
    - renut.toml with the shipped settings
    - renut_play.toml with the diagnostics off
@@ -177,7 +264,7 @@ The work, in order
    - notes on what to test, and how to turn on a console profile
    And, if the port boots to gameplay, its web installer page: a copy of <INSTALLER_DIR> with this game's game.json and
    tools/make_release.py's release folder (the player's own game files make the package in their browser).
-9. Fixes that are not this game's own (an SDK bug, a renderer fault any game could hit, a faster exact form): write a
+11. Fixes that are not this game's own (an SDK bug, a renderer fault any game could hit, a faster exact form): write a
    handoff for the ultimate base (a patch against <BASE_DIR> and a note: what, why, how it was tested, its key and
    default) in <WORK_DIR>\out, and name it in the final report.
 
@@ -210,6 +297,8 @@ Rules
 At <STOP_TIME> stop, and report:
 - what works on the PC, in the emulator, and in the package
 - what was measured, and how (same-session control or not)
+- the not-exact census table (docs/<SHORT>-near-exact.md) and which switches are on
+- the media: each kind's size before and after, and the decode's cost
 - what is next
 - the fixes handed off for the ultimate base
 - anything that needs my decision

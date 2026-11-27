@@ -894,9 +894,24 @@ void ParseNamedTables() {
   }
 }
 
+// ssasr-nx (2026-11-26; renut-ultimate's key): the named tables parsed again when the keys' text changes (the first
+// threads name themselves before the toml is read, so its entries never applied to them).
+REXCVAR_DEFINE_BOOL(ssasr_thread_tables_reparse, true, "Switch",
+                    "switch_thread_priorities / _cores / switch_yield_backoff_exempt parsed again whenever their "
+                    "text changes (the toml's entries then apply to threads named before it was read); false: "
+                    "parsed once, as before");
+
 const NamedValue* FindNamed(const std::vector<NamedValue>& table, const char* name) {
-  for (const NamedValue& n : table)
+  for (const NamedValue& n : table) {
+    // ssasr-nx (2026-11-26, the non-exact batch row 16): an entry starting with '@' matches anywhere in the name. A guest
+    // thread the game leaves unnamed is named "XThread<id>@<start address>" (xthread.cpp), so "@8237XXXX=0x8" places
+    // it by the function it starts in (its id differs from run to run).
+    if (!n.prefix.empty() && n.prefix[0] == '@') {
+      if (std::strstr(name, n.prefix.c_str()) != nullptr) return &n;
+      continue;
+    }
     if (std::strncmp(name, n.prefix.c_str(), n.prefix.size()) == 0) return &n;
+  }
   return nullptr;
 }
 }  // namespace
@@ -909,6 +924,25 @@ thread_local bool g_rex_yield_backoff_exempt = false;
 int RexSwitchApplyNamedPriority(unsigned handle, const char* name) {
   if (!handle || !name) return -1;
   std::call_once(g_named_once, ParseNamedTables);
+  // ssasr-nx (2026-11-26): the first threads name themselves before the config file is read (the SDK's own threads at
+  // start-up), so the tables parsed then were empty for the rest of the run and the toml's entries never applied
+  // (the console race of 18:30: the main thread at 0x3B, the audio thread on cores 0-2). Parsed again whenever the
+  // keys' text changes. The lock is held for the rest of the call (the tables are read below).
+  static std::mutex reparse_mutex;
+  static std::string seen_pri, seen_cores, seen_exempt;
+  const std::string pri = REXCVAR_GET(switch_thread_priorities), cores = REXCVAR_GET(switch_thread_cores),
+                    exempt = REXCVAR_GET(switch_yield_backoff_exempt);
+  std::lock_guard<std::mutex> named_lock(reparse_mutex);
+  static const bool reparse = REXCVAR_GET(ssasr_thread_tables_reparse);  // renut-ultimate: false, parsed once
+  if (reparse && (pri != seen_pri || cores != seen_cores || exempt != seen_exempt)) {
+    seen_pri = pri;
+    seen_cores = cores;
+    seen_exempt = exempt;
+    g_named_priority.clear();
+    g_named_cores.clear();
+    g_named_exempt.clear();
+    ParseNamedTables();
+  }
   // blur-nx (2026-11-13, #60): switch_yield_backoff_exempt, for the thread naming itself.
   if (!g_named_exempt.empty() && handle == threadGetCurHandle()) {
     for (const std::string& prefix : g_named_exempt)

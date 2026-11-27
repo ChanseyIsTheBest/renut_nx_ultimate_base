@@ -94,7 +94,8 @@ bool HookFastPathsInit() {
 }
 
 void RunReadyCallbacks() {
-  if (HookFastPathsOn() && g_waiting.load(std::memory_order_acquire) == 0)
+  // ssasr-nx (2026-11-27): relaxed (was acquire): a nonzero count goes on to the lock below, which orders the list.
+  if (HookFastPathsOn() && g_waiting.load(std::memory_order_relaxed) == 0)
     return;  // banjo-nx (from sa2-nx): nothing inserted and not run
   const uint64_t reached = render_thread::CallbacksReached();
   std::vector<Callback> ready;

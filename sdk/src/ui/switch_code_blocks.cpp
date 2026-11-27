@@ -39,6 +39,11 @@
 
 #include <switch.h>
 
+// ssasr-nx (2026-11-25): the player's toml next to the NRO (app/CMakeLists.txt sets it per port).
+#ifndef REX_SWITCH_TOML_NAME
+#define REX_SWITCH_TOML_NAME "katamari.toml"
+#endif
+
 extern "C" {
 // The executable's first instruction. Not __start__, an absolute linker symbol that is never relocated (the first build of
 // 1.0.1 used it, and the swap left the code where it was).
@@ -63,7 +68,7 @@ struct Segment {
 struct Args {
   u32 process;
   u32 count;
-  Segment seg[2];
+  Segment seg[4];  // ssasr-nx (2026-11-27, loads batch L24): the relocated read-only part and the data and bss too
 };
 static_assert(sizeof(Segment) == 40 && __builtin_offsetof(Args, seg) == 8, "kStub reads this layout");
 
@@ -141,7 +146,7 @@ const u32 kStub[] = {
     0xd4200000,  //  e0: brk #0x0
 };
 
-char g_status[220] = "[code blocks] did not run";
+char g_status[320] = "[code blocks] did not run";  // (ssasr-nx L24: 220 -> 320, the data's part)
 
 struct CodePage {
   void* heap;
@@ -185,24 +190,29 @@ u64 Blocks(u64 va, u64 size) {
   return hi > lo ? (hi - lo) / kBlock : 0;
 }
 
-bool TurnedOffInToml() {
+// renut-ultimate: the key's line holds the word ("false" or "true").
+bool TomlSays(const char* key, const char* word) {
   if (__system_argc < 1 || !__system_argv || !__system_argv[0]) return false;
   const char* nro = __system_argv[0];
   const char* bar = strrchr(nro, '/');
   if (!bar) return false;
   char path[FS_MAX_PATH];
-  const int n = snprintf(path, sizeof(path), "%s%.*skatamari.toml", strchr(nro, ':') ? "" : "sdmc:",
+  // ssasr-nx (2026-11-25): the port's toml name (app/CMakeLists.txt REX_SWITCH_TOML_NAME); katamari-nx's by default.
+  const int n = snprintf(path, sizeof(path), "%s%.*s" REX_SWITCH_TOML_NAME, strchr(nro, ':') ? "" : "sdmc:",
                          static_cast<int>(bar - nro + 1), nro);
   if (n <= 0 || static_cast<size_t>(n) >= sizeof(path)) return false;
   FILE* f = fopen(path, "r");
   if (!f) return false;
   bool off = false;
   char line[256];
-  static const char kKey[] = "banjo_code_blocks";
+  const size_t key_len = strlen(key);
   while (fgets(line, sizeof(line), f)) {
     const char* p = line;
     while (*p == ' ' || *p == '\t') p++;
-    if (strncmp(p, kKey, sizeof(kKey) - 1) == 0 && strstr(p, "false")) off = true;
+    // ssasr-nx (2026-11-27): the key itself, not a longer one it begins (a space or '=' after it)
+    if (strncmp(p, key, key_len) == 0 && (p[key_len] == ' ' || p[key_len] == '=' || p[key_len] == '\t') &&
+        strstr(p, word))
+      off = true;
   }
   fclose(f);
   return off;
@@ -246,9 +256,11 @@ void SelfTest(Handle proc) {
   UnmapCodePage(proc, stub);
 }
 
-void Apply(Handle proc) {
+bool TurnedOffInToml(const char* key) { return TomlSays(key, "false"); }
+
+void Apply(Handle proc, bool with_data) {
   const u64 text_va = reinterpret_cast<u64>(&_start);
-  MemoryInfo text = {}, ro = {}, old = {};
+  MemoryInfo text = {}, ro = {}, old = {}, rw = {};
   u32 page_info = 0;
   const auto skip = [](const char* why, u64 value) {
     snprintf(g_status, sizeof(g_status), "[code blocks] left where it is: %s (0x%llX)", why,
@@ -264,7 +276,41 @@ void Apply(Handle proc) {
   if (R_FAILED(svcQueryMemory(&ro, &page_info, text_va + text.size)) || (ro.perm & Perm_Rw) != Perm_R) {
     return skip("the read-only data is not what was expected", ro.perm);
   }
-  const u64 total = text.size + ro.size;
+  /*
+   * ssasr-nx (2026-11-27, loads batch L24; the user: "Definetely try and get the host code 2mb pages"): the data and bss
+   * after the read-only data (the host's globals: the capture pool, the delta shadow, the switches; 35 MB here), one
+   * mapping with the rest in the loader's copy. They change, so they are copied last, after every allocation of this
+   * function (malloc's own state is in .data and .bss) and right before the swap, with nothing written in between but the
+   * stack: the copy is then what the code had. ssasr_code_blocks_data = false: as before (text and read-only data only).
+   */
+  // (ssasr-nx, L24, the second console race: between the read-only data and the data, libnx's relocations leave a
+  // read-only part of the writable segment, .init_array / .data.rel.ro / .got, 0.5 MB here: its own mapping, made read-only
+  // after the relocations, so a copy now is what it holds. It goes with the text and the read-only data.)
+  const u64 after_ro = text_va + text.size + ro.size;
+  MemoryInfo relro = {};
+  bool have_relro = false;
+  if (with_data && R_SUCCEEDED(svcQueryMemory(&relro, &page_info, after_ro)) && relro.addr == after_ro &&
+      (relro.perm & Perm_Rw) == Perm_R &&
+      ((relro.type & 0xFF) == MemType_ModuleCodeMutable || (relro.type & 0xFF) == MemType_ModuleCodeStatic)) {
+    have_relro = true;
+  }
+  const u64 rw_at = after_ro + (have_relro ? relro.size : 0);
+  const u32 rw_type = (R_SUCCEEDED(svcQueryMemory(&rw, &page_info, rw_at)) ? rw.type : 0) & 0xFF;
+  // (ssasr-nx, L24: why the data stays where it is, for the status line: the first console race of loads batch B left it
+  // without saying which check refused it)
+  char data_note[96] = "";
+  // (either loader type, as for the text: the kernel refuses an unmap of pages that are not mapped there, and the stub
+  // then maps the old ones back)
+  if (with_data && (rw.addr != rw_at || (rw.perm & Perm_Rw) != Perm_Rw ||
+                    (rw_type != MemType_ModuleCodeMutable && rw_type != MemType_ModuleCodeStatic))) {
+    snprintf(data_note, sizeof(data_note), "; data left: at 0x%llX (expected 0x%llX), perm %u, type 0x%X",
+             static_cast<unsigned long long>(rw.addr), static_cast<unsigned long long>(rw_at),
+             static_cast<unsigned>(rw.perm), static_cast<unsigned>(rw.type));
+    with_data = false;  // not the loader's writable mapping of the module: left alone
+    have_relro = false;
+  }
+  const u64 total = text.size + ro.size + (have_relro ? relro.size : 0);  // what is copied before the allocations
+  const u64 total_all = total + (with_data ? rw.size : 0);
 
   /* The loader's copy: the start of the heap, with the permissions svcMapProcessCodeMemory leaves. */
   u64 heap_base = 0;
@@ -277,8 +323,15 @@ void Apply(Handle proc) {
    * The copy lines up with the code modulo 2 MB. Whole pages are lent to the kernel: the slack keeps the last one clear of
    * the next allocation's header, and the alignment keeps the first clear of this one's. Never freed.
    */
-  void* raw = memalign(kBlock, total + kBlock + kPage);
-  if (!raw) return skip("no memory for the copy", total);
+  // (ssasr-nx, L24: the stack must not be in the data being swapped: it is the loader's thread's, but check)
+  const u64 sp = reinterpret_cast<u64>(__builtin_frame_address(0));
+  if (with_data && sp >= rw.addr && sp < rw.addr + rw.size) {
+    snprintf(data_note, sizeof(data_note), "; data left: the stack is in it (0x%llX)", static_cast<unsigned long long>(sp));
+    with_data = false;
+  }
+  const u64 size_all = with_data ? total_all : total;
+  void* raw = memalign(kBlock, size_all + kBlock + kPage);
+  if (!raw) return skip("no memory for the copy", size_all);
   const u64 copy = reinterpret_cast<u64>(raw) + ((text_va - reinterpret_cast<u64>(raw)) & (kBlock - 1));
   memcpy(reinterpret_cast<void*>(copy), reinterpret_cast<const void*>(text_va), total);
   armDCacheFlush(reinterpret_cast<void*>(copy), total);
@@ -293,16 +346,35 @@ void Apply(Handle proc) {
   a.count = 2;
   a.seg[0] = {text_va, heap_base, copy, text.size, Perm_Rx};
   a.seg[1] = {text_va + text.size, heap_base + text.size, copy + text.size, ro.size, Perm_R};
+  if (have_relro) {
+    const u64 off = text.size + ro.size;
+    a.seg[a.count++] = {relro.addr, heap_base + off, copy + off, relro.size, Perm_R};
+  }
+  if (with_data) {
+    a.seg[a.count++] = {rw.addr, heap_base + total, copy + total, rw.size, Perm_Rw};
+    // The last thing before the swap (L24): no allocation, no global written after this copy until the swap is done.
+    memcpy(reinterpret_cast<void*>(copy + total), reinterpret_cast<const void*>(rw.addr), rw.size);
+  }
   const u32 rc = reinterpret_cast<u32 (*)(Args*)>(stub.va)(&a);
   UnmapCodePage(proc, stub);
   if (rc != 0) return skip("the kernel refused the swap", rc);
   snprintf(g_status, sizeof(g_status),
-           "[code blocks] text %llu KB and read-only data %llu KB now on a copy in line with 2 MB blocks: room for %llu and "
-           "%llu blocks (0x%llX, copy 0x%llX)",
+           "[code blocks] text %llu KB and read-only data %llu KB%s now on a copy in line with 2 MB blocks: room for %llu and "
+           "%llu blocks%s (0x%llX, copy 0x%llX)",
            static_cast<unsigned long long>(text.size >> 10), static_cast<unsigned long long>(ro.size >> 10),
-           static_cast<unsigned long long>(Blocks(text_va, text.size)),
+           with_data ? " and data" : "", static_cast<unsigned long long>(Blocks(text_va, text.size)),
            static_cast<unsigned long long>(Blocks(text_va + text.size, ro.size)),
-           static_cast<unsigned long long>(text_va), static_cast<unsigned long long>(copy));
+           with_data ? " (and the data's)" : "", static_cast<unsigned long long>(text_va),
+           static_cast<unsigned long long>(copy));
+  // ssasr-nx (L24): the data's size and blocks on a line of their own (g_status is one line)
+  const size_t used = strlen(g_status);
+  if (with_data) {
+    snprintf(g_status + used, sizeof(g_status) - used, "; data %llu KB, %llu blocks",
+             static_cast<unsigned long long>(rw.size >> 10),
+             static_cast<unsigned long long>(Blocks(rw.addr, rw.size)));
+  } else {
+    snprintf(g_status + used, sizeof(g_status) - used, "%s", data_note[0] ? data_note : "; data left: switched off");
+  }
 }
 
 __attribute__((constructor(101))) void RexCodeBlocksInit() {
@@ -311,11 +383,11 @@ __attribute__((constructor(101))) void RexCodeBlocksInit() {
     SelfTest(CUR_PROCESS_HANDLE);
     return;
   }
-  if (TurnedOffInToml()) {
+  if (TurnedOffInToml("banjo_code_blocks")) {
     snprintf(g_status, sizeof(g_status), "[code blocks] off (banjo_code_blocks = false)");
     return;
   }
-  Apply(proc);
+  Apply(proc, TomlSays("ssasr_code_blocks_data", "true"));  // renut-ultimate: off unless the toml says true
 }
 
 }  // namespace

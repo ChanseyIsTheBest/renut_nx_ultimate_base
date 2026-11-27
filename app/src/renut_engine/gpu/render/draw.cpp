@@ -2316,6 +2316,25 @@ struct Targets {
   bool depth_dropped = false;
 };
 
+// ssasr-nx (2026-11-25, with sasrt_renut_depth_restore): a draw that writes both a colour target over its depth target's
+// EDRAM (one of the depth's restore candidates: the same base and pitch) and that depth target's stencil or depth bumped
+// the colour's write sequence first, so the depth always looked newer and the restore never took the colour's words.
+// On the console the two writes go to one EDRAM, where the game means the colour's words to stand: Sonic & SEGA All-Stars
+// Racing draws its full-resolution depth as colour into a 640x360 target over its 640x384 half-res depth target (with a
+// stencil pass in the same draws), then tests its bloom source pass (the waterfalls' glow) against that depth; without it
+// the glow showed through the stands' roofs. The colour is made the newer write again here.
+static void SsasrAliasedColorWinsLocked(const Targets &targets, u32 color_count, u32 color_mask) {
+  if (!targets.depth || !banjo::renut_gpu::DepthRestoreOn())
+    return;
+  const std::vector<HostSurface *> &candidates = targets.depth->sasrt_restore_candidates;
+  if (candidates.empty())
+    return;
+  for (u32 i = 0; i < targets.color_count && i < color_count; ++i)
+    if (((color_mask >> (4 * i)) & 0xF) &&
+        std::find(candidates.begin(), candidates.end(), targets.colors[i]) != candidates.end())
+      targets.colors[i]->write_seq = ++g_surface_write_seq;
+}
+
 // banjo-nx (2026-10-19, banjo_deko3d_depth_handover; "Depth hand-over" below): the targets of the draw whose textures
 // FillTextures binds (a destination is not sampled from the image of a target of its own draw), and what is done
 // before a depth target is bound again.
@@ -13256,6 +13275,7 @@ int FastDrawLocked(const u8 *device_state, const DrawCall &call, const ReplayCon
       targets.depth->write_seq = ++g_surface_write_seq;  // sasrt-nx: the EDRAM depth restore
       if (AsuraShadowDirtyRectOn() && (dc & 2) && (dc & 4))
         NoteDepthDirtyRect(targets.depth, f.viewport.scissor);  // asura-nx
+      SsasrAliasedColorWinsLocked(targets, f.kp_hot.color_count, f.kp_hot.color_mask);  // ssasr-nx (2026-11-25)
     }
     if (dc & 1) {  // sasrt-nx's SasrtWarnStencilOnD32f inside it (rr6-nx, 2026-11-09)
       const bool first_stencil = !targets.depth->stencil_used;  // sasrt-nx (2026-11-11, port 75; renut_diag_formats)
@@ -16873,6 +16893,7 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
       targets.depth->write_seq = ++g_surface_write_seq;  // sasrt-nx: the EDRAM depth restore
       if (AsuraShadowDirtyRectOn() && depth_writes)
         NoteDepthDirtyRect(targets.depth, viewport.scissor);  // asura-nx
+      SsasrAliasedColorWinsLocked(targets, key.color_count, key.color_mask);  // ssasr-nx (2026-11-25)
     }
     if (dc & 1) {  // sasrt-nx's SasrtWarnStencilOnD32f inside it (rr6-nx, 2026-11-09)
       const bool first_stencil = !targets.depth->stencil_used;  // sasrt-nx (2026-11-11, port 75; renut_diag_formats)
@@ -18229,8 +18250,10 @@ REXCVAR_DEFINE_BOOL(dmc_gpu_depth_resolve_float_only_fb, true, "Banjo/Renut",
 // Depth resolve (shaders/host/depth_resolve.hlsli): 'src' of the depth target
 // to ('dest_x', 'dest_y') of the destination and of its guest words, in guest
 // pixels (the destination is of the surface's scale).
+// ssasr-nx (2026-11-26): 'slice_fb', a framebuffer over one layer of dest's texture (ssasr_depth_slice_direct), drawn
+// into instead of dest->depth_framebuffer; dest's own transitions and size as for any resolve into it.
 bool ResolveDepth(HostSurface *surface, HostTexture *dest, const ClearRect &src, i32 dest_x,
-                  i32 dest_y, bool words = true) {
+                  i32 dest_y, bool words = true, plume::RenderFramebuffer *slice_fb = nullptr) {
   const RenderScale scale = surface->scale;
   auto &s = State();
   const uint32_t variant = surface->samples != plume::RenderSampleCount::COUNT_1 ? 1 : 0;
@@ -18244,7 +18267,8 @@ bool ResolveDepth(HostSurface *surface, HostTexture *dest, const ClearRect &src,
   // dmc_devil-nx (dmc_gpu_depth_resolve_float_only_fb): where the float-only shader draws (below), the framebuffer of
   // the float target alone (made here once). Never with the key off (no such pipeline).
   bool float_1rt = !words && variant == 0 && s.sasrt_depth_float_pipeline && s.sasrt_depth_float_only_pipeline &&
-                   dest->texture && sasrt::gpu_round::On(sasrt::gpu_round::kDepthFloatPs);
+                   dest->texture && sasrt::gpu_round::On(sasrt::gpu_round::kDepthFloatPs) &&
+                   !slice_fb;  // renut-ultimate: not with ssasr-nx's slice framebuffer (its words target is bound)
   if (float_1rt && !dest->dmc_depth_float_framebuffer) [[unlikely]] {
     const plume::RenderTexture *one[] = {dest->texture.get()};
     dest->dmc_depth_float_framebuffer = s.device->createFramebuffer(plume::RenderFramebufferDesc(one, 1));
@@ -18264,7 +18288,11 @@ bool ResolveDepth(HostSurface *surface, HostTexture *dest, const ClearRect &src,
     gpu_profile::Mark(s, SasrtResolvePartLabel(surface, 1));
     gpu_profile::CountDraw(s, SasrtResolvePartLabel(surface, 1));  // its resolves a frame
   }
-  if (float_1rt)  // dmc_devil-nx
+  // renut-ultimate (ssasr-nx's slice framebuffer with dmc_devil-nx's float-only one): a slice's own first; float_1rt is
+  // never set with one (above), so the pipeline and the framebuffer agree.
+  if (slice_fb)
+    cmd->setFramebuffer(slice_fb);
+  else if (float_1rt)  // dmc_devil-nx
     cmd->setFramebuffer(dest->dmc_depth_float_framebuffer.get());
   else
     cmd->setFramebuffer(dest->depth_framebuffer.get());
@@ -18374,6 +18402,53 @@ bool ResolveDepth(HostSurface *surface, HostTexture *dest, const ClearRect &src,
   g_bound.layout = false;
   g_bound.viewport_set = false;
   return true;
+}
+
+// ssasr-nx (2026-11-26, the user's GPU goal; A/B 301): a depth resolve into slice k > 0 of a stacked destination (this
+// game's shadow cascades 1 and 2, every frame) drawn straight into that layer, through a framebuffer over a one-layer
+// view of the destination and its words target, instead of into a 2D scratch then copied into the slice
+// (ssasr_renut_depth_slices' first way: a second 1024x1024 float image written and copied, per cascade). The same
+// shader on the same depth writes the same floats into the same layer the copy filled. deko3d only (the PC keeps the
+// scratch); off, or in the A/B's off half: the scratch.
+REXCVAR_DEFINE_BOOL(ssasr_depth_slice_direct, true, "SSASR/GPU",
+                    "deko3d renderer: a depth resolve into a stacked texture's slice other than 0 (the shadow cascades "
+                    "1 and 2) drawn straight into that layer, not into a scratch image then copied (same floats; A/B "
+                    "301). false: the scratch and the copy")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+bool SsasrDepthSliceDirectOn() {
+  static const bool on = REXCVAR_GET(ssasr_depth_slice_direct) && IsDeko3D();
+  return on && banjo::renut_gpu::g_ab_off_plain != 301;
+}
+uint64_t g_ssasr_slice_direct = 0;  // resolves drawn so (the slice log line)
+plume::RenderFramebuffer *DepthSliceFramebufferLocked(HostTexture &t, uint32_t slice) {
+  if (!t.texture || !t.words || !t.words->texture || slice == 0 || slice >= t.depth)
+    return nullptr;
+  if (t.slice_images[0] != t.texture.get() || t.slice_images[1] != t.words->texture.get()) {
+    t.slice_framebuffers.clear();
+    t.slice_views.clear();
+    t.slice_images[0] = t.texture.get();
+    t.slice_images[1] = t.words->texture.get();
+  }
+  if (t.slice_framebuffers.size() < t.depth) {
+    t.slice_framebuffers.resize(t.depth);
+    t.slice_views.resize(t.depth);
+  }
+  if (!t.slice_framebuffers[slice]) {
+    plume::RenderTextureViewDesc vd = plume::RenderTextureViewDesc::Texture2D(t.host_format);
+    vd.arrayIndex = slice;
+    vd.arraySize = 1;
+    vd.mipSlice = 0;
+    vd.mipLevels = 1;
+    t.slice_views[slice] = t.texture->createTextureView(vd);
+    if (!t.slice_views[slice])
+      return nullptr;
+    const plume::RenderTexture *targets[2] = {t.texture.get(), t.words->texture.get()};
+    const plume::RenderTextureView *views[2] = {t.slice_views[slice].get(), nullptr};
+    plume::RenderFramebufferDesc desc(targets, 2);
+    desc.colorAttachmentViews = views;
+    t.slice_framebuffers[slice] = Video::Device()->createFramebuffer(desc);
+  }
+  return t.slice_framebuffers[slice].get();
 }
 
 // ---------------------------------------------------------------------------
@@ -18593,6 +18668,18 @@ bool HandOverResolveLocked(HostSurface *s, HostTexture *d, const ClearRect &src,
       RGPU_INFO("[renut] colour hand-over: the resolve of a {}x{} {}x view is drawn from its sample grid, not left in the "
                 "view's image (blur_renut_sample_grid_resolve)", s->width, s->height,
                 ((u32(s->info_word) >> 16) & 3) == 2 ? 4 : 2);
+  }
+  // ssasr-nx (2026-11-27, batch 5 N22, diagnostic): why a depth resolve was drawn (its first 12, with what the test
+  // compared): the console's census, 0 depth resolves handed over of ~130 a second (3 ms a frame of the GPU).
+  if (!can && s->depth) [[unlikely]] {
+    static u32 logged = 0;
+    if (LogLimited(logged, 12))
+      RGPU_INFO("[renut] depth hand-over not taken: words {}, whole {} (src {},{}-{},{} of {}x{}, dest at {},{}), dest "
+                "{}x{} alloc {}x{} (source alloc {}x{}), same scale {}, samples {}, texture {}, 2D {}, stacked {}, "
+                "levels {}+{}", words, whole, src.x1, src.y1, src.x2, src.y2, s->width, s->height, dest_x, dest_y,
+                d->width, d->height, d->alloc_width, d->alloc_height, s->scale.Size(s->width),
+                s->scale.Size(s->height), d->scale == s->scale, int(s->samples), s->texture != nullptr,
+                d->dimension == TextureDimension::Tex2D, d->stacked, d->mip_levels, d->extra_levels);
   }
   // kameo-nx (2026-11-03, diagnostic): why a colour resolve was drawn (the colour hand-over's 10 s line).
   if (!can && !s->depth) {
@@ -19149,9 +19236,63 @@ bool DrawCopyFromSlotLocked(uint32_t source_slot, HostTexture *dest, const plume
   return true;
 }
 
+// ssasr-nx (2026-11-26, the user's GPU goal; A/B 302): a colour resolve of a target nothing has written since its last
+// whole clear (clear_known, with the generation and the write count the clear left: draws, clears, SMAA, view syncs and
+// wipes all count) is a clear of the destination's rect with the same colour, not a copy draw that reads the target.
+// This game blanks its scene texture so every race frame (a 1280x720 target cleared, then resolved in its two EDRAM
+// tiles). Same bits: the target's texels are what that clear wrote (cmd->clearColor with clear_color, ClearTargets), and
+// the destination gets the same clear in the same host format; only colours whose every component is 0 or 1 (exact in
+// any format), single-sampled, no exponent scale, the destination a 2D target of the target's own host format.
+REXCVAR_DEFINE_BOOL(ssasr_resolve_cleared_as_clear, true, "SSASR/GPU",
+                    "Renut's renderer: a colour resolve of a target untouched since its last whole clear (to 0 or 1 in "
+                    "every component) clears the destination's rect instead of copying the target into it (same bits; "
+                    "A/B 302). false: the copy draw")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+uint64_t g_ssasr_resolves_cleared = 0;
+bool SsasrResolveAsClearLocked(const HostSurface *surface, HostTexture *dest, const plume::RenderRect &rect,
+                               uint32_t host_x, uint32_t host_y, float color_scale) {
+  static const bool on = REXCVAR_GET(ssasr_resolve_cleared_as_clear);
+  if (!on || banjo::renut_gpu::g_ab_off_plain == 302 || color_scale != 1.0f)
+    return false;
+  if (!surface->clear_known || surface->clear_generation != surface->generation ||
+      surface->clear_writes != surface->writes || surface->samples != plume::RenderSampleCount::COUNT_1 ||
+      surface->handed || !ResolveCopyPossible(surface, dest))  // the copy's own formats and 2D targets
+    return false;
+  for (const float c : surface->clear_color)
+    if (c != 0.0f && c != 1.0f)
+      return false;
+  auto &s = State();
+  if (!dest->copy_framebuffer) {
+    const plume::RenderTexture *targets[] = {dest->texture.get()};
+    dest->copy_framebuffer = s.device->createFramebuffer(plume::RenderFramebufferDesc(targets, 1));
+    if (!dest->copy_framebuffer)
+      return false;
+  }
+  plume::RenderCommandList *cmd = s.command_list;
+  TransitionTextureLocked(dest, plume::RenderTextureLayout::COLOR_WRITE);
+  cmd->setFramebuffer(dest->copy_framebuffer.get());
+  const plume::RenderRect r(int32_t(host_x), int32_t(host_y), int32_t(host_x) + (rect.right - rect.left),
+                            int32_t(host_y) + (rect.bottom - rect.top));
+  const float *c = surface->clear_color;
+  cmd->clearColor(0, plume::RenderColor(c[0], c[1], c[2], c[3]), &r, 1);
+  ++g_ssasr_resolves_cleared;
+  static uint32_t logged = 0;
+  if (LogLimited(logged, 2))
+    RGPU_INFO("[renut] colour resolve of {:08X} ({}x{}, untouched since its clear to ({}, {}, {}, {})) made a clear of "
+              "the destination's {}x{} (ssasr_resolve_cleared_as_clear)",
+              surface->guest_va, surface->width, surface->height, c[0], c[1], c[2], c[3], r.right - r.left,
+              r.bottom - r.top);
+  // The draw path binds its own targets again.
+  g_bound.framebuffer = nullptr;
+  return true;
+}
+
 bool DrawResolveCopy(HostSurface *surface, HostTexture *dest, const plume::RenderRect &rect, uint32_t host_x,
                      uint32_t host_y, bool convert, float color_scale) {
   auto &s = State();
+  // ssasr-nx (2026-11-26, ssasr_resolve_cleared_as_clear, A/B 302)
+  if (!convert && SsasrResolveAsClearLocked(surface, dest, rect, host_x, host_y, color_scale))
+    return true;
   // blur-nx (2026-11-10, port 76; its key 212: blur_renut_resolve_keep_dest): 'convert', a destination kept in another
   // format (ResolveTarget): the texel load gives the source's values, the target's format stores them.
   if (convert ? !(s.resolve_copy_ps && dest->texture && dest->render_target &&
@@ -19969,7 +20110,59 @@ static void ResolveTargetsLockedImpl(const u32 *targets, u32 flags, const ClearR
       if (S4CaptureActive()) [[unlikely]]
         S4CaptureResolveSourceLocked(surface, dest);  // S4ep2-XBLA-nx: the frame captures
       ClearRect src;
-      if (!dest) {
+      // ssasr-nx (2026-11-25, ssasr_renut_depth_slices): a depth resolve into a slice other than 0 of a stacked
+      // destination (Sonic & SEGA All-Stars Racing's three shadow cascades, slices 0-2 of one 1024x1024 texture, every
+      // frame): drawn into a 2D scratch of the destination's size (its float image; the words of a slice other than 0
+      // are not kept: the shadow compare reads the float), then copied into the slice. Before, slices 1 and 2 were never
+      // written and the scene's far shadow lookups read nothing.
+      bool slice_done = false;
+      if (!dest && dest_level == 0 && dest_slice != 0 && banjo::renut_gpu::DepthSlicesOn()) {
+        HostTexture *stacked =
+            hb_rs.Time([&] { return GetDepthResolveTextureLocked(dest_texture_va, surface->scale, dest_format); });
+        if (stacked && stacked->stacked && dest_slice < stacked->depth && fit(stacked, src)) {
+          // ssasr-nx (2026-11-26, ssasr_depth_slice_direct, A/B 301): straight into the layer.
+          // Single-sampled, with the float-only pipeline (which masks the words target): the words target over the
+          // layer's framebuffer is the destination's own (slice 0's words), never written here.
+          if (SsasrDepthSliceDirectOn() && surface->samples == plume::RenderSampleCount::COUNT_1 &&
+              State().depth_resolve_float_pipeline[0]) {
+            if (plume::RenderFramebuffer *fb = DepthSliceFramebufferLocked(*stacked, dest_slice);
+                fb && ResolveDepth(surface, stacked, src, dest_x, dest_y, false, fb)) {
+              stacked->resolve_signature = 0;  // slice 0's skip must not take this resolve for its own
+              slice_done = true;
+              ++g_ssasr_slice_direct;
+              static uint32_t direct_logged = 0;
+              if (LogLimited(direct_logged, 2))
+                RGPU_INFO("[renut] depth resolve into {:08X} slice {} of {} drawn into the layer "
+                          "(ssasr_depth_slice_direct; {} so far)",
+                          dest_texture_va, dest_slice, stacked->depth, g_ssasr_slice_direct);
+            }
+          }
+          if (slice_done) {
+            // drawn into the layer above
+          } else if (HostTexture *scratch = GetDepthSliceScratchLocked(*stacked);
+              scratch && ResolveDepth(surface, scratch, src, dest_x, dest_y, false)) {
+            const plume::RenderRect r = ScaleRect(
+                plume::RenderRect(dest_x, dest_y, dest_x + (src.x2 - src.x1), dest_y + (src.y2 - src.y1)),
+                surface->scale);
+            const plume::RenderBox box(r.left, r.top, r.right, r.bottom);
+            TransitionTextureLocked(scratch, plume::RenderTextureLayout::COPY_SOURCE);
+            TransitionTextureLocked(stacked, plume::RenderTextureLayout::COPY_DEST);
+            cmd->copyTextureRegion(plume::RenderTextureCopyLocation::Subresource(stacked->texture.get(), 0, dest_slice),
+                                   plume::RenderTextureCopyLocation::Subresource(scratch->texture.get()), r.left,
+                                   r.top, 0, &box);
+            TransitionTextureLocked(stacked, plume::RenderTextureLayout::SHADER_READ);
+            stacked->resolve_signature = 0;  // slice 0's skip must not take this resolve for its own
+            slice_done = true;
+            static uint32_t slices_logged = 0;
+            if (LogLimited(slices_logged, 2))
+              RGPU_INFO("[renut] depth resolve into {:08X} slice {} of {} drawn (ssasr_renut_depth_slices)",
+                        dest_texture_va, dest_slice, stacked->depth);
+          }
+        }
+      }
+      if (slice_done) {
+        // done above
+      } else if (!dest) {
         if (LogLimited(depth_logged, 2)) {
           RGPU_WARN("Depth resolve into {:08X} (level {}, slice {}) not done", dest_texture_va,
                     dest_level, dest_slice);

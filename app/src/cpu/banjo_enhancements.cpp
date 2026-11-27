@@ -231,6 +231,12 @@ REXCVAR_DEFINE_BOOL(switch_profile_stacks, false, "Banjo/Enhancements",
 REXCVAR_DEFINE_INT32(switch_profile_stacks_ms, 1, "Banjo/Enhancements",
                      "Switch: the SDK sampler's interval in milliseconds (1-100; each sample pauses one game thread)")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// ssasr-nx (2026-11-27, loads batch M1: L30 with L28, L48, L78): read by name by the SDK's sampler too.
+REXCVAR_DEFINE_BOOL(switch_profile_addresses, false, "Banjo/Enhancements",
+                    "Switch: with switch_profile_stacks, each sample at a load or store also records the address it "
+                    "accesses (the instruction decoded, its registers from the paused thread): rex_profile.log's "
+                    "'addresses' section, by guest view and host region, a diagnostic")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 // blur-nx (2026-11-17, the Renut audit's #29): read by name by the SDK's profiler thread (switch_perf.cpp).
 REXCVAR_DEFINE_BOOL(switch_perf_count_calls, true, "Banjo/Enhancements",
                     "Switch: the wrapped libnx calls (kicks, GPU mappings, cache cleans, yields and sleeps) counted for "

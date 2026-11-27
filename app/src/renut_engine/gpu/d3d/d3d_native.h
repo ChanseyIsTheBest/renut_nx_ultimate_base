@@ -24,6 +24,7 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <cstring>  // ssasr-nx (the thread batch F1): LogSetterWrite
 #include <limits>
 
 #include <rex/types.h>
@@ -136,8 +137,8 @@ inline std::atomic<uint64_t> g_touch_map[1u << kTouchMapBits] = {};
 constexpr u32 TouchMapIndex(u32 va) {
   return (va * 0x9E3779B1u) >> (32 - kTouchMapBits);
 }
-u32 TouchSlotSlow(u32 va);  // d3d_native_state.cpp
-inline u32 TouchSlotOf(u32 va) {
+[[gnu::noinline, gnu::cold]] u32 TouchSlotSlow(u32 va);  // d3d_native_state.cpp
+[[gnu::always_inline]] inline u32 TouchSlotOf(u32 va) {
   const uint64_t e = g_touch_map[TouchMapIndex(va)].load(std::memory_order_relaxed);
   if (u32(e >> 32) == va && e)
     return u32(e);
@@ -156,8 +157,58 @@ inline bool TakeTouches(u32 va, uint64_t *chunks) {
   return true;
 }
 
+// ssasr-nx (2026-11-27, batch 5; out/batch5_plan.md), set by the delta chain (backend/queued.cpp) for the drawing
+// device's touch slot (a sink) while its marked deltas run:
+//  H2/H3: the setters of that slot keep their dirty tags (m_Pending words 2-4) out of the device, as a recording
+//    device's do (g_tags_apart): every byte they write is marked already, and a tag made the capture compare all the
+//    chunks it may stand for (the 17 render-state chunks for any state tag). The tags in the device are then the
+//    game's own inline writes' alone. Nothing else reads the drawing device's tags (ClearPending and the capture
+//    clear them at every draw).
+//  H31: a new mark asks for the chain's shadow line of the same offset, so the capture's compare finds both lines
+//    in the cache (its hottest samples were waits on those loads).
+inline u32 g_chain_tags_apart_slot = ~0u;
+inline u32 g_chain_prefetch_slot = ~0u;
+inline const u8 *g_chain_shadow = nullptr;
+
+// ssasr-nx (2026-11-27, the thread batch F1, ssasr_setter_log): the drawing device's setter writes since its last draw,
+// for the submit worker (backend/queued.cpp): a chunk only the setters wrote (SetW / SetH / SetB / SetQ, each logged
+// with the bytes it left in the device) is rebuilt from the worker's shadow and these entries instead of read from the
+// device at the draw. Any other mark of a chunk (a plain Touch after a write of its own, TouchRange, TouchAll,
+// TouchTags) puts it in g_log_raw: copied from the device as before. g_log_slot: the drawing device's slot while it is
+// on (queued.cpp PlaceDeltaShadow), else ~0u: nothing logged, one compare a write.
+struct SetterLogEntry {
+  u16 offset = 0;
+  u8 size = 0;
+  u8 pad = 0;
+  u32 pad2 = 0;
+  u64 bytes = 0;  // the bytes written, in guest order (the device's)
+};
+constexpr u32 kSetterLogEntries = 256;
+struct SetterLog {
+  u32 count = 0;
+  bool overflow = false;  // more than kSetterLogEntries since the draw: every touched chunk is copied raw
+  SetterLogEntry entry[kSetterLogEntries];
+};
+inline u32 g_log_slot = ~0u;
+inline uint64_t g_log_raw = 0;
+inline SetterLog g_setter_log;
+[[gnu::always_inline]] inline void LogSetterWrite(u32 offset, u32 size, const void *guest_bytes) {
+  SetterLog &l = g_setter_log;
+  if (l.count < kSetterLogEntries) [[likely]] {
+    SetterLogEntry &e = l.entry[l.count++];
+    e.offset = u16(offset);
+    e.size = u8(size);
+    u64 b = 0;
+    std::memcpy(&b, guest_bytes, size);
+    e.bytes = b;
+  } else {
+    l.overflow = true;
+  }
+}
+
 // A guest D3D device's bytes, big-endian guest memory. banjo-nx (2026-10-26): 'slot' fills what was padding, so the
 // struct stays 16 bytes (two registers in an AArch64 call; a 24-byte one would go through memory).
+// ssasr-nx (2026-11-26, batch 4 #42): the members always inline (every setter is made of them).
 struct Device {
   u32 va = 0;
   u32 slot = 0;  // banjo-nx (2026-10-26, banjo_renut_tags): its g_touch slot
@@ -167,59 +218,89 @@ struct Device {
 
   // banjo-nx (2026-10-26, banjo_renut_tags): marks the chunks written. For a constant offset the bit is a constant (and
   // nothing for an offset outside the chunks). No test: a device without a slot marks its thread's sink.
-  void Touch(u32 offset) const { g_touch[slot].chunks |= TouchBit(offset); }
-  void TouchRange(u32 offset, u32 size) const { g_touch[slot].chunks |= TouchBits(offset, size); }
-  void TouchAll() const { g_touch[slot].chunks = ~uint64_t(0); }
+  [[gnu::always_inline]] void Touch(u32 offset) const {
+    g_touch[slot].chunks |= TouchBit(offset);
+    if (slot == g_chain_prefetch_slot)  // ssasr-nx (2026-11-27, batch 5 H31)
+      __builtin_prefetch(g_chain_shadow + (offset & ~63u));
+    if (slot == g_log_slot) [[unlikely]]  // ssasr-nx (the thread batch F1): a write not logged: copied raw
+      g_log_raw |= TouchBit(offset);
+  }
+  // ssasr-nx (2026-11-27, the thread batch F1): a setter's write, logged (the Set* below).
+  [[gnu::always_inline]] void TouchLogged(u32 offset, u32 size) const {
+    const uint64_t bits = TouchBit(offset) | TouchBit(offset + size - 1);
+    g_touch[slot].chunks |= bits;
+    if (slot == g_chain_prefetch_slot)  // ssasr-nx (2026-11-27, batch 5 H31)
+      __builtin_prefetch(g_chain_shadow + (offset & ~63u));
+    if (slot == g_log_slot && bits) [[unlikely]]  // (outside the chunks, e.g. m_Pending: nothing the capture reads)
+      LogSetterWrite(offset, size, bytes + offset);
+  }
+  [[gnu::always_inline]] void TouchRange(u32 offset, u32 size) const {
+    g_touch[slot].chunks |= TouchBits(offset, size);
+    if (slot == g_log_slot) [[unlikely]]  // (F1)
+      g_log_raw |= TouchBits(offset, size);
+  }
+  [[gnu::always_inline]] void TouchAll() const {
+    g_touch[slot].chunks = ~uint64_t(0);
+    if (slot == g_log_slot) [[unlikely]]  // (F1)
+      g_log_raw = ~uint64_t(0);
+  }
   // banjo-nx (2026-10-26): before m_Pending words 2-4 are cleared other than by an op (TagChunks).
-  void TouchTags() const { g_touch[slot].chunks |= TagChunks(Q(2 * 8), Q(3 * 8), Q(4 * 8)); }
+  [[gnu::always_inline]] void TouchTags() const {
+    const uint64_t bits = TagChunks(Q(2 * 8), Q(3 * 8), Q(4 * 8));
+    g_touch[slot].chunks |= bits;
+    if (slot == g_log_slot) [[unlikely]]  // (F1)
+      g_log_raw |= bits;
+  }
 
-  u32 W(u32 offset) const { return *reinterpret_cast<const be_u32 *>(bytes + offset); }
-  void SetW(u32 offset, u32 value) {
+  [[gnu::always_inline]] u32 W(u32 offset) const { return *reinterpret_cast<const be_u32 *>(bytes + offset); }
+  [[gnu::always_inline]] void SetW(u32 offset, u32 value) {
     be_u32 &word = *reinterpret_cast<be_u32 *>(bytes + offset);
     if (u32(word) == value && g_touch_compare)  // banjo-nx (2026-10-26): compare-on-set
       return;
     word = value;
-    Touch(offset);
+    TouchLogged(offset, 4);  // ssasr-nx (the thread batch F1): Touch, and the write logged
   }
-  u16 H(u32 offset) const { return *reinterpret_cast<const be_u16 *>(bytes + offset); }
-  void SetH(u32 offset, u16 value) {
+  [[gnu::always_inline]] u16 H(u32 offset) const { return *reinterpret_cast<const be_u16 *>(bytes + offset); }
+  [[gnu::always_inline]] void SetH(u32 offset, u16 value) {
     be_u16 &half = *reinterpret_cast<be_u16 *>(bytes + offset);
     if (u16(half) == value && g_touch_compare)
       return;
     half = value;
-    Touch(offset);
+    TouchLogged(offset, 2);
   }
-  u8 B(u32 offset) const { return bytes[offset]; }
-  void SetB(u32 offset, u8 value) {
+  [[gnu::always_inline]] u8 B(u32 offset) const { return bytes[offset]; }
+  [[gnu::always_inline]] void SetB(u32 offset, u8 value) {
     if (bytes[offset] == value && g_touch_compare)
       return;
     bytes[offset] = value;
-    Touch(offset);
+    TouchLogged(offset, 1);
   }
-  float F(u32 offset) const { return std::bit_cast<float>(W(offset)); }
-  void SetF(u32 offset, float value) { SetW(offset, std::bit_cast<u32>(value)); }
-  u64 Q(u32 offset) const { return *reinterpret_cast<const be_u64 *>(bytes + offset); }
-  void SetQ(u32 offset, u64 value) {
+  [[gnu::always_inline]] float F(u32 offset) const { return std::bit_cast<float>(W(offset)); }
+  [[gnu::always_inline]] void SetF(u32 offset, float value) { SetW(offset, std::bit_cast<u32>(value)); }
+  [[gnu::always_inline]] u64 Q(u32 offset) const { return *reinterpret_cast<const be_u64 *>(bytes + offset); }
+  [[gnu::always_inline]] void SetQ(u32 offset, u64 value) {
     be_u64 &quad = *reinterpret_cast<be_u64 *>(bytes + offset);
     if (u64(quad) == value && g_touch_compare)
       return;
     quad = value;
-    Touch(offset);
-    Touch(offset + 7);  // a 4-aligned offset may end in the next chunk
+    TouchLogged(offset, 8);  // (both chunks: a 4-aligned offset may end in the next chunk)
   }
 
   // m_Pending[word] (D3DTAGCOLLECTION).
-  u64 Pending(u32 word) const { return Q(word * 8); }
-  void SetPending(u32 word, u64 value) { SetQ(word * 8, value); }
-  void Dirty(u32 word, u64 bits) {
-    if (word >= 2 && g_tags_apart && slot - 1 < kTouchSlots - 1)  // banjo-nx (2026-10-26): banjo_renut_tags_apart
+  [[gnu::always_inline]] u64 Pending(u32 word) const { return Q(word * 8); }
+  [[gnu::always_inline]] void SetPending(u32 word, u64 value) { SetQ(word * 8, value); }
+  [[gnu::always_inline]] void Dirty(u32 word, u64 bits) {
+    // banjo-nx (2026-10-26): banjo_renut_tags_apart; ssasr-nx (2026-11-27, batch 5 H2/H3): the drawing device's too
+    if (word >= 2 && g_tags_apart && (slot - 1 < kTouchSlots - 1 || slot == g_chain_tags_apart_slot))
       return;
     SetPending(word, Pending(word) | bits);
   }
 };
 static_assert(sizeof(Device) == 16);
 
-inline Device DeviceAt(u32 va) {
+// ssasr-nx (2026-11-26, batch 4 #7): always inline (a call of its own at every setter in the console's profile, 0.15 ms
+// a frame); TouchSlotSlow, the first lookup of a device, stays out of line.
+[[gnu::always_inline]] inline Device DeviceAt(u32 va) {
   return Device{va, TouchSlotOf(va), GuestPtr<u8>(va)};
 }
 
@@ -366,6 +447,11 @@ u32 AddRefResource(u32 resource);
 // Device state (d3d_native_state.cpp).
 void SetRenderState(Device device, u32 state, u32 value);
 void SetSamplerState(Device device, u32 sampler, u32 state, u32 value);
+// ssasr-nx (2026-11-26, batch 4 #10, #11): the hooked states' setters with the state fixed (d3d_native_state.cpp).
+template <u32 State>
+void SetRenderStateFixed(Device device, u32 value);
+template <u32 State>
+void SetSamplerStateFixed(Device device, u32 sampler, u32 value);
 // The getters of N&B's state tables (field 0): the value as D3D reports it.
 u32 GetRenderState(Device device, u32 state);
 u32 GetSamplerState(Device device, u32 sampler, u32 state);

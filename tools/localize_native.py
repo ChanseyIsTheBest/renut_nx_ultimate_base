@@ -226,6 +226,37 @@ ABI_TRUST = os.environ.get('BLUR_LOCALIZE_ABI_TRUST', '0') == '1'
 NONVOLATILE = frozenset(['r%d' % i for i in range(14, 32)] + ['f%d' % i for i in range(14, 32)] +
                         ['v%d' % i for i in list(range(14, 32)) + list(range(64, 128))] + ['cr2', 'cr3', 'cr4'])
 ABI_SKIPPED = [0, 0]  # (real calls with a reload left out, reloads left out)
+# ssasr-nx (2026-11-27, loads batch; the user's "pass guest registers in host registers"): members the compiler inlines
+# take their registers by reference from their callers (make() explains). Exact; on (loadsD's console races: 30.1 ms a
+# frame at 1,200 draws against loadsC's 31.0, about 0.6 ms of it this). SSASR_MEMBER_REFS=0 turns it off.
+MEMBER_REFS = os.environ.get('SSASR_MEMBER_REFS', '1') == '1'
+MEMBER_REFS_STATS = [0, 0]  # (calls of such members, such members)
+MEMBER_REFS_WHY = {}  # member places (a member in each header it is in) by why it does or does not take references
+# ssasr-nx (2026-11-27, loads batch, M18): and in the headers whose root or a member has a hand native, every member but
+# the natives' own guest calls (hand.txt calls=: a native calls them through ctx, C::sub_X(ctx, base, s)).
+# SSASR_MEMBER_REFS_HAND=0: those headers as M17 left them (no member by reference).
+MEMBER_REFS_HAND = os.environ.get('SSASR_MEMBER_REFS_HAND', '1') == '1'
+# ssasr-nx (2026-11-27, loads batch M19): and the direct members of the natives tools/ssasr_native_gen.py makes from their
+# copies (app/src/cpu/hot/ssasr_natives.txt): their bodies are the copy's, so they call such a member as the copy does,
+# by reference (C::sub_X(ctx, base, s, l_r3, ...); the Calls struct forwards the references). The hand-written natives'
+# guest calls keep the context form. SSASR_MEMBER_REFS_NATIVES=0: as M18.
+MEMBER_REFS_NATIVES = os.environ.get('SSASR_MEMBER_REFS_NATIVES', '1') == '1'
+
+
+def generated_natives():
+    """The functions whose native tools/ssasr_native_gen.py makes from the copy (ssasr_natives.txt), as sub_XXXXXXXX."""
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'app', 'src', 'cpu', 'hot',
+                        'ssasr_natives.txt')
+    out = set()
+    if os.path.isfile(path):
+        for line in open(path, encoding='utf-8', errors='replace'):
+            t = line.split('#')[0].split()
+            if t and re.fullmatch(r'[0-9A-Fa-f]{8}', t[0]):
+                out.add('sub_' + t[0].upper())
+    return out
+
+
+GENERATED_NATIVES = generated_natives()
 PROMOTED_SITE = re.compile(r'^\tif \(REX_PROMOTED_IS\(')
 
 REG = re.compile(r'\bctx\.(r\d+|f\d+|v\d+|cr\d|ctr|xer|reserved)\b')
@@ -678,7 +709,7 @@ def native_call(entry):
     return '::banjo::hand::n_%s::Native' % entry['id']
 
 
-def calls_struct(entry, member_set, externs, hand):
+def calls_struct(entry, member_set, externs, hand, refs=()):
     """blur-nx (2026-11-16, the 15 ms batch): the guest calls of a hand-written native (hand.txt calls=), for one copy
     header. A native that calls guest functions gets this struct as its template argument C and calls C::sub_X(ctx,
     base, s) with the callee's arguments in ctx, as the guest code would; then `if (s.Stopped()) return true;`.
@@ -690,6 +721,13 @@ def calls_struct(entry, member_set, externs, hand):
     original allocates, so the callees' frames land where they would."""
     lines = ['struct Calls_%s {' % entry['id']]
     for c in entry['calls']:
+        if c in member_set and c in refs and c not in hand:
+            # ssasr-nx (2026-11-27, loads batch M19): a member taking its registers by reference: the native's body (its
+            # copy's) passes them, the struct hands them on.
+            lines.append('  template <class S, class... R>')
+            lines.append('  [[gnu::always_inline]] static inline void %s(PPCContext& __restrict ctx, uint8_t* base, '
+                         'S& s, R&... r) { f_%s(ctx, base, s, r...); }' % (c, c))
+            continue
         lines.append('  template <class S>')
         if c in member_set and c in hand:
             # A callee with a native of its own (the node loop's child mixers: itself): the native first, as at the
@@ -802,6 +840,29 @@ class Hooks:
             except OSError:
                 continue
             text = strip_comments(text, toml)
+            # ssasr-nx (2026-11-27, loads batch M12): the code generator's register arrays in renut_config.toml
+            # (non_volatile_as_local_exclude, non_argument_as_local_keep, non_volatile_as_local_keep) name functions whose
+            # registers the generator keeps in ctx, not hooks: a copy loads what it mentions from ctx at its entry, hands
+            # a callee what it reads and writes back what the whole-program liveness says its callers read, so those
+            # functions are copies like any other (the guard compares them). Before, they could not be copies: six of
+            # the game thread's hottest generated functions in the console race loadsA (sub_82644CF8 0.20 ms a frame,
+            # 82576FF0, 82466D20, 8245AB00, 826278B0, 8246CC88) were refused as "replaced by an app hook".
+            # SSASR_COPIES_ARRAYS_AS_HOOKS=1: as before.
+            if toml and os.environ.get('SSASR_COPIES_ARRAYS_AS_HOOKS', '0') != '1':
+                for key in ('non_volatile_as_local_exclude', 'non_argument_as_local_keep', 'non_volatile_as_local_keep'):
+                    m = re.search(r'^' + key + r'\s*=\s*\[', text, re.M)
+                    if not m:
+                        continue
+                    depth, j = 0, m.end() - 1
+                    while j < len(text):
+                        if text[j] == '[':
+                            depth += 1
+                        elif text[j] == ']':
+                            depth -= 1
+                            if depth == 0:
+                                break
+                        j += 1
+                    text = text[:m.start()] + ' ' + text[j + 1:]
             if not toml:
                 text = strip_windows_only(text)  # blur-nx (2026-11-13, M-28)
             text = re.sub(r'__imp__\w+', ' ', text)
@@ -818,6 +879,46 @@ class Hooks:
         return name in self.words
 
 
+# ssasr-nx (2026-11-27, batch 5 H61 / C1; the user: "Work on all 190 ideas"): the Renut hooks that are pure host code
+# (a setter or a getter of the device: no guest code, callback or flush under them) reach only their arguments: a call
+# of one hands over the argument registers (r3 on, in the C++ signature's order; HostToGuestFunction's mapping) and
+# takes back r3 when it returns a value (HostToGuestFunction writes nothing else). Any other app hook keeps the
+# unknown reach (ALL). SSASR_PURE_HOOK_REACH=0 in the environment: every hook unknown, as before.
+PURE_HOOK_FAMILIES = ('SetRenderStateHook', 'SetSamplerStateHook', 'GetRenderStateHook', 'GetSamplerStateHook',
+                      'D3DDevice_SetTexture_hook', 'D3DDevice_SetStreamSource_hook', 'D3DDevice_SetIndices_hook',
+                      'D3DDevice_SetVertexDeclaration_hook', 'D3DDevice_SetVertexShader_hook',
+                      'D3DDevice_SetPixelShader_hook', 'D3DDevice_SetViewport_hook', 'D3DDevice_SetScissorRect_hook')
+_PURE_HOOK_REACH = None
+
+
+def pure_hook_reach():
+    """{'sub_X': (mention, change)} for the hooks of PURE_HOOK_FAMILIES (app/src/renut_engine/gpu/d3d/hooks)."""
+    global _PURE_HOOK_REACH
+    if _PURE_HOOK_REACH is not None:
+        return _PURE_HOOK_REACH
+    _PURE_HOOK_REACH = {}
+    if os.environ.get('SSASR_PURE_HOOK_REACH', '1') != '1':
+        return _PURE_HOOK_REACH
+    texts = [open(f, encoding='utf-8', errors='replace').read()
+             for f in sorted(glob.glob(os.path.join(APP, 'src', 'renut_engine', 'gpu', 'd3d', 'hooks', '*.cpp')))]
+    text = '\n'.join(texts)
+    sigs = {}
+    for fam in PURE_HOOK_FAMILIES:
+        m = re.search(r'\b(void|u32|uint32_t)\s+' + fam + r'\s*\(([^)]*)\)\s*\{', text)
+        if not m:
+            sys.exit('localize_native: pure hook %s not found in the hook sources' % fam)
+        params = [p.strip() for p in m.group(2).split(',') if p.strip()]
+        if any(re.search(r'\b(float|double|f32|f64)\b', p) for p in params) or len(params) > 8:
+            sys.exit('localize_native: pure hook %s takes floats or more than 8 arguments' % fam)
+        args = ['r%d' % (3 + i) for i in range(len(params))]
+        change = ['r3'] if m.group(1) != 'void' else []
+        sigs[fam] = (sorted(set(args) | set(change), key=lambda r: int(r[1:])), change)
+    for m in re.finditer(r'BANJO_RENUT_HOOK\((sub_[0-9A-F]{8}),\s*([A-Za-z_]\w*)(?:<[^>]*>)?\)', text):
+        if m.group(2) in sigs:
+            _PURE_HOOK_REACH[m.group(1)] = sigs[m.group(2)]
+    return _PURE_HOOK_REACH
+
+
 class Reach:
     """For a call: the registers the callee and everything under it mention, and those they can change (strongly
     connected components over the call graph, on demand; sa2-nx's). ALL = unknown."""
@@ -830,6 +931,9 @@ class Reach:
     def own(self, name):
         imp = name.startswith('__imp__')
         base = name[7:] if imp else name
+        pure = None if imp else pure_hook_reach().get(base)
+        if pure is not None:  # ssasr-nx (2026-11-27, batch 5 H61): a pure host hook reaches its arguments alone
+            return set(pure[0]), set(pure[1]), ()
         f = self.funcs.get(base)
         if f is None or f['unknown'] or (not imp and self.hooks.replaced(base)):
             return ALL, ALL, ()
@@ -985,6 +1089,21 @@ def dirty_sets(name, lines, call_mentions):
             continue
         d = set(dirty[i]) | writes[i]
         mentions = call_mentions(lines[i])
+        # ssasr-nx (2026-11-27, SSASR_MEMBER_REFS): a call of a member taking its registers by reference stores nothing
+        # in the context and changes the caller's locals directly: what it can change is dirty after it.
+        refs_changed = set()
+        any_refs = False
+        for mention in mentions or ():
+            if isinstance(mention, tuple) and mention and mention[0] == 'refs':
+                refs_changed |= mention[1]
+                any_refs = True
+        mentions = [x for x in (mentions or ()) if not (isinstance(x, tuple) and x and x[0] == 'refs')]
+        # (A reference call stores nothing, and alternative calls store only what all of them store: with one on the
+        # line, e.g. a promoted call whose target takes references and whose indirect fallback hands over through the
+        # context, nothing is stored. The first form left that out: the fallback's stores made dirty locals clean, and
+        # the root's write-back of r3 and the next call's hand-over of r1 went missing (the PC guard and poison runs).)
+        if any_refs:
+            mentions = []
         if mentions and ONLY_CALL.match(lines[i]):
             # The call stores what its callee can reach (and loads back what the callee can change, a part of it):
             # those locals equal the context again. Two alternative calls: only what both store.
@@ -993,6 +1112,7 @@ def dirty_sets(name, lines, call_mentions):
                 s = set(d) if mention is ALL else (d & mention)
                 stored = s if stored is None else (stored & s)
             d -= stored
+        d |= refs_changed
         for j in succ[i]:
             merged = frozenset(d) if dirty[j] is None else (dirty[j] | d)
             if merged != dirty[j]:
@@ -1276,6 +1396,7 @@ def localize(index, hooks, reach, root, what, opts, out_dir, quiet=False, hand=N
         return ALL, ALL, False
 
     sync_memo = {}
+    member_refs = {}  # ssasr-nx (SSASR_MEMBER_REFS): member -> the registers it takes by reference (filled below)
 
     def call_syncs(name):
         """blur-nx (2026-11-16, CG-11): can a call of this function (or anything under it) synchronise with another
@@ -1309,6 +1430,30 @@ def localize(index, hooks, reach, root, what, opts, out_dir, quiet=False, hand=N
             if closed:
                 return '{ o_%s(ctx, base, s); if (s.Stopped()) return; }' % b
             return '{ s.Open(); return; }'
+        # ssasr-nx (2026-11-27, loads batch, the user's "pass guest registers in host registers"; SSASR_MEMBER_REFS):
+        # a member taking its registers by reference holds its caller's locals; around a call that still goes through
+        # the context, every one of them is handed over and taken back (one only its own callees use may be dirty).
+        if me in member_refs:
+            my_regs = member_refs[me]
+            my_written = member_refs[me]
+        if closed and b in member_refs:
+            # The member reads and writes the caller's locals directly: no hand-over through the context. A register the
+            # caller does not keep in a local goes through a temporary from the context (current there: nothing caches it).
+            mine = set(my_regs)
+            pre, post, args = '', '', []
+            for r in member_refs[b]:
+                if r in mine:
+                    args.append('l_' + r)
+                else:
+                    pre += f'{type_of(r)} t_{r} = ctx.{r}; '
+                    args.append('t_' + r)
+                    if change is ALL or r in change:
+                        post += f'ctx.{r} = t_{r}; '
+            stats['calls_closed'] += 1
+            MEMBER_REFS_STATS[0] += 1
+            flush = CARD_FLUSH if call_syncs(b) else ''
+            return ('{ ' + pre + flush + 'f_%s(ctx, base, s%s); ' % (b, ''.join(', ' + x for x in args)) + post +
+                    'if (s.Stopped()) return; }')
         out_regs = my_written if mention is ALL else [r for r in my_written if r in mention]
         # sasrt-nx (2026-11-12, stage 1; port 121): a real call's hand-over without what the callee does not read before
         # writing it and nothing reads after the call (tools/reg_liveness.py; the callee must be the one it saw).
@@ -1426,6 +1571,37 @@ def localize(index, hooks, reach, root, what, opts, out_dir, quiet=False, hand=N
                             CONST_ARG_FORCED[0] += 1
                             break
 
+    # ssasr-nx (2026-11-27, loads batch; the user: "Pass guest registers in host registers"; census M13): a member the
+    # compiler must inline takes the registers its whole call tree mentions by reference, bound to its caller's locals,
+    # instead of the caller handing them over through the context and taking them back, and the member loading them at
+    # its entry and writing them back at its returns. The compiler forwarded the loads already (the context is
+    # `restrict`), but not the stores: a member's write-backs stayed, a store per register per inlined call, because the
+    # context outlives the copy. Inlined, the references are the caller's registers. Not for a member whose tree
+    # mentions everything (an unknown call), a hand native's, or any member of a header whose root has a native (the
+    # natives' generator rewrites only the context form of a member call). On by default (SSASR_MEMBER_REFS=0: off).
+    # ssasr-nx (M18): a header with natives keeps their guest calls (hand.txt calls=) in the context form, the one
+    # form a native's body (C::sub_X(ctx, base, s)) and its Calls struct know; every other member of it may take
+    # references: the natives never call them (their calls are inside members' bodies, which both the copy and the
+    # native's callees run).
+    natives_calls = {c for m in members if m in hand
+                     if not (MEMBER_REFS_NATIVES and m in GENERATED_NATIVES)  # M19: theirs by reference too
+                     for c in (hand[m].get('calls') or ())}
+    if MEMBER_REFS and (root not in hand or MEMBER_REFS_HAND):
+        for mb in members[1:]:
+            if mb in forced and mb not in hand and mb not in natives_calls:
+                mention_b, change_b = reach.of(mb)[0], reach.of(mb)[1]
+                if mention_b is not ALL and change_b is not ALL and len(mention_b) <= 64:
+                    member_refs[mb] = sorted(mention_b, key=order)
+                    why = 'by reference'
+                else:
+                    why = ('mentions or changes everything' if mention_b is ALL or change_b is ALL else
+                           'over 64 registers')
+            else:
+                why = ('not inlined' if mb not in forced else 'a hand native' if mb in hand else
+                       "a native's guest call")
+            MEMBER_REFS_WHY[why] = MEMBER_REFS_WHY.get(why, 0) + 1
+        MEMBER_REFS_STATS[1] += len(member_refs)
+
     declarations = []
     dead_out = set()  # port 74, its idea 37: (member, register) write-backs LiveOut leaves out
     # Blocks: straight runs of statements. A block starts at a function's first statement, at every label and after
@@ -1452,7 +1628,16 @@ def localize(index, hooks, reach, root, what, opts, out_dir, quiet=False, hand=N
             if gone:
                 sys.exit(f'localize_native: {name}: prefetch_rules.txt names {", ".join(gone)}, which its code no '
                          f'longer has (the guest code under the rule changed: check the rule)')
-        dirty, writes, dirty_end = dirty_sets(name, lines, lambda l: [call_reach(m)[0] for m in CALL.finditer(l)])
+        def mentions_of(l, regs=regs):
+            out = []
+            for m in CALL.finditer(l):
+                b_ = base_name(m.group(1)) if m.group(1) else None
+                if b_ in member_refs:  # (SSASR_MEMBER_REFS: what it changes in this function's locals is dirty after it)
+                    out.append(('refs', set(reach.of(b_)[1]) & set(regs)))
+                else:
+                    out.append(call_reach(m)[0])
+            return out
+        dirty, writes, dirty_end = dirty_sets(name, lines, mentions_of)
         # sasrt-nx (2026-11-12, stage 1; port 121): the guest instruction index of each generated line (reg_liveness.py)
         raw = index.files.get(funcs[name]['file']) or []
         a0 = funcs[name]['at'][0]
@@ -1480,6 +1665,8 @@ def localize(index, hooks, reach, root, what, opts, out_dir, quiet=False, hand=N
                 # (Port 74, its idea 37: a return writes back only what a caller can read; a call still gets `here`.)
                 sync_ret = (sync_out if keep_out is None else
                             ''.join(f'ctx.{r} = l_{r}; ' for r in here if keep_out(r)))
+                if name in member_refs:
+                    sync_ret = ''  # (SSASR_MEMBER_REFS: its registers are its caller's locals)
                 if localized:
                     if LABEL.match(l):
                         block = blocks
@@ -1530,19 +1717,22 @@ def localize(index, hooks, reach, root, what, opts, out_dir, quiet=False, hand=N
                 how = ('[[gnu::always_inline]] static inline' if name in forced
                        else '[[gnu::noinline, gnu::cold]] static' if name in hand and not hand[name].get('prefetch')
                        else 'static')
+                refs_params = ''.join(f', {type_of(r)}& l_{r}' for r in member_refs.get(name, ()))  # SSASR_MEMBER_REFS
                 head = (f'template <class S>\n{how} '
-                        f'void f_{name}(PPCContext& __restrict ctx, uint8_t* base, [[maybe_unused]] S& s)')
+                        f'void f_{name}(PPCContext& __restrict ctx, uint8_t* base, [[maybe_unused]] S& s{refs_params})')
                 declarations.append(head + ';')
                 block_of_line.append((head.split('\n')[0], None))
                 block_of_line.append((head.split('\n')[1] + ' {', entry_block[name]))
                 if CARD_RUNS:
                     block_of_line.append(('\tREX_CARD_RUN_DECL', entry_block[name]))  # port 74, its idea 39
-                for r in regs:
+                for r in (regs if name not in member_refs else ()):  # (SSASR_MEMBER_REFS: parameters instead)
                     block_of_line.append((f'\t{type_of(r)} l_{r} = ctx.{r};', entry_block[name]))
                 block_of_line.extend(body)
                 end = sorted(written if dirty_end is None else dirty_end, key=order)
                 if keep_out is not None:
                     end = [r for r in end if keep_out(r)]  # port 74, its idea 37
+                if name in member_refs:
+                    end = []  # (SSASR_MEMBER_REFS: nothing to write back)
                 if end and not (numbered and ONLY_RETURN.match(numbered[-1][1])):
                     block_of_line.append(('\t' + ' '.join(f'ctx.{r} = l_{r};' for r in end), block))
                 if CARD_RUNS and not (numbered and ONLY_RETURN.match(numbered[-1][1])):
@@ -1577,9 +1767,27 @@ def localize(index, hooks, reach, root, what, opts, out_dir, quiet=False, hand=N
     # The registers the hand-written natives in this header leave as they found them where the original changes them.
     hand_members = [m for m in members if m in hand]
     skip = set()
+
+    def tree_written(m):
+        """ssasr-nx (2026-11-26): what m and everything it calls write. A native stands in for m's whole call tree
+        unless it calls guest functions itself (hand.txt calls=), so the registers its callees leave are the
+        original's too (this game's memcpy: its 128-byte misaligned helper sub_82171AE0 leaves v1-v9, which the
+        native does not reproduce; the guard compared them and stopped the native at its first such call)."""
+        if hand[m].get('calls'):
+            return set(funcs[m]['written'])
+        seen, stack, out = set(), [m], set()
+        while stack:
+            n = stack.pop()
+            if n in seen or n not in funcs:
+                continue
+            seen.add(n)
+            out |= set(funcs[n]['written'])
+            stack.extend(base_name(c) for c in funcs[n]['callees'] if base_name(c))
+        return out
+
     for m in hand_members:
         if not hand[m].get('inexact'):
-            skip |= set(funcs[m]['written']) - hand[m]['exact']
+            skip |= tree_written(m) - hand[m]['exact']
     # sasrt-nx (2026-11-11, port 74; its idea 37): the registers the hook may leave different from the original: those
     # dead after the root returns (its LiveOut). A member's dropped write-back of a register live after the root is
     # rewritten before the root's exit (or LiveOut would have kept it): still compared (sasrt-nx's round A audit,
@@ -1593,7 +1801,7 @@ def localize(index, hooks, reach, root, what, opts, out_dir, quiet=False, hand=N
     # blur-nx (2026-11-16): the guest calls of the natives that make any (hand.txt calls=), after the declarations.
     for m in hand_members:
         if hand[m].get('calls'):
-            declarations.extend([''] + calls_struct(hand[m], member_set, externs, hand))
+            declarations.extend([''] + calls_struct(hand[m], member_set, externs, hand, member_refs))
     hand_note = ('' if not hand_members else
                  '\n// Hand-written natives in front of their copies (app/src/cpu/hot/banjo_hand_natives.h): '
                  + ', '.join(hand_members) + '.\n// Registers the guard does not compare for this hook (they leave '
@@ -1842,6 +2050,11 @@ def main():
         print(f'localize_native: {CONST_ARG_FORCED[0]} members with a constant argument forced inline (idea 34)')
         print(f'localize_native: {ABI_SKIPPED[1]} non-volatile register reloads left out after {ABI_SKIPPED[0]} real '
               f'calls (#232, ABI trust{"" if ABI_TRUST else ": OFF"})')
+        print(f'localize_native: {MEMBER_REFS_STATS[1]} members take their registers by reference, {MEMBER_REFS_STATS[0]} '
+              f'calls of them without a hand-over (SSASR_MEMBER_REFS{"" if MEMBER_REFS else ": OFF"})')
+        if MEMBER_REFS_WHY:
+            print('localize_native: members (each header counted): ' +
+                  ', '.join(f'{k} {v}' for k, v in sorted(MEMBER_REFS_WHY.items(), key=lambda t: -t[1])))
         # Port 74 (its idea 39; sasrt-nx's batch 2 audit, finding 2): the shards turn the card runs on only for copies
         # written with them (app/src/cpu/banjo_hot_prelude.h reads this header).
         opt = os.path.join(a.out, 'banjo_hot_options.h')

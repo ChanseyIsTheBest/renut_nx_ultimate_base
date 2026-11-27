@@ -59,8 +59,12 @@ def function_addresses(gen):
     return names
 
 
-PLAIN = re.compile(r'^\tREX_CALL_INDIRECT_FUNC\(((?:ctx\.)?ctr\.u32)\);$')
-SITE = re.compile(r'^\tREX_CALL_INDIRECT_FUNC_AT\(0x[0-9A-F]{8}, \d+, ((?:ctx\.)?ctr\.u32)\);$')
+# ssasr-nx (2026-11-25): without the register diet (elide_lr_stores) the generator writes `ctx.lr = 0x...;` between
+# the `// bctrl` comment and the call, and the r1 local adds ` REX_R1_ASSUMED();` after it: such sites were never
+# tagged (0 sites in ssasr-nx's first trees, so the PC census named no call site). Both are accepted and kept.
+SUFFIX = r'((?: REX_R1_ASSUMED\(\);)?)'
+PLAIN = re.compile(r'^\tREX_CALL_INDIRECT_FUNC\(((?:ctx\.)?ctr\.u32)\);' + SUFFIX + '$')
+SITE = re.compile(r'^\tREX_CALL_INDIRECT_FUNC_AT\(0x[0-9A-F]{8}, \d+, ((?:ctx\.)?ctr\.u32)\);' + SUFFIX + '$')
 PROMOTED = re.compile(r'^\tif \(REX_PROMOTED_IS\(((?:ctx\.)?ctr\.u32), 0x[0-9A-F]{8}u\)\) \[\[likely\]\] \{ '
                       r'REX_PROMOTED_CALL\(.*\} else \{ REX_CALL_INDIRECT_FUNC_AT\(.*\); \}$')
 MARKER = '// rexglue ports: indirect call sites (tools/indirect_calls.py)'
@@ -185,12 +189,14 @@ def main():
             # Only the plain `bctrl` form: the generator's other indirect calls (the forms that save and restore
             # registers around the call, tail calls) are left as they are and not counted.
             m = PLAIN.match(line) or SITE.match(line) or PROMOTED.match(line)
-            if not m or i == 0 or not lines[i - 1].startswith('\t// bctrl'):
+            prev = lines[i - 2] if i >= 2 and lines[i - 1].startswith('\tctx.lr = ') else (lines[i - 1] if i else '')
+            if not m or i == 0 or not prev.startswith('\t// bctrl'):
                 continue
+            suffix = m.group(2) if m.re is not PROMOTED and m.lastindex and m.lastindex >= 2 else ''
             site = ordinal
             ordinal += 1
             expr = m.group(1)
-            tag = 'REX_CALL_INDIRECT_FUNC_AT(0x%s, %d, %s);' % (function, site, expr)
+            tag = 'REX_CALL_INDIRECT_FUNC_AT(0x%s, %d, %s);%s' % (function, site, expr, suffix)
             wanted = promote.get((function, site))
             if wanted:
                 for target in wanted:

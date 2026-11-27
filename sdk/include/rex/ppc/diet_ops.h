@@ -45,10 +45,28 @@ extern "C" volatile unsigned long long g_rex_diet_census[6];
 //   31 #43 exp memo hits, 32 its misses (cpu/hot/blur_hand_natives_batch2.h)
 //   33 #66 the copies' run marks on a page Renut reads, 34 of them writing the card (26: the run marks with a run)
 #if defined(REX_DIET_CENSUS_ON) && !defined(__SWITCH__)
-extern "C" volatile unsigned long long g_rex_nx_census[48];
+extern "C" volatile unsigned long long g_rex_nx_census[64];
 #define REX_NX_CENSUS(k) (g_rex_nx_census[k] = g_rex_nx_census[k] + 1)
 #define REX_NX_CENSUS_IF(c, k) ((c) ? (void)REX_NX_CENSUS(k) : (void)0)
 #define REX_NX_CENSUS_ON 1
+// ssasr-nx (2026-11-26, batch 4's differential census): a single-precision result the relaxed form (SSASR_RELAXED_FLOATS)
+// would give, against the exact one, classified: 44 one ulp or less apart, 45 more, 46 the relaxed one NaN or infinite
+// where the exact one is finite, 47 the exact one NaN or infinite where the relaxed one is finite (42 counts every
+// operation, 41 those with an input that is not a single).
+inline void RexLooseDiffCensus(double exact, double loose) {
+  const float e = float(exact), l = float(loose);
+  uint32_t eb, lb;
+  __builtin_memcpy(&eb, &e, 4);
+  __builtin_memcpy(&lb, &l, 4);
+  if (eb == lb) return;
+  const bool e_fin = __builtin_isfinite(e), l_fin = __builtin_isfinite(l);
+  if (e != e && l != l) return;  // both NaN (payloads aside)
+  if (e_fin && !l_fin) { REX_NX_CENSUS(46); return; }
+  if (!e_fin && l_fin) { REX_NX_CENSUS(47); return; }
+  auto key = [](uint32_t v) { return (v & 0x80000000u) ? 0x80000000u - (v & 0x7FFFFFFFu) : 0x80000000u + v; };
+  const uint32_t x = key(eb), y = key(lb);
+  REX_NX_CENSUS((x > y ? x - y : y - x) <= 1 ? 44 : 45);
+}
 #else
 #define REX_NX_CENSUS(k) ((void)0)
 #define REX_NX_CENSUS_IF(c, k) ((void)0)
@@ -267,8 +285,15 @@ REX_SMALL_HELPER int64_t divd(int64_t n, int64_t d) noexcept {
 /// register is not read again.
 REX_SMALL_HELPER double SingleToDoublePure(uint32_t bits) noexcept {
   REX_DIET_CENSUS(4);
+#if defined(REX_SSASR_PURE_FLUSH) && defined(REX_FPCR_ONE_MODE)
+  // ssasr-nx (2026-11-26, SSASR_NON_EXACT): the plain conversion; in the one flush mode a denormal single reads as zero
+  // (the Xenon's scalar FPU keeps it). The census counts them (REX_NX_CENSUS 40) on the PC.
+  REX_NX_CENSUS_IF((bits & 0x7F800000u) == 0 && (bits & 0x007FFFFFu) != 0, 40);
+  return double(std::bit_cast<float>(bits));
+#endif
   const uint32_t fraction = bits & 0x007FFFFFu;
   if ((bits & 0x7F800000u) == 0 && fraction != 0) [[unlikely]] {
+    REX_NX_CENSUS(40);  // ssasr-nx (2026-11-26): a denormal single through a float copy (REX_SSASR_PURE_FLUSH reads it as 0)
     const int shift = __builtin_clz(fraction) - 8;  // 1..23: brings the leading one to bit 23
     const uint64_t exponent = uint64_t(1023 - 126 - shift);
     const uint64_t mantissa = uint64_t((fraction << shift) & 0x007FFFFFu) << 29;

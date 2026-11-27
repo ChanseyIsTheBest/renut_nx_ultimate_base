@@ -4109,13 +4109,19 @@ void RecordRun(u32 device_va, u32 command_buffer_va) {
     op->command_buffer = command_buffer_va;
 }
 
+// ssasr-nx (2026-11-26, batch 4 #15): this device's count of waiting recorded vertices, for the hooks' inline check
+// (command_buffers.h RecordedVerticesNoneFor).
+std::atomic<u32> *const g_recorded_pending_by_device = g_pending_by_device;
+
 void FlushRecordedVertices(u32 device_va) {
   // banjo-nx (2026-10-20, from sa2-nx, banjo_renut_callbacks_fast): every hook calls this first; nothing pending (always so without
   // command buffers, SA2's case) needs no lock. g_pending_count is kept under g_record_mutex (SyncPendingCount).
   // blur-nx (2026-11-17, blur_renut_flush_fast_local): this device's count (FlushDevicePending takes nothing else).
   static const bool local = REXCVAR_GET(blur_renut_flush_fast_local);
-  if (HookFastPathsOn() && (local ? PendingOf(device_va).load(std::memory_order_acquire) == 0
-                                  : g_pending_count.load(std::memory_order_acquire) == 0))
+  // ssasr-nx (2026-11-27, the host follow-up): relaxed loads (were acquire, an LDAR at every hook): nonzero takes
+  // g_record_mutex below, which orders the pending lists.
+  if (HookFastPathsOn() && (local ? PendingOf(device_va).load(std::memory_order_relaxed) == 0
+                                  : g_pending_count.load(std::memory_order_relaxed) == 0))
     return;
   std::lock_guard lock(g_record_mutex);
   FlushDevicePending(device_va);

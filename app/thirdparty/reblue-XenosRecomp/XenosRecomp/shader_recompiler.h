@@ -42,6 +42,10 @@ struct ShaderRecompiler : StringBuffer
     // Structured if/else emission: instruction indices where a "} else {" is
     // emitted (then-branch close is part of the event, not ifEndLabels).
     std::unordered_set<uint32_t> elseLabels;
+    // ssasr-nx (2026-11-25): do-while loops closed by a backward conditional jump: the instruction indices where a
+    // "do {" opens (the jump's target) and the jumps that close one with "} while (condition);".
+    std::unordered_set<uint32_t> doLabels;
+    std::unordered_set<uint32_t> doWhileEnds;
 #endif
     uint32_t specConstantsMask = 0;
 

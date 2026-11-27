@@ -1,6 +1,7 @@
 /**
  * @file    gpu/render/surfaces.cpp
  */
+#include "renut_engine/gpu/ssasr_host50.h"  // ssasr-nx (2026-11-26, batch 4)
 #include "renut_engine/gpu/render/surfaces.h"
 
 #include <algorithm>
@@ -61,6 +62,9 @@ REXCVAR_DEFINE_STRING(renut_resolution, "720p", "Nuts&Bolts/Graphics",
                       "Internal render resolution, by its height: 480p, 720p (the game's own), "
                       "1080p, 1440p or 4K (2160 lines). Applies from the next frame.")
     .allowed({"480p", "720p", "1080p", "1440p", "4K"});
+
+// ssasr-nx (2026-11-26, batch 4 #17): CaptureStackHeaders latches it (banjo_renut_tuning.cpp defines it).
+REXCVAR_DECLARE(bool, blur_renut_stack_surface_headers);  // banjo_renut_tuning.cpp
 
 namespace renut::gpu {
 
@@ -1480,8 +1484,39 @@ HostSurface *SampleGridAliasLocked(const HostSurface *s) {
 // blur-nx (2026-11-10, port 76; its key 215; see surfaces.h): the operation being replayed (render thread).
 const StackHeaderSet *g_replay_stack_headers = nullptr;
 
+// ssasr-nx (2026-11-26, batch 4 #17, ssasr_renut_host50): the draw's surfaces first, with the keys latched (two calls
+// and three statics' guards a draw before: 0.09 ms a frame of the game thread): with only the stack's headers kept
+// (banjo_renut_all_surface_headers off, the default) and none of the five bound surfaces on the stack (the usual
+// draw), nothing is captured, as the loop below finds. 1: off, 2: the stack's, 3: every bound surface's.
+int g_stack_header_mode = 0;
+[[gnu::noinline, gnu::cold]] int LatchStackHeaderMode() {
+  const bool on = REXCVAR_GET(blur_renut_stack_surface_headers);
+  g_stack_header_mode = !on ? 1 : AllSurfaceHeadersOn() ? 3 : 2;
+  return g_stack_header_mode;
+}
+
 void CaptureStackHeaders(const u8 *device, StackHeaderSet &out) {
   out.count = 0;
+  if (::ssasr::host50::On(17) && device) {
+    const int mode = g_stack_header_mode ? g_stack_header_mode : LatchStackHeaderMode();
+    if (mode == 1 || banjo::renut_gpu::g_ab_off_plain == 215)  // (StackSurfaceHeadersOn's A/B half)
+      return;
+    if (mode == 2) {
+      u32 w[5];
+      std::memcpy(w, device + d3d::kDeviceOffsetRenderTargets, 16);
+      std::memcpy(w + 4, device + d3d::kDeviceOffsetDepthStencil, 4);
+      bool any = false;
+      for (const u32 v : w)
+        any |= StackVa(__builtin_bswap32(v));
+      if (::ssasr::host50::CensusOn()) [[unlikely]] {  // ssasr-nx (2026-11-27, the release census)
+        ::ssasr::host50::Add(::ssasr::host50::kStackChecks);
+        if (any)
+          ::ssasr::host50::Add(::ssasr::host50::kStackSurfaces);
+      }
+      if (!any)
+        return;
+    }
+  }
   if (!device || !banjo::renut_gpu::StackSurfaceHeadersOn())
     return;
   const auto be = [device](u32 off) {
@@ -1836,6 +1871,27 @@ HostSurface *DepthRestoreSourceLocked(const HostSurface *depth) {
               (c->format == plume::RenderFormat::R8G8B8A8_UNORM || c->format == plume::RenderFormat::B8G8R8A8_UNORM))
             d->sasrt_restore_candidates.push_back(c);
         }
+      // ssasr-nx (2026-11-25, diagnostic): the depth target's EDRAM base and pitch and every colour target over the same
+      // base (any pitch), with what the candidate test above looks at: why a game's depth-as-colour copy (Sonic & SEGA
+      // All-Stars Racing's half-res depth for its bloom source pass) is or is not taken. The first 12 depth targets.
+      static uint32_t diag_logged = 0;
+      if (own_found && diag_logged < 12) {
+        ++diag_logged;
+        std::string others;
+        for (const auto &[key, target] : g_targets) {
+          const HostSurface *c = target.get();
+          if (c && !c->depth && (key & 0xFFF) == (own_key & 0xFFF))
+            others += fmt::format(" [{:08X} {}x{} pitch {} msaa {} format {} samples {} scale {}{}]", c->guest_va,
+                                  c->width, c->height, (key >> 12) & 0x3FFF, (key >> 26) & 3, u32(c->format),
+                                  u32(c->samples), c->scale.code,
+                                  std::find(d->sasrt_restore_candidates.begin(), d->sasrt_restore_candidates.end(),
+                                            c) != d->sasrt_restore_candidates.end() ? " CANDIDATE" : "");
+        }
+        RGPU_INFO("[renut] depth restore candidates of depth target {:08X} {}x{} (EDRAM base {}, pitch {}, msaa {}): {} "
+                  "taken; colour targets at the same base:{}", depth->guest_va, depth->width, depth->height,
+                  own_key & 0xFFF, (own_key >> 12) & 0x3FFF, (own_key >> 26) & 3, d->sasrt_restore_candidates.size(),
+                  others.empty() ? " none" : others);
+      }
       sasrt::gpu_round::Count(sasrt::gpu_round::kRtRestoreCandidates, 1, 1);
     }
     HostSurface *best = nullptr;

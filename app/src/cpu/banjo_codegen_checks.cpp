@@ -67,11 +67,77 @@ volatile unsigned long long g_rex_r1_checked = 0;
 volatile unsigned long long g_rex_lr_write_checked = 0;
 // sasrt-nx (2026-11-12, its idea 2; port 121): tools/stack_forward.py's REX_STACK_FWD_VERIFY (the hooked builds).
 volatile unsigned long long g_rex_stack_fwd_checked = 0;
+// ssasr-nx (2026-11-27, loads batch, idea 4): tools/call_reloads.py's REX_CALL_FWD (checked with REX_STACK_FWD_VERIFY).
+volatile unsigned long long g_rex_call_fwd_checked = 0;
 // rex/ppc/diet_ops.h, REX_DIET_CENSUS_ON: executions of the any-mode float helpers in the game code (conversions,
 // compares, arithmetic, cold paths, float copy loads and stores).
 volatile unsigned long long g_rex_diet_census[6] = {};
 // blur-nx (2026-11-13, docs/cpu-near-exact-50-1113.md): the near-exact ideas' census (rex/ppc/diet_ops.h REX_NX_CENSUS).
-volatile unsigned long long g_rex_nx_census[48] = {};
+volatile unsigned long long g_rex_nx_census[64] = {};
+}
+
+#if !defined(__SWITCH__)
+// ssasr-nx (2026-11-26, batch 4): the stale-read census of the frame elisions (tools/ssasr_stale_census.py,
+// REX_SSASR_STALE_CENSUS): the elided stores write the poison word while this is set; a load that reads it reports here
+// (the first 40 with their guest address, then a count every 10,000).
+thread_local int g_rex_poison_store = 0;
+// ssasr-nx (2026-11-26, batch 4, after the P3/P4 run's 272 M reads): the readers, by their host return address (in the
+// generated function or copy whose load it was: the load is inline there), counted in a small table and reported
+// with the census (StaleReadersReport, "+0x<offset> of the executable": llvm-symbolizer on renut.exe names them).
+namespace {
+constexpr uint32_t kStaleReaderSlots = 4096;
+std::atomic<uintptr_t> g_stale_reader_pc[kStaleReaderSlots];
+std::atomic<uint64_t> g_stale_reader_n[kStaleReaderSlots];
+std::atomic<uint64_t> g_stale_reader_lost{0};
+void NoteStaleReader(uintptr_t pc) {
+  uint32_t i = uint32_t((pc * 0x9E3779B97F4A7C15ull) >> 52) & (kStaleReaderSlots - 1);
+  for (uint32_t k = 0; k < 64; ++k, i = (i + 1) & (kStaleReaderSlots - 1)) {
+    uintptr_t seen = g_stale_reader_pc[i].load(std::memory_order_relaxed);
+    if (seen == 0 && g_stale_reader_pc[i].compare_exchange_strong(seen, pc, std::memory_order_relaxed))
+      seen = pc;
+    if (seen == pc) {
+      g_stale_reader_n[i].fetch_add(1, std::memory_order_relaxed);
+      return;
+    }
+  }
+  g_stale_reader_lost.fetch_add(1, std::memory_order_relaxed);
+}
+}  // namespace
+extern "C" void RexStaleHit(uint32_t ea, uint64_t value, int width);
+void StaleReadersReport() {
+  struct Row {
+    uintptr_t pc;
+    uint64_t n;
+  };
+  std::vector<Row> rows;
+  for (uint32_t i = 0; i < kStaleReaderSlots; ++i)
+    if (const uintptr_t pc = g_stale_reader_pc[i].load(std::memory_order_relaxed))
+      rows.push_back({pc, g_stale_reader_n[i].load(std::memory_order_relaxed)});
+  if (rows.empty())
+    return;
+  std::sort(rows.begin(), rows.end(), [](const Row &a, const Row &b) { return a.n > b.n; });
+  std::string top;
+  for (size_t i = 0; i < rows.size() && i < 40; ++i)
+    top += fmt::format(" {:#x} x{};", rows[i].pc, rows[i].n);
+  // The anchor: RexStaleHit's own address (its symbol's address in renut.pdb gives the image's offset).
+  REXLOG_INFO("[census] ssasr stale readers (cumulative, {} sites, {} not kept; RexStaleHit at {:#x}): {}", rows.size(),
+              g_stale_reader_lost.load(std::memory_order_relaxed), reinterpret_cast<uintptr_t>(&RexStaleHit), top);
+}
+extern "C" [[gnu::noinline]] void RexStaleHit(uint32_t ea, uint64_t value, int width) {
+  NoteStaleReader(reinterpret_cast<uintptr_t>(__builtin_return_address(0)));
+  static std::atomic<uint64_t> hits{0};
+  const uint64_t n = hits.fetch_add(1, std::memory_order_relaxed) + 1;
+  if (n <= 40 || n % 10000 == 0)
+    REXLOG_INFO("[census] ssasr stale frame word read #{}: {}-byte load of {:#010x} returned the poison {:#x}", n,
+                width, ea, value);
+}
+#else
+void StaleReadersReport() {}
+#endif
+
+// ssasr-nx (2026-11-26, batch 4 row 11): the copies' redundancy census (cpu/banjo_hot_guest.cpp MemoReport).
+namespace banjo::hot {
+void MemoReport();
 }
 
 #if !defined(__SWITCH__)
@@ -150,6 +216,7 @@ std::atomic<uint64_t> g_flush_flow_mismatches{0};
 std::atomic<uint64_t> g_r1_mismatches{0};
 std::atomic<uint64_t> g_lr_write_mismatches{0};
 std::atomic<uint64_t> g_stack_fwd_mismatches{0};  // port 121
+std::atomic<uint64_t> g_call_fwd_mismatches{0};   // ssasr-nx (loads batch, idea 4)
 
 // One call site: (function address << 32) | ordinal. Up to four targets are told apart; the rest is "other".
 struct Site {
@@ -205,6 +272,17 @@ extern "C" void RexStackFwdMismatch(unsigned address) noexcept {
     REXLOG_ERROR("[enhancements] DIFFERENCE: stack forwarding: the vector load of the stack slot at {:08X} does not read "
                  "the four words its stores wrote (tools/stack_forward.py)",
                  address);
+  }
+}
+
+// ssasr-nx (2026-11-27, loads batch, idea 4): a guest reload after a call tools/call_reloads.py forwards read something
+// else for real (the callee's write summary, or the block's records, wrong).
+extern "C" void RexCallFwdMismatch(unsigned address, unsigned long long kept, unsigned long long loaded) noexcept {
+  ::me::native::VerifyDifference();
+  if (g_call_fwd_mismatches.fetch_add(1, std::memory_order_relaxed) < 16) {
+    REXLOG_ERROR("[enhancements] DIFFERENCE: call reload forwarding: the reload of {:08X} after a call reads {:X}, the "
+                 "value kept from before the call is {:X} (tools/call_reloads.py)",
+                 address, loaded, kept);
   }
 }
 
@@ -308,8 +386,8 @@ void RuntimeCensusReport(int seconds) {
     // blur-nx (2026-11-13, docs/cpu-near-exact-50-1113.md): each rare case a near-exact switch would change, cumulative
     // (rex/ppc/diet_ops.h REX_NX_CENSUS: the numbers there are the doc's idea numbers).
     {
-      unsigned long long nx[48];
-      for (int i = 0; i < 48; ++i) nx[i] = g_rex_nx_census[i];
+      unsigned long long nx[64];
+      for (int i = 0; i < 64; ++i) nx[i] = g_rex_nx_census[i];
       REXLOG_INFO("[census] near-exact (cumulative): #1 signalling NaNs at float copy stores {} | #2 NaNs into "
                   "float-to-integer conversions {} | #17 signed divisions by zero {}, INT_MIN / -1 {}, unsigned "
                   "divisions by zero {} | #41 float compares with a NaN {} | #42 vector max/min with a differing lane "
@@ -327,8 +405,21 @@ void RuntimeCensusReport(int seconds) {
                   "than 1 (the copy would newly take them) {}",
                   nx[27], nx[28]);
       REXLOG_INFO("[census] near-exact #43 (cumulative): exp memo hits {}, misses {} (cpu_nx_exp_memo)", nx[31], nx[32]);
+      // ssasr-nx (2026-11-26, the non-exact batch): what SSASR_NON_EXACT / SSASR_RELAXED_FLOATS would change.
+      REXLOG_INFO("[census] ssasr non-exact (cumulative): denormal singles through float copies {} | single ops with an "
+                  "input that is not a single {} of {}; the relaxed result against the exact one for those: one ulp or "
+                  "less apart {}, more than one ulp {}, NaN or infinite where the exact one is finite {}, finite where "
+                  "the exact one is NaN or infinite {} (the rest the same)",
+                  nx[40], nx[41], nx[42], nx[44], nx[45], nx[46], nx[47]);
+      // ssasr-nx (2026-11-26, batch 4): the stale-read census of the frame elisions (REX_SSASR_STALE_CENSUS).
+      REXLOG_INFO("[census] ssasr stale frame words (cumulative): elided stores written as the poison word {}, guest "
+                  "loads that read it {} (32-bit) / {} (64-bit)",
+                  nx[50], nx[51], nx[52]);
+      if (nx[51] || nx[52])
+        StaleReadersReport();
 #if !defined(__SWITCH__)
       CasCensusReport();  // blur-nx (2026-11-13, #32)
+      ::banjo::hot::MemoReport();  // ssasr-nx (2026-11-26, batch 4 row 11)
       REXLOG_INFO("[census] near-exact #57 / #34 (cumulative): single-object waits that succeeded {}, polls (a zero "
                   "timeout) {}, of them timed out (then a yield) {}",
                   CensusRead(rex::syscount::kCensusWaitSignalled), CensusRead(rex::syscount::kCensusWaitPoll),
@@ -462,6 +553,15 @@ void CodegenChecksReport(int seconds) {
                   "0 differences", r1, lr);
     }
   }
+  if (const uint64_t cfwd = g_rex_call_fwd_checked) {  // ssasr-nx (loads batch, idea 4)
+    const uint64_t wrong = g_call_fwd_mismatches.load(std::memory_order_relaxed);
+    if (wrong)
+      REXLOG_ERROR("[enhancements] DIFFERENCE: generated-code self-checks (cumulative): call reload forwards {} of {} wrong",
+                   wrong, cfwd);
+    else
+      REXLOG_INFO("[verify] call reload forwards (tools/call_reloads.py) checked against the real load: {}; 0 differences",
+                  cfwd);
+  }
   if (const uint64_t fwd = g_rex_stack_fwd_checked) {  // sasrt-nx (2026-11-12, its idea 2; port 121)
     const uint64_t wrong = g_stack_fwd_mismatches.load(std::memory_order_relaxed);
     if (wrong)
@@ -532,10 +632,20 @@ void CodegenChecksReport(int seconds) {
 // console builds never reference these.
 extern "C" {
 volatile unsigned long long g_rex_stack_fwd_checked = 0;
+volatile unsigned long long g_rex_call_fwd_checked = 0;  // ssasr-nx (loads batch, idea 4)
 }
 
 namespace {
 std::atomic<uint64_t> g_stack_fwd_mismatches{0};
+std::atomic<uint64_t> g_call_fwd_mismatches{0};
+}
+
+extern "C" void RexCallFwdMismatch(unsigned address, unsigned long long kept, unsigned long long loaded) noexcept {
+  if (g_call_fwd_mismatches.fetch_add(1, std::memory_order_relaxed) < 16) {
+    REXLOG_ERROR("[enhancements] DIFFERENCE: call reload forwarding: the reload of {:08X} after a call reads {:X}, the "
+                 "value kept from before the call is {:X} (tools/call_reloads.py)",
+                 address, loaded, kept);
+  }
 }
 
 extern "C" void RexStackFwdMismatch(unsigned address) noexcept {

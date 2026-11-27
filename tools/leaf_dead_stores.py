@@ -378,6 +378,90 @@ def sections(img):
 COPY_LISTS = {os.path.normcase(os.path.join(ROOT, 'app', 'src', 'cpu', 'hot', n))
               for n in ('localized.txt', 'localized_bulk.txt')}
 NON_HOOK_LIST = os.path.normcase(os.path.join(ROOT, 'app', 'indirect_promotions.txt'))  # blur-nx (2026-11-12): below
+# ssasr-nx (2026-11-27, loads batch M3): mentions that name a function without calling it, left out of address_taken's
+# scan: the natives' lists (hand.txt, ssasr_natives.txt: a native runs for the same direct callers, like a copy's hook;
+# but hand.txt's calls= names stay: a hand-written native calls those from C++, which may read anything after them),
+# the code generator's keep / exclude arrays in a toml (non_volatile_as_local_exclude, non_argument_as_local_keep,
+# non_volatile_as_local_keep; not a [functions] table: below), and in C++ comments, string literals and the natives' enum
+# names (kNative_<address>). The census (out/loads_plan.md, M3): 208 of the 790 functions the sources name were named
+# only so, every one with LiveOut ALL, 31.7 % of the main thread's samples in the console race loadsA (the natives of
+# sub_82468C28, 82469D78, 82456A70 and the copies of 824568C8, 8246AC00 first): their copies and natives wrote back
+# every volatile register they touched at each return, and reloaded them after their own calls to do it. A mention in
+# C++ code (a hook, a host call of a guest function) still counts. SSASR_LIVE_OUT_NAMES_ALL=1: every mention, as before.
+NAMES_ALL = os.environ.get('SSASR_LIVE_OUT_NAMES_ALL', '0') == '1'
+NATIVE_LISTS = {os.path.normcase(os.path.join(ROOT, 'app', 'src', 'cpu', 'hot', n))
+                for n in ('ssasr_natives.txt',)}
+HAND_LIST = os.path.normcase(os.path.join(ROOT, 'app', 'src', 'cpu', 'hot', 'hand.txt'))
+TOML_NONCALLING_ARRAYS = ('non_volatile_as_local_exclude', 'non_argument_as_local_keep', 'non_volatile_as_local_keep')
+
+
+def calling_text(path, text):
+    """ssasr-nx (loads batch M3): `text` with the mentions that cannot call blanked (same length): a toml's code
+    generator keep / exclude arrays; C++ comments, string and character literals and kNative_<address> names;
+    hand.txt but for its calls= lists (the hand-written natives' callees)."""
+    if os.path.normcase(os.path.abspath(path)) == HAND_LIST:
+        # A native tools/ssasr_native_gen.py writes from its copy (an ssasr_natives.txt entry) runs the copy's own
+        # statements: after a call it reads what the generated caller reads, which the call site already describes.
+        # The calls= of the others, written by hand, count.
+        generated = set()
+        try:
+            for line in open(os.path.join(ROOT, 'app', 'src', 'cpu', 'hot', 'ssasr_natives.txt'), encoding='utf-8'):
+                m = re.match(r'\s*([0-9A-Fa-f]{8})\b', line)
+                if m:
+                    generated.add(m.group(1).upper())
+        except OSError:
+            pass
+        out = []
+        for line in re.sub(r'#[^\n]*', ' ', text).split('\n'):
+            m = re.match(r'\s*(?:sub_)?([0-9A-Fa-f]{8})\b', line)
+            if m and m.group(1).upper() in generated:
+                continue
+            out += re.findall(r'\bcalls=(\S+)', line)
+        return ' '.join(out)
+    if path.endswith('.toml'):
+        s = text
+        for key in TOML_NONCALLING_ARRAYS:
+            m = re.search(r'^' + key + r'\s*=\s*\[', s, re.M)
+            if not m:
+                continue
+            depth, j = 0, m.end() - 1
+            while j < len(s):
+                if s[j] == '[':
+                    depth += 1
+                elif s[j] == ']':
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            s = s[:m.start()] + re.sub(r'[^\n]', ' ', s[m.start():j + 1]) + s[j + 1:]
+        # (Not a [functions] table: app/overrides.toml's lists the functions tools/pointer_fixpoint.py found through
+        # code pointers, in data or built in code. Those are reached through pointers that this scan's own data-word
+        # and lis-pair passes may not see, so their mention keeps them taken.)
+        return s
+    if not path.endswith(('.cpp', '.h', '.hpp', '.inc', '.c')):
+        return text
+    out = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if text.startswith('//', i):
+            j = text.find('\n', i)
+            j = n if j < 0 else j
+        elif text.startswith('/*', i):
+            j = text.find('*/', i + 2)
+            j = n if j < 0 else j + 2
+        elif c in '"\'' and not (c == '\'' and i > 0 and text[i - 1].isalnum()):  # (not a digit separator: 0x8200'0000)
+            j = i + 1
+            while j < n and text[j] != c and text[j] != '\n':
+                j += 2 if text[j] == '\\' else 1
+            j = min(n, j + 1)
+        else:
+            out.append(c)
+            i += 1
+            continue
+        out.append(re.sub(r'[^\n]', ' ', text[i:j]))
+        i = j
+    return re.sub(r'\bkNative_[0-9A-Fa-f]{8}\b', lambda m: ' ' * len(m.group(0)), ''.join(out))
 # sasrt-nx (2026-11-11, port 74; its idea 37): every function's LiveOut, for tools/localize_native.py (a copy writes back
 # at a return only the volatile registers a caller can read).
 LIVE_OUT_JSON = os.path.join(ROOT, 'out', 'leaf_live_out.json')
@@ -463,10 +547,14 @@ def address_taken(gen, image, starts, bodies):
             if os.environ.get('BLUR_LIVE_OUT_LISTS_NAMED', '0') != '1' and (
                     os.path.normcase(os.path.abspath(path)) == NON_HOOK_LIST or path.endswith('.draft.txt')):
                 continue
+            if not NAMES_ALL and os.path.normcase(os.path.abspath(path)) in NATIVE_LISTS:  # ssasr-nx (loads batch M3)
+                continue
             try:
                 text = open(path, encoding='utf-8', errors='ignore').read()
             except OSError:
                 continue
+            if not NAMES_ALL:
+                text = calling_text(path, text)  # ssasr-nx (loads batch M3)
             for h in re.findall(r'(?<![0-9A-Fa-f])(8[23][0-9A-Fa-f]{6})(?![0-9A-Fa-f])', text):
                 a = int(h, 16)
                 if a in starts:

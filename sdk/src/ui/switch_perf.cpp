@@ -146,6 +146,7 @@ constexpr size_t kFrames = 10;
 constexpr unsigned kCounterCount = 64;
 }  // namespace
 extern "C" const char* RexAppBuildStamp(void);  // port 193: switch_crash_hooks.c (weak), app/src/build_stamp.cpp
+extern "C" uint8_t* RexGmBase(void);            // ssasr-nx (loads batch M1): guest_memory_switch.cpp, the guest window
 namespace {
 // banjo-nx (2026-11-01, the public build; port 230): whether rex_profile.log is written (logging on, or stack
 // sampling).
@@ -186,8 +187,123 @@ struct Sample {
   u64 lr;
   u64 frames[kFrames];  // return addresses along the x29 chain
   u16 slot;
+  // ssasr-nx (2026-11-27, loads batch M1): with switch_profile_addresses, the access of the sampled instruction (kind 0:
+  // not a load or store; size 0: a vector structure access, its size not worked out) and where it falls (AddrClass).
+  u8 ea_kind;
+  u8 ea_size;
+  u8 ea_class;
   u64 tick;  // when it was taken (armGetSystemTick), to separate those from long frames
+  u64 ea;
 };
+
+// ssasr-nx (2026-11-27, loads batch M1: L30, the mirror-window census, with L28's L1 sets, L48's heap placement and
+// L78's line-crossing loads): the TLB test (banjo_tlb_test_s) put a scattered access to the 0xE0000000 view at +34 ns,
+// against +1-4 ns in the others: that view maps the physical memory 0x1000 further on (xmemory.cpp's map_info, the
+// 360's own layout), so its 2 MB chunks never line up with their backing and the kernel maps it with 4 KB pages. Which
+// view the game thread's loads go to says whether that is worth anything. So each sample at a load or store decodes the
+// instruction (A64's load/store class) and works out its address from the paused thread's registers.
+bool g_addr_census = false;
+enum : u8 { kAccNone = 0, kAccLoad = 1, kAccStore = 2, kAccPrefetch = 3 };
+constexpr unsigned kAddrClasses = 12;
+const char* const kAddrClassNames[kAddrClasses] = {
+    "?",          "guest 0-1 MB (cards)", "guest 00-3F",     "guest 40-7F", "guest image 80-9F", "guest A0 (64 KB)",
+    "guest C0 (16 MB)", "guest E0 (4 KB)", "window over 4 GB", "host stack",  "host module",       "host other"};
+
+u64 CtxReg(const ThreadContext& c, unsigned n, bool sp31) {
+  if (n < 29) return c.cpu_gprs[n].x;
+  if (n == 29) return c.fp;
+  if (n == 30) return c.lr;
+  return sp31 ? c.sp : 0;
+}
+
+u64 SignExtend(u64 v, unsigned bits) {
+  const u64 m = u64(1) << (bits - 1);
+  v &= (u64(1) << bits) - 1;
+  return (v ^ m) - m;
+}
+
+// The access of A64 instruction `i` at `pc` with the registers of `c`: its kind, address and size in bytes.
+u8 DecodeAccess(u32 i, u64 pc, const ThreadContext& c, u64& ea, u8& size) {
+  ea = 0;
+  size = 0;
+  if ((i & 0x0A000000u) != 0x08000000u) return kAccNone;  // op0 x1x0: loads and stores
+  const u64 xn = CtxReg(c, (i >> 5) & 31, true);
+  const bool v = (i >> 26) & 1;
+  if ((i & 0x3F000000u) == 0x08000000u) {  // exclusive, acquire, release
+    ea = xn;
+    size = u8(1u << (i >> 30));
+    if ((i >> 21) & 1) size = u8(size * 2);
+    return ((i >> 22) & 1) ? kAccLoad : kAccStore;
+  }
+  if ((i & 0x3B000000u) == 0x18000000u) {  // literal
+    ea = pc + (SignExtend((i >> 5) & 0x7FFFF, 19) << 2);
+    const unsigned opc = i >> 30;
+    if (!v && opc == 3) return kAccPrefetch;
+    size = v ? u8(4u << opc) : u8(opc == 1 ? 8 : 4);
+    return kAccLoad;
+  }
+  if ((i & 0xBE000000u) == 0x0C000000u) {  // vector structures (ld1/st1 and the rest), base only
+    ea = xn;
+    return ((i >> 22) & 1) ? kAccLoad : kAccStore;
+  }
+  if ((i & 0x38000000u) == 0x28000000u) {  // pairs
+    const unsigned opc = i >> 30;
+    const unsigned scale = v ? 2 + opc : (opc == 2 ? 3 : 2);
+    const unsigned mode = (i >> 23) & 3;  // 0 offset (no allocate), 1 post-index, 2 offset, 3 pre-index
+    ea = mode == 1 ? xn : xn + (SignExtend((i >> 15) & 0x7F, 7) << scale);
+    size = u8(2u << scale);
+    return ((i >> 22) & 1) ? kAccLoad : kAccStore;
+  }
+  if ((i & 0x38000000u) == 0x38000000u) {  // one register
+    const unsigned sz = i >> 30, opc = (i >> 22) & 3;
+    const unsigned scale = (v && (opc & 2)) ? 4 : sz;
+    u8 kind;
+    if (!v && sz == 3 && opc == 2) {
+      kind = kAccPrefetch;
+    } else if (v) {
+      kind = (opc & 1) ? kAccLoad : kAccStore;
+    } else {
+      kind = opc == 0 ? kAccStore : kAccLoad;
+    }
+    if ((i >> 24) & 1) {  // unsigned scaled offset
+      ea = xn + (u64((i >> 10) & 0xFFF) << scale);
+    } else if (!((i >> 21) & 1)) {  // unscaled, post-index, unprivileged, pre-index
+      ea = ((i >> 10) & 3) == 1 ? xn : xn + SignExtend((i >> 12) & 0x1FF, 9);
+    } else if (((i >> 10) & 3) == 2) {  // register offset
+      u64 m = CtxReg(c, (i >> 16) & 31, false);
+      const unsigned option = (i >> 13) & 7;
+      if (option == 2) {
+        m = u32(m);
+      } else if (option == 6) {
+        m = u64(s64(s32(u32(m))));
+      }
+      ea = xn + (m << (((i >> 12) & 1) ? scale : 0));
+    } else {
+      return kAccNone;  // the v8.1 atomics: not on this CPU
+    }
+    size = u8(1u << scale);
+    return kind;
+  }
+  return kAccNone;
+}
+
+// Where an address falls: a guest view (the window's 4 GB), past it, the thread's own stack, the executable, the rest.
+u8 AddrClass(u64 ea, u64 sp, u64 gm, u64 image) {
+  if (gm && ea >= gm && ea - gm < 0x100000000ull) {
+    const u64 g = ea - gm;
+    if (g < 0x100000) return 1;
+    if (g < 0x40000000) return 2;
+    if (g < 0x80000000) return 3;
+    if (g < 0xA0000000) return 4;
+    if (g < 0xC0000000) return 5;
+    if (g < 0xE0000000) return 6;
+    return 7;
+  }
+  if (gm && ea >= gm + 0x100000000ull && ea < gm + 0x130000000ull) return 8;
+  if (ea + 0x10000 >= sp && ea < sp + 0x100000) return 9;
+  if (ea >= image && ea < image + 0x10000000) return 10;
+  return 11;
+}
 
 /*
  * Long frame windows. The renderer calls RexSwitchPerfHitch with the interval of every frame over
@@ -443,6 +559,11 @@ std::vector<Count> Histogram(std::vector<u64>& addrs) {
   return out;
 }
 
+// renut-ultimate (with ssasr-nx's thread names): an unnamed guest thread, by either form of its name.
+static bool GuestThreadName(const char* n) {
+  return std::strncmp(n, "XThread", 7) == 0 || std::strncmp(n, "XT@", 3) == 0;
+}
+
 /*
  * Exclusive core (RexSwitchPerfExclusiveCore): once the hottest guest thread ("XThread...", the game's main
  * thread in gameplay) uses more than 60 % of a core, it is pinned to core K alone and every other registered
@@ -458,7 +579,7 @@ void ApplyExclusiveCore(FILE* f, const std::vector<size_t>& order) {
   if (!pinned) {
     for (size_t i : order) {
       const Slot& s = g_slots[i];
-      if (std::strncmp(s.name, "XThread", 7) != 0) continue;
+      if (!GuestThreadName(s.name)) continue;
       if (s.cpu < 60.0) break;
       if (R_SUCCEEDED(svcSetThreadCoreMask(s.handle.load(), k, bit))) {
         pinned = s.handle.load();
@@ -474,7 +595,7 @@ void ApplyExclusiveCore(FILE* f, const std::vector<size_t>& order) {
   if (g_core_render.load(std::memory_order_relaxed) && !raised) {
     for (size_t i : order) {
       const Slot& s = g_slots[i];
-      if (s.handle.load() == pinned || std::strncmp(s.name, "XThread", 7) != 0) continue;
+      if (s.handle.load() == pinned || !GuestThreadName(s.name)) continue;
       if (s.cpu < 35.0) break;
       if (R_SUCCEEDED(svcSetThreadPriority(s.handle.load(), 0x2B))) {
         raised = s.handle.load();
@@ -493,7 +614,7 @@ void ApplyExclusiveCore(FILE* f, const std::vector<size_t>& order) {
     // Light guest threads (audio, streaming: under 35 % of a core) may use the main thread's spare time on K,
     // which leaves cores 0-1 to the ring and render threads. Same priority as the main thread (0x3B): they
     // only run on K while it waits.
-    if (light && std::strncmp(g_slots[i].name, "XThread", 7) == 0 && g_slots[i].cpu < 35.0) {
+    if (light && GuestThreadName(g_slots[i].name) && g_slots[i].cpu < 35.0) {
       if (mask == 0x6 || mask == 0x5 || mask == 0x3) svcSetThreadCoreMask(h, -3, mask | bit);
       continue;
     }
@@ -501,6 +622,169 @@ void ApplyExclusiveCore(FILE* f, const std::vector<size_t>& order) {
     const u64 new_entry = mask & ~bit;
     if (preferred == k || (preferred >= 0 && !(new_entry & (1ull << preferred)))) preferred = -1;
     svcSetThreadCoreMask(h, preferred, new_entry);
+  }
+}
+
+// ssasr-nx (2026-11-27, loads batch M1): the address census's lines, one block per thread with 50 or more samples at a
+// load or store in this window (samples sorted by slot; those waiting in the kernel left out).
+void AddressCensus(FILE* f, const std::vector<Sample>& samples, const std::vector<size_t>& order) {
+  const u64 gm = reinterpret_cast<u64>(RexGmBase());
+  bool header = false;
+  for (size_t i : order) {
+    u32 running = 0, mem = 0, crossing = 0;
+    u32 kinds[4]{}, cls[kAddrClasses]{};
+    std::vector<u32> regions(256, 0);  // the guest's 16 MB regions
+    std::vector<u32> sets(256, 0);     // L1 data sets: host virtual address bits 6-13 (32 KB, 2 ways, 64-byte lines)
+    std::vector<u64> pages, blocks;
+    std::vector<const Sample*> mems;  // loads batch M5: the busiest sets' lines
+    for (const Sample& m : samples) {
+      if (m.slot != i || AfterSvc(m.pc)) continue;
+      ++running;
+      if (!m.ea_kind) continue;
+      ++mem;
+      mems.push_back(&m);
+      ++kinds[m.ea_kind & 3];
+      ++cls[m.ea_class < kAddrClasses ? m.ea_class : 0];
+      if (m.ea_size && (m.ea & 63) + m.ea_size > 64) ++crossing;
+      if (m.ea_class >= 1 && m.ea_class <= 7) ++regions[u32((m.ea - gm) >> 24) & 255];
+      ++sets[(m.ea >> 6) & 255];
+      pages.push_back(m.ea >> 12);
+      blocks.push_back(m.ea >> 21);
+    }
+    if (mem < 50) continue;
+    if (!header) {
+      std::fprintf(f, "\n== addresses at the sampled loads and stores (switch_profile_addresses) ==\n");
+      header = true;
+    }
+    std::sort(pages.begin(), pages.end());
+    std::sort(blocks.begin(), blocks.end());
+    const size_t npages = size_t(std::unique(pages.begin(), pages.end()) - pages.begin());
+    const size_t nblocks = size_t(std::unique(blocks.begin(), blocks.end()) - blocks.begin());
+    const Slot& s = g_slots[i];
+    std::fprintf(f,
+                 "-- thread \"%s\": %u samples running, %u at a load or store (%u loads, %u stores, %u prefetches), %u "
+                 "crossing a 64-byte line; %zu distinct 4 KB pages, %zu distinct 2 MB blocks\n",
+                 s.name[0] ? s.name : "?", running, mem, kinds[kAccLoad], kinds[kAccStore], kinds[kAccPrefetch],
+                 crossing, npages, nblocks);
+    std::fprintf(f, "   where:");
+    for (unsigned c = 1; c < kAddrClasses; ++c) {
+      if (cls[c]) std::fprintf(f, " %s %.1f%% (%u);", kAddrClassNames[c], double(cls[c]) * 100.0 / double(mem), cls[c]);
+    }
+    if (cls[0]) std::fprintf(f, " ? %u;", cls[0]);
+    std::fputc('\n', f);
+    std::vector<std::pair<u32, u32>> top;
+    for (u32 r = 0; r < 256; ++r) {
+      if (regions[r]) top.push_back({regions[r], r});
+    }
+    std::sort(top.begin(), top.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::fprintf(f, "   guest 16 MB regions (%zu):", top.size());
+    for (size_t k = 0; k < top.size() && k < 16; ++k) {
+      std::fprintf(f, " %08X %.1f%%", top[k].second << 24, double(top[k].first) * 100.0 / double(mem));
+    }
+    std::fputc('\n', f);
+    top.clear();
+    for (u32 r = 0; r < 256; ++r) {
+      if (sets[r]) top.push_back({sets[r], r});
+    }
+    std::sort(top.begin(), top.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::fprintf(f, "   L1 sets used %zu of 256; the most in one set:", top.size());
+    for (size_t k = 0; k < top.size() && k < 8; ++k) {
+      std::fprintf(f, " %u (set %02X)", top[k].first, top[k].second);
+    }
+    std::fputc('\n', f);
+    // ssasr-nx (2026-11-27, loads batch M6): the executable's most sampled lines (its globals, tables, literal pools),
+    // as image offsets for the map file: which of them are read-only data, the one place L26 found a TLB cost.
+    {
+      std::vector<std::pair<u64, u32>> lines;
+      for (const Sample* m : mems) {
+        if (m->ea_class != 10) continue;
+        const u64 line = (m->ea - g_base) >> 6;
+        auto it = std::find_if(lines.begin(), lines.end(), [line](const auto& p) { return p.first == line; });
+        if (it != lines.end()) {
+          ++it->second;
+        } else if (lines.size() < 512) {
+          lines.push_back({line, 1});
+        }
+      }
+      std::sort(lines.begin(), lines.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+      std::fprintf(f, "   module lines (%zu):", lines.size());
+      for (size_t k = 0; k < lines.size() && k < 16; ++k) {
+        std::fprintf(f, " %u image+0x%" PRIx64 ";", lines[k].second, lines[k].first << 6);
+      }
+      std::fputc('\n', f);
+    }
+    // ssasr-nx (2026-11-27, loads batch L80): the rest (not guest memory, the thread's stack or the executable: the
+    // host heap, PPCContext, the renderer's memory) by the kernel's region (svcQueryMemory, here in the report, not in
+    // the sampler): its type, permissions and attributes, so a read of uncached or device-mapped memory (a GPU buffer
+    // read back on the CPU: hundreds of ns a line) would show.
+    {
+      struct Region {
+        u64 addr, size;
+        u32 type, attr, perm, samples, loads;
+      };
+      std::vector<Region> regs;
+      u32 rest = 0;
+      for (const Sample* m : mems) {
+        if (m->ea_class != 11) continue;
+        ++rest;
+        auto it = std::find_if(regs.begin(), regs.end(),
+                               [m](const Region& r) { return m->ea >= r.addr && m->ea - r.addr < r.size; });
+        if (it == regs.end()) {
+          MemoryInfo mi{};
+          u32 pi = 0;
+          if (regs.size() >= 256 || R_FAILED(svcQueryMemory(&mi, &pi, m->ea)) || mi.size == 0) continue;
+          regs.push_back({mi.addr, mi.size, mi.type, mi.attr, mi.perm, 0, 0});
+          it = regs.end() - 1;
+        }
+        ++it->samples;
+        if ((m->ea_kind & 3) == kAccLoad) ++it->loads;
+      }
+      std::sort(regs.begin(), regs.end(), [](const Region& a, const Region& b) { return a.samples > b.samples; });
+      u32 uncached = 0, device = 0;
+      for (const Region& r : regs) {
+        if (r.attr & MemAttr_IsUncached) uncached += r.samples;
+        if (r.attr & MemAttr_IsDeviceMapped) device += r.samples;
+      }
+      std::fprintf(f, "   the rest by region (%zu regions, %u samples; uncached %u, device-mapped %u):", regs.size(),
+                   rest, uncached, device);
+      for (size_t k = 0; k < regs.size() && k < 8; ++k) {
+        const Region& r = regs[k];
+        std::fprintf(f, " %u (%u loads) 0x%" PRIx64 "+%" PRIu64 " KB type %u attr %X perm %X;", r.samples, r.loads,
+                     r.addr, r.size >> 10, r.type, r.attr, r.perm);
+      }
+      std::fputc('\n', f);
+    }
+    // ssasr-nx (2026-11-27, loads batch M5): the distinct lines of the three busiest sets, with their samples and
+    // places (guest address, image+offset, stack, or the host address): one line many times is a hot line; three or
+    // more, each often, in a 2-way set is a conflict.
+    for (size_t k = 0; k < top.size() && k < 3; ++k) {
+      std::vector<std::pair<u64, u32>> lines;  // (line address, samples)
+      u8 line_class[16]{};
+      for (const Sample* m : mems) {
+        if (((m->ea >> 6) & 255) != top[k].second) continue;
+        const u64 line = m->ea >> 6;
+        auto it = std::find_if(lines.begin(), lines.end(), [line](const auto& p) { return p.first == line; });
+        if (it != lines.end()) {
+          ++it->second;
+        } else if (lines.size() < 16) {
+          line_class[lines.size()] = m->ea_class;
+          lines.push_back({line, 1});
+        }
+      }
+      std::fprintf(f, "   set %02X: %zu lines:", top[k].second, lines.size());
+      for (size_t j = 0; j < lines.size() && j < 8; ++j) {
+        const u64 a = lines[j].first << 6;
+        const u8 c = line_class[j];
+        if (c >= 1 && c <= 7) {
+          std::fprintf(f, " %u guest %08X;", lines[j].second, u32(a - gm));
+        } else if (c == 10) {
+          std::fprintf(f, " %u image+0x%" PRIx64 ";", lines[j].second, a - g_base);
+        } else {
+          std::fprintf(f, " %u %s 0x%" PRIx64 ";", lines[j].second, c < kAddrClasses ? kAddrClassNames[c] : "?", a);
+        }
+      }
+      std::fputc('\n', f);
+    }
   }
 }
 
@@ -844,6 +1128,8 @@ void Report(u64 elapsed_ticks, u64 tick_freq, u64 counters_last[kCounterCount],
     }
   }
 
+  if (g_addr_census) AddressCensus(f, samples, order);  // ssasr-nx (loads batch M1)
+
   for (size_t i : order) {
     const Slot& s = g_slots[i];
     /*
@@ -1168,6 +1454,10 @@ void ProfilerMain(void*) {
     if (value == "true" || value == "1") sample_stacks = true;
   }
   g_stacks_active.store(sample_stacks, std::memory_order_relaxed);  // asura-nx (RexSwitchPerfStacksActive)
+  {  // ssasr-nx (2026-11-27, loads batch M1): the address census (the title's cvar switch_profile_addresses)
+    const std::string value = rex::cvar::GetFlagByName("switch_profile_addresses");
+    g_addr_census = sample_stacks && (value == "true" || value == "1");
+  }
   // blur-nx (2026-11-16, the 15 ms batch): the interval between two stack samples, from the title's cvar
   // switch_profile_stacks_ms (1 when it has none). Each sample pauses one game thread (svcSetThreadActivity), reads its
   // context and stack and resumes it, from a thread above every game thread: at 1 ms that is ~1,000 pauses and ~5,000
@@ -1255,6 +1545,12 @@ void ProfilerMain(void*) {
         out.lr = ctx.lr;
         out.slot = static_cast<u16>(idx);
         out.tick = armGetSystemTick();
+        // ssasr-nx (loads batch M1): the sampled instruction's access (it has not run yet: its registers are its inputs)
+        if (g_addr_census && InText(out.pc) && (out.pc & 3) == 0) {
+          out.ea_kind = DecodeAccess(*reinterpret_cast<const u32*>(out.pc), out.pc, ctx, out.ea, out.ea_size);
+          if (out.ea_kind)
+            out.ea_class = AddrClass(out.ea, ctx.sp, reinterpret_cast<u64>(RexGmBase()), g_base);
+        }
         // The stack, with the thread still paused: it is our own memory and
         // there are no locks. Only frames within the region of its sp.
         MemoryInfo smi;

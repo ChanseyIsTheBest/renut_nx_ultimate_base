@@ -14,6 +14,7 @@
  */
 #include <algorithm>
 #include <atomic>
+#include "renut_engine/gpu/backend/latched_switch.h"  // ssasr-nx (2026-11-27, loads batch L107)
 #include <cstring>
 #include <deque>
 #include <map>  // S4ep2-XBLA-nx: DeclarationWithShaderInputsLocked
@@ -605,6 +606,11 @@ void DestroyShaderRecord(ShaderRecord *shader) {
 }
 
 // halo3-nx (2026-11-03, banjo_renut_recorded_binds): a shader's binds, each kept once, by id (index + 1).
+// ssasr-nx (2026-11-27, batch 5 H9): raised whenever a shader's last binding may have changed (NoteLastBindingFast),
+// so the draw hook can keep the answer of LastBindingOf for the vertex shader of the draw before
+// (backend/queued.cpp).
+std::atomic<uint32_t> g_last_binding_gen{0};
+
 namespace {
 struct RecordedBinding {
   u32 shader_va = 0;
@@ -629,24 +635,29 @@ constexpr u32 kBindingPtrs = 1u << 16;
 std::atomic<const RecordedBinding *> g_binding_ptrs[kBindingPtrs];
 
 bool BindingsLockFree() {
-  static const bool on = REXCVAR_GET(blur_renut_bindings_lockfree);
-  return on;
+  static std::atomic<int8_t> on{0};  // ssasr-nx (2026-11-27, loads batch L107)
+  return LatchedSwitch(on, [] { return bool(REXCVAR_GET(blur_renut_bindings_lockfree)); });
 }
 
 // Under g_bindings_mutex.
 void NoteLastBindingFast(u32 shader_va, u32 id) {
-  if (g_last_binding_fast_full.load(std::memory_order_relaxed))
+  if (g_last_binding_fast_full.load(std::memory_order_relaxed)) {
+    g_last_binding_gen.fetch_add(1, std::memory_order_release);  // ssasr-nx (batch 5 H9): the map changed
     return;
+  }
   const uint64_t entry = (uint64_t(shader_va) << 32) | id;
   for (u32 i = 0, slot = (shader_va * 2654435761u) >> 18; i < kLastBindingSlots; ++i, slot = (slot + 1) & (kLastBindingSlots - 1)) {
     const uint64_t e = g_last_binding_fast[slot].load(std::memory_order_relaxed);
     if (e == 0 || u32(e >> 32) == shader_va) {
-      if (e != entry)
+      if (e != entry) {
         g_last_binding_fast[slot].store(entry, std::memory_order_release);
+        g_last_binding_gen.fetch_add(1, std::memory_order_release);  // ssasr-nx (batch 5 H9)
+      }
       return;
     }
   }
   g_last_binding_fast_full.store(true, std::memory_order_release);
+  g_last_binding_gen.fetch_add(1, std::memory_order_release);  // ssasr-nx (batch 5 H9)
 }
 
 u32 InternBinding(u32 shader_va, const VertexDeclarationRecord &declaration, const u32 (&strides)[d3d::kMaxStreams]) {
@@ -682,7 +693,8 @@ u32 InternBinding(u32 shader_va, const VertexDeclarationRecord &declaration, con
 }  // namespace
 
 u32 LastBindingOf(u32 shader_va) {
-  static const bool on = REXCVAR_GET(banjo_renut_recorded_binds);
+  static std::atomic<int8_t> on_latched{0};  // ssasr-nx (loads batch L107): its guard was 4 samples in loadsA
+  const bool on = LatchedSwitch(on_latched, [] { return bool(REXCVAR_GET(banjo_renut_recorded_binds)); });
   if (!on || !shader_va)
     return 0;
   // blur-nx (2026-11-17, blur_renut_bindings_lockfree): the table's answer, the map's as of the read.

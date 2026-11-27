@@ -46,6 +46,8 @@ void QueueUnlocked(std::function<void()> work);
 // banjo-nx (2026-10-20, from sa2-nx, banjo_renut_prefetch_next): as Queue, and the two addresses (each may be null)
 // are prefetched while the item before it runs.
 void QueuePrefetched(const void *prefetch0, const void *prefetch1, std::function<void()> work);
+// ssasr-nx (2026-11-26, batch 4 #1): the same with a plain function and its argument (no std::function).
+void QueuePrefetchedPlain(const void *prefetch0, const void *prefetch1, void (*fn)(void *), void *arg);
 
 // Writes 'fence' to the guest word at 'completion_va' (the device's fence
 // completion, which IsFencePending and BlockOnFence read) once the work queued
@@ -53,6 +55,15 @@ void QueuePrefetched(const void *prefetch0, const void *prefetch1, std::function
 // QueueCallbackMarker) have run: on the console the GPU calls them on its way
 // to the fence, and the game may free what they use once it has passed.
 void QueueFenceCompletion(u32 completion_va, u32 fence, uint64_t after_callback);
+
+// ssasr-nx (2026-11-27, the thread batch T1; ssasr_submit_worker): the submit worker. On, every push from a thread
+// other than the render thread goes through it in order. QueuePrefetchedPlainPre is QueuePrefetchedPlain with a 'pre'
+// the worker runs on 'arg' before handing the item on (on the pushing thread when the worker is off).
+bool SubmitWorkerOn();
+bool SetterLogOn();  // ssasr-nx (the thread batch F1, ssasr_setter_log; with the submit worker)
+void QueuePrefetchedPlainPre(const void *prefetch0, const void *prefetch1, void (*fn)(void *), void *arg,
+                             void (*pre)(void *));
+std::string SubmitWorkerReport();  // "; submit worker: ..." for the 10 s report, empty when off
 
 // Guest callbacks (D3DDevice_InsertCallback) are numbered from 1 by the game
 // side (callbacks.h). The render thread reaches callback 'seq' once the work

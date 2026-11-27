@@ -23,6 +23,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SPIRV_CROSS = os.path.join(ROOT, 'out', 'deko3d_tools', 'spirv-cross-build', 'spirv-cross.exe')
 UAM = os.path.join(ROOT, 'out', 'deko3d_tools', 'uam-build', 'uam.exe')
 NO_UAM = False
+UAM_TIMEOUT = 0  # renut-ultimate: none unless --uam-timeout (ssasr-nx used 120)
 
 
 def one(spv, out):
@@ -43,7 +44,13 @@ def one(spv, out):
         f.write(text)
     if NO_UAM:
         return stem, None, '', 0, []
-    r = subprocess.run([UAM, '-s', stage, '-o', dksh, glsl], capture_output=True, text=True)
+    # ssasr-nx (2026-11-25): a time limit. Five of Sonic & SEGA All-Stars Racing's pixel shaders (17,000-25,000 GLSL
+    # lines: one loop whose SPIRV-Cross form copies thousands of phi values) kept uam compiling for over 30 minutes
+    # and grew it to 5-13 GB each (45 GB of commit in all on a shared PC); now killed and reported as 'uam-timeout'.
+    try:
+        r = subprocess.run([UAM, '-s', stage, '-o', dksh, glsl], capture_output=True, text=True, timeout=UAM_TIMEOUT or None)
+    except subprocess.TimeoutExpired:
+        return stem, 'uam-timeout', f'uam still compiling after {UAM_TIMEOUT} s (killed)', 0, []
     log = (r.stdout + r.stderr).strip()
     warnings = [l.strip() for l in log.split('\n') if 'warning' in l.lower()]
     if r.returncode != 0 or not os.path.isfile(dksh):
@@ -59,9 +66,11 @@ def main():
     ap.add_argument('--jobs', type=int, default=max(1, (os.cpu_count() or 4) - 2))
     ap.add_argument('--limit', type=int, default=0)
     ap.add_argument('--no-uam', action='store_true', help='convert only (the GLSL package needs no DKSH)')
+    ap.add_argument('--uam-timeout', type=int, default=0, help='seconds before a uam compile is killed (0: none)')
     a = ap.parse_args()
-    global NO_UAM
+    global NO_UAM, UAM_TIMEOUT
     NO_UAM = a.no_uam
+    UAM_TIMEOUT = a.uam_timeout
     for d in ('vk', 'glsl', 'dksh'):
         os.makedirs(os.path.join(a.out, d), exist_ok=True)
     spvs = sorted(os.path.join(a.spirv, f) for f in os.listdir(a.spirv) if f.endswith('.spv'))

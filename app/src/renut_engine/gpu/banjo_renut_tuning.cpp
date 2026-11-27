@@ -12,6 +12,7 @@
 #include "renut_engine/gpu/render/textures.h"  // blur-nx (2026-11-17, audit #4/#5): ResolveRemakeReport
 #include "renut_engine/gpu/stage_census.h"  // blur-nx (2026-11-17, audit #17-#22, #30)
 #include "renut_engine/gpu/host_batch.h"  // blur-nx (2026-11-18, the Renut host batch)
+#include "renut_engine/gpu/ssasr_host50.h"  // ssasr-nx (2026-11-26, batch 4)
 #include "renut_engine/perf/frame_stats.h"  // blur-nx (2026-11-13): #37's census
 #include "renut_engine/gpu/render/graphics_options.h"  // banjo-nx (2026-10-28): dynamic resolution's ranges
 #include "renut_engine/gpu/guest/command_buffers.h"  // banjo-nx (2026-10-26): TagsReport
@@ -813,6 +814,13 @@ REXCVAR_DEFINE_BOOL(blur_renut_wipe_overwritten, false, "Banjo/Renut",
                     "its tiles (exact tile spans). Blur clears its 640x360 view, draws the scene through the 1280x720 one "
                     "and resolves the 640x360 view: the wipe blackened the frame. Off: as vivapinata-nx wrote it")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// ssasr-nx (2026-11-25): render/draw.cpp ResolveStateLocked's depth resolve into a slice other than 0 of a stacked
+// destination (drawn into a 2D scratch and copied into the slice). Sonic & SEGA All-Stars Racing's shadow cascades 1
+// and 2 were never written without it ("Depth resolve into ... (level 0, slice 1) not done").
+REXCVAR_DEFINE_BOOL(ssasr_renut_depth_slices, false, "Banjo/Renut",
+                    "Depth resolves into a slice other than 0 of a stacked (array) texture, as the console does "
+                    "(shadow cascades); off: only slice 0, as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(blur_renut_resolve_exp_bias, true, "Banjo/Renut",
                     "From blur-nx (2026-11-10, port 76; A/B 219): a colour resolve's exponent bias, as the console "
                     "applies it: the Resolve flags' top six bits (D3DRESOLVE_EXPONENTBIAS, signed; D3D puts them in "
@@ -1013,8 +1021,10 @@ void NotePipelineBuilt() {
 }
 
 // The A/B word (banjo_renut_ab); the header reads it inline.
+#if !defined(SSASR_NO_AB)  // ssasr-nx (2026-11-26, batch 4 #41): the header's constants then
 std::atomic<int> g_ab_off{0};
 int g_ab_off_plain = 0;  // banjo-nx (2026-11-20, batch #3): see the header
+#endif
 
 namespace {
 
@@ -1301,8 +1311,13 @@ int AbTargetLocked() {
 
 // Render thread: the part as the half says.
 void AbApply(int target, bool on) {
+#if !defined(SSASR_NO_AB)
   g_ab_off.store(on ? 0 : target, std::memory_order_relaxed);
   g_ab_off_plain = on ? 0 : target;  // banjo-nx (2026-11-20, batch #3)
+#else
+  (void)target;
+  (void)on;
+#endif
   // banjo-nx (2026-11-20): the GPU round's On() answers follow the half (before ApplyPlume, which asks them)
   if (sasrt::gpu_round::g_latched_ready.load(std::memory_order_acquire))
     sasrt::gpu_round::RefreshEffective();
@@ -1510,6 +1525,8 @@ void StatsGameFrame() {
     REXLOG_INFO("[renut] {}", st);
   if (const std::string hb = ::renut::gpu::host_batch::Report(since); !hb.empty())  // blur-nx (2026-11-18)
     REXLOG_INFO("[renut] {}", hb);
+  if (const std::string h50 = ::ssasr::host50::Report(since); !h50.empty())  // ssasr-nx (2026-11-26, batch 4)
+    REXLOG_INFO("[renut] {}", h50);
   if (const std::string rc = ::renut::gpu::ReplayRepeatCensusReport(); !rc.empty())  // banjo-nx (2026-10-26)
     REXLOG_INFO("[renut] {}", rc);
   if (const std::string pc = ::renut::gpu::PacketCensusReport(); !pc.empty())  // banjo-nx (2026-10-28)
@@ -2146,6 +2163,10 @@ bool ResolveExpBiasOn() {
   static const bool on = REXCVAR_GET(blur_renut_resolve_exp_bias);
   return KeyOn<219>(on);
 }
+bool DepthSlicesOn() {
+  static const bool on = REXCVAR_GET(ssasr_renut_depth_slices);
+  return on;
+}
 // blur-nx (2026-11-11, port 76; its key 221): render/draw.cpp ResolveStateLocked's multisampled slice resolves.
 bool MsSliceResolveOn() {
   static const bool on = REXCVAR_GET(blur_renut_ms_slice_resolve);
@@ -2657,6 +2678,21 @@ void OnRenderThreadStart() {
     RexSwitchSystemCoreDescribe(cores, sizeof(cores));
     REXLOG_INFO("[banjo] system core: {}", cores);
   }
+#endif
+}
+
+// ssasr-nx (2026-11-27, the thread batch T1): the submit worker (backend/render_thread.cpp SubmitRun).
+void OnSubmitWorkerStart(int32_t core) {
+#if REX_PLATFORM_SWITCH
+  const bool priority_ok = RexSwitchSetCurrentThreadPriorityOk(kRenderThreadPriority);
+  const bool core_ok = core < 0 || RexSwitchPinCurrentThreadToCore(int(core));
+  REXLOG_INFO("[renut] submit worker at priority 0x{:X}{}, {} (ssasr_submit_worker_core), now on core {}",
+              kRenderThreadPriority, priority_ok ? "" : " (NOT accepted)",
+              core < 0 ? std::string("not pinned")
+                       : fmt::format("pinned to core {}{}", core, core_ok ? "" : " (NOT accepted)"),
+              RexSwitchCurrentCore());
+#else
+  (void)core;
 #endif
 }
 

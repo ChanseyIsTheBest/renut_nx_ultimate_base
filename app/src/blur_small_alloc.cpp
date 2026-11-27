@@ -27,6 +27,8 @@
 #include <cstdlib>
 #include <mutex>
 #include <new>
+#include <cstdio>
+#include <string>
 
 // renut-ultimate (2026-11-17, port 151; the user: "I want small block allocator on"): 32 MB by default, Blur's size
 // (Blur's console: 30.56 fps against 29.88 without it). The arena comes out of the game's heap; a title short of heap
@@ -149,7 +151,8 @@ namespace {
 constexpr uint32_t kClasses = 10;
 constexpr uint32_t kSize[kClasses] = {16, 32, 48, 64, 96, 128, 192, 256, 384, 512};
 constexpr size_t kMaxSmall = 512;
-constexpr uint32_t kBatch = 32;       // blocks moved between a thread and the global lists at a time
+constexpr uint32_t kBatch = 128;      // blocks moved between a thread and the global lists at a time
+                                      // (ssasr-nx 2026-11-27, batch 5 H84: 32 before; a quarter of the global lock's takes)
 constexpr uint32_t kKeep = 128;       // above this many free blocks of a class a thread hands half back
 constexpr size_t kPiece = 64 * 1024;  // the arena is carved in pieces of this size, one class each
 constexpr size_t kMaxArena = size_t(1024) << 20;
@@ -417,12 +420,71 @@ uint64_t Exhausted() { return G().exhausted; }
 
 }  // namespace blur::small_alloc
 
+// ssasr-nx (2026-11-27, batch 5 H27): the allocations the arena does not take (over 512 bytes, or before it exists),
+// counted by their caller's return address while ssasr_renut_host50_census is on (its 10 s line reports the top sites,
+// as image offsets for addr2line). The 5B console race: _malloc_r 0.19 ms a frame on the game thread.
+extern "C" char _start;
+namespace ssasr_alloc_census {
+std::atomic<bool> g_on{false};
+constexpr uint32_t kSites = 256;
+std::atomic<uintptr_t> g_ra[kSites];
+std::atomic<uint64_t> g_n[kSites], g_bytes[kSites];
+std::atomic<uint64_t> g_lost{0};
+[[gnu::noinline, gnu::cold]] void Note(uintptr_t ra, std::size_t n) {
+  // (the product in 32 bits: its top 8 bits index the 256 sites; the census's first form multiplied in 64 and indexed
+  // far past the table: the console's census boot of 01:06 faulted here)
+  uint32_t h = (uint32_t(ra >> 2) * 0x9E3779B1u) >> 24;
+  static_assert(kSites == 256);
+  for (uint32_t k = 0; k < 16; ++k, h = (h + 1) % kSites) {
+    uintptr_t cur = g_ra[h].load(std::memory_order_relaxed);
+    if (cur == 0 && g_ra[h].compare_exchange_strong(cur, ra, std::memory_order_relaxed)) cur = ra;
+    if (cur == ra) {
+      g_n[h].fetch_add(1, std::memory_order_relaxed);
+      g_bytes[h].fetch_add(n, std::memory_order_relaxed);
+      return;
+    }
+  }
+  g_lost.fetch_add(1, std::memory_order_relaxed);
+}
+// "image+0x... N (B bytes each)" for the most counted sites since the last call, which clears the counts.
+std::string Report(double seconds) {
+  const uintptr_t base = reinterpret_cast<uintptr_t>(&_start);
+  uint64_t n[kSites];
+  for (uint32_t i = 0; i < kSites; ++i) n[i] = g_n[i].load(std::memory_order_relaxed);
+  std::string out;
+  uint64_t total = 0;
+  for (uint32_t i = 0; i < kSites; ++i) total += n[i];
+  out += "; H27 system allocations " + std::to_string(uint64_t(double(total) / seconds)) + " a second";
+  for (int shown = 0; shown < 10; ++shown) {
+    uint32_t best = kSites;
+    for (uint32_t i = 0; i < kSites; ++i)
+      if (n[i] && (best == kSites || n[i] > n[best])) best = i;
+    if (best == kSites) break;
+    char line[96];
+    std::snprintf(line, sizeof(line), "%s image+0x%llx %.0f/s (%llu bytes)", shown ? "," : ":",
+                  (unsigned long long)(g_ra[best].load(std::memory_order_relaxed) - base), double(n[best]) / seconds,
+                  (unsigned long long)(g_bytes[best].load(std::memory_order_relaxed) / n[best]));
+    out += line;
+    n[best] = 0;
+  }
+  for (uint32_t i = 0; i < kSites; ++i) {
+    g_n[i].store(0, std::memory_order_relaxed);
+    g_bytes[i].store(0, std::memory_order_relaxed);
+  }
+  return out;
+}
+}  // namespace ssasr_alloc_census
+
 void* operator new(std::size_t n) {
   if (void* p = SmallNew(n)) return p;
+  if (ssasr_alloc_census::g_on.load(std::memory_order_relaxed)) [[unlikely]]
+    ssasr_alloc_census::Note(reinterpret_cast<uintptr_t>(__builtin_return_address(0)), n);
   return SystemNew(n);
 }
 void* operator new[](std::size_t n) {
   if (void* p = SmallNew(n)) return p;
+  if (ssasr_alloc_census::g_on.load(std::memory_order_relaxed)) [[unlikely]]
+    ssasr_alloc_census::Note(reinterpret_cast<uintptr_t>(__builtin_return_address(0)), n);
   return SystemNew(n);
 }
 void* operator new(std::size_t n, const std::nothrow_t&) noexcept {

@@ -3,6 +3,8 @@
  * @brief   End of frame: swapchain acquire, guest image scan-out, overlay,
  *          submit and present.
  */
+#include "renut_engine/gpu/ssasr_host50.h"  // ssasr-nx (2026-11-26, batch 4)
+#include <cstring>
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -830,6 +832,18 @@ int Video::PresentDone(uint64_t index) {
 void Video::NoteGameGamma(const uint8_t *ramp, bool piecewise) {
   if (!ramp || !REXCVAR_GET(banjo_renut_game_gamma))
     return;
+  // ssasr-nx (2026-11-26, batch 4 #23, ssasr_renut_host50): the ramp's guest words (3 x 256 halves, 1.5 KB) against
+  // the ones last expanded: the same words and form give the same 3 x 1024 values, which the expansion below and its
+  // compare under the lock made again at every Swap (0.03 ms a frame of the game thread). The game thread alone calls it.
+  static uint8_t last_raw[3 * 256 * 2];
+  static bool last_piecewise = false, last_valid = false;
+  if (::ssasr::host50::On(23)) {
+    if (last_valid && last_piecewise == piecewise && std::memcmp(last_raw, ramp, sizeof(last_raw)) == 0)
+      return;
+    std::memcpy(last_raw, ramp, sizeof(last_raw));
+    last_piecewise = piecewise;
+    last_valid = true;
+  }
   const auto word = [ramp](uint32_t i) { return (uint32_t(ramp[i * 2]) << 8 | ramp[i * 2 + 1]) >> 6 & 0x3FF; };
   std::array<uint16_t, 3 * 1024> r;
   for (uint32_t c = 0; c < 3; ++c) {

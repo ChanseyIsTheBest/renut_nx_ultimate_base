@@ -461,3 +461,11 @@ Ports 1-43 are the first round: the universal fixes of the other ports' renderer
   diagnostics and tools.
 - Port 370: tools/state_block_scan.py, whether a game uses Direct3D state blocks (Poker Smash: its two; Katamari: none).
 - Port 371: per-XDK signature tables of Renut's hooks (XDK 2.0.5632 from Katamari, 2.0.6534 from Poker Smash), the `struct` mask and the `hooks` command of tools/xdk_sigmatch.py.
+- Ports 372-384 (ssasr-nx's sync up to fe59765a, hardened and audited): the guest block hook and guest critical
+  sections for title hooks, data on 2 MB blocks (off), threads by start address, the host50 batch (exact, on),
+  the submit worker, setter log and draw runs (off), loads batches A/B (the ring kept at 16,384), urgent GPU
+  rounds, depth slices (off) and cleared resolves, register passing in the copies, the non-exact switches and
+  censuses (off), XenosRecomp's do-while loops, build and tool fixes.
+- Port 385 (ssasr-nx's 7c0cd28b and bcf8edc0): the capture pool's churn (rounded growth, a 64 MB cap by default,
+  ssasr_capture_pool_mb), the hooks' fast-path counters relaxed, SsFilter's anisotropy lookup only when needed.
+- Port 386: the porting prompt's not-exact censuses (step 7) and media step (step 8); the loose barriers' keep list per port.

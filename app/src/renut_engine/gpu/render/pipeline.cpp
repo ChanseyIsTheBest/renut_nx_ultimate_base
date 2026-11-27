@@ -785,6 +785,32 @@ bool FetchSpecialised(const PipelineKey &key) {
   return false;
 }
 
+// ssasr-nx (2026-11-25, the user's GPU goal: "pixel identical gpu changes ... GPU ms down to 33.33ms"): the console's
+// race (rc2_1 run 4) drew about 530 shader stages with their generic variants (1,874 instructions and 43 registers
+// for the heaviest pixel shader against 311 and 34 for its own), their own variants queued behind
+// banjo_deko3d_background_compile_share's rests: about 0.3 compiles a second, half an hour of play for one track's
+// variants. A pipeline a draw asked for whose key has the GPU rounds' words (the alpha function, the plain fetches and
+// the 1x fold, the third and fifth rounds' words) is built as the fetch-specialised ones are: its missing variants
+// compiled at once on the prebuild worker (no rest), the draws on the generic pipeline meanwhile as before. Same
+// pixels: a pipeline draws the same with its generic or its own variants; only when its own arrive changes. Not for the
+// pipeline list's boot prebuild (no draw has asked for those yet).
+REXCVAR_DEFINE_BOOL(ssasr_gpu_round_urgent, true, "SSASR/GPU",
+                    "deko3d renderer: a specialised pipeline a draw asked for (alpha function, plain fetches, 1x, "
+                    "stacked 3D, fetch conversion words) compiles its missing shader variants at once on the prebuild "
+                    "worker, not behind the background compile share's rests (same pixels: only when the draws get "
+                    "their own variants changes). false: as before (banjo_deko3d_background_compile_share)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+bool RoundSpecialised(const PipelineKey &key) {
+  if (key.alpha_func || key.fetch_pad)
+    return true;
+  for (const uint32_t w : key.sasrt_words) {
+    if (w)
+      return true;
+  }
+  return false;
+}
+std::atomic<uint64_t> g_round_urgent_builds{0};
+
 struct Job {
   PipelineKey key{};
   uint64_t hash = 0;
@@ -1159,7 +1185,12 @@ void PrebuildWorker() {
     // banjo-nx (2026-11-01): a pipeline with the draw's own vertex fetch or patch kind (banjo_gpu_fetch_spec: here the terrain) is
     // built with its own variants, compiled now on this thread (plume::Deko3DSetUrgentVariants); the draws use the generic
     // pipeline meanwhile. Queued in the background, a console run might never get to it (banjo-nx: one variant every 30-40 s).
-    const bool urgent = FetchSpecialised(job.key);
+    const bool fetch_urgent = FetchSpecialised(job.key);
+    static const bool round_urgent_on = REXCVAR_GET(ssasr_gpu_round_urgent);  // ssasr-nx (2026-11-25)
+    const bool round_urgent = !fetch_urgent && round_urgent_on && job.for_draw && RoundSpecialised(job.key);
+    const bool urgent = fetch_urgent || round_urgent;
+    if (round_urgent)
+      g_round_urgent_builds.fetch_add(1, std::memory_order_relaxed);
     const auto build_start = std::chrono::steady_clock::now();
     lock.unlock();
 #if defined(PLUME_DEKO3D)
@@ -1171,7 +1202,7 @@ void PrebuildWorker() {
     plume::Deko3DSetDrawVariants(false);
     plume::Deko3DSetUrgentVariants(false);
 #endif
-    if (urgent) {
+    if (fetch_urgent) {  // ssasr-nx (2026-11-25): not the round's urgent builds (counted, in the 10 s line)
       const auto *vs_entry = static_cast<const ShaderCacheEntry *>(job.key.vertex_shader);
       const auto &t = job.key.fetch_types;
       RGPU_INFO("fetch spec (banjo_gpu_fetch_spec): VS {:016X}'s pipeline with patch kind {} and fetch types "
@@ -1714,5 +1745,8 @@ PipelineCounts PipelineCountsLocked() {
   }
   return counts;
 }
+
+// ssasr-nx (2026-11-25): ssasr_gpu_round_urgent's pipelines so far (the deko3d 10 s line).
+uint64_t SsasrRoundUrgentBuilds() { return g_round_urgent_builds.load(std::memory_order_relaxed); }
 
 } // namespace renut::gpu

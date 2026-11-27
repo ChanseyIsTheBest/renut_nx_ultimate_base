@@ -65,6 +65,10 @@ def main():
     ap.add_argument('--glsl', default=os.path.join(ROOT, 'out', 'deko3d_shaders', 'glsl_opt'))
     ap.add_argument('--cache', default=os.path.join(ROOT, 'app', 'out', 'renut_switch', 'shader_cache_switch.cpp'))
     ap.add_argument('--out', default=os.path.join(ROOT, 'app', 'out', 'renut_switch_release'))
+    # ssasr-nx (2026-11-25): the shaders the game compiles at run time (in no game file, so the installer cannot make
+    # them): a JSON file whose "nro_shaders" lists them by name (tools/ssasr_shader_records.py). They are built into the
+    # NRO as a raw package (no dictionary: the installer's page reads them out of the NRO for their variants).
+    ap.add_argument('--keep', default='', help='records JSON with "nro_shaders" (built into the NRO)')
     a = ap.parse_args()
     names = sorted(f for f in os.listdir(a.glsl) if re.fullmatch(r'(vs|ps)_[0-9A-F]{16}\.glsl', f))
     if not names:
@@ -72,6 +76,27 @@ def main():
     os.makedirs(a.out, exist_ok=True)
     package(a.glsl, names, os.path.join(a.out, 'sd'))
     os.remove(os.path.join(a.out, 'sd', 'deko3d_glsl_switch.cpp'))  # the installer's file is never built in
+    built_in = os.path.join(a.out, 'deko3d_glsl_switch.cpp')
+    if os.path.exists(built_in):
+        os.remove(built_in)
+    if a.keep:
+        import json
+        lists = json.load(open(a.keep, encoding='utf-8')).get('nro_shaders') or {}
+        keep = sorted({n.lower() for v in lists.values() for n in v})
+        by_lower = {n[:-5].lower(): n for n in names}
+        missing = [k for k in keep if k not in by_lower]
+        if missing:
+            sys.exit(f'renut_release_shaders: --keep names shaders with no GLSL: {missing[:5]}')
+        src = os.path.join(a.out, 'keep_glsl')
+        shutil.rmtree(src, ignore_errors=True)
+        os.makedirs(src)
+        for k in keep:
+            shutil.copyfile(os.path.join(a.glsl, by_lower[k]), os.path.join(src, by_lower[k]))
+        # written into the release folder itself: its deko3d_glsl_switch.cpp .incbins the deko3d_glsl.bin beside it
+        subprocess.run([sys.executable, '-P', os.path.join(ROOT, 'tools', 'deko3d_shader_package.py'), '--glsl', src,
+                        '--out', a.out, '--raw'], check=True)
+        shutil.rmtree(src)
+        print(f'renut_release_shaders: {len(keep)} shaders the game makes at run time built into the NRO')
     text = open(a.cache, encoding='utf-8').read()
     with open(os.path.join(a.out, 'shader_cache_switch.cpp'), 'w', encoding='utf-8', newline='\n') as f:
         f.write(strip_spirv(text))

@@ -12,6 +12,8 @@
 include_guard(GLOBAL)
 # dmc_devil-nx (4858b474): this folder, for patch_nacp_utf8.py (rexglue_switch_add_nro).
 set(_REXGLUE_SWITCH_CMAKE_DIR "${CMAKE_CURRENT_LIST_DIR}" CACHE INTERNAL "rexglue switch cmake dir")
+# ssasr-nx (2026-11-25; renut-ultimate): nacptool through rexglue_nacp.cmake, with no shell between (a title with "&").
+option(REXGLUE_NACP_SCRIPT "nacptool through rexglue_nacp.cmake, no shell (a title with an &)" ON)
 option(DMC_NACP_UTF8 "The NRO's title, author and version in UTF-8 (patch_nacp_utf8.py after nacptool)" ON)
 
 set(REXGLUE_SWITCH_NVK_SDK "" CACHE PATH
@@ -199,9 +201,20 @@ function(rexglue_switch_add_nro target_name)
             message(STATUS "rexglue: no Python found: ${target_name}.nacp keeps nacptool's bytes (DMC_NACP_UTF8)")
         endif()
     endif()
+    # ssasr-nx (2026-11-25): nacptool through rexglue_nacp.cmake (no shell), the title's "&" as __AMP__: cmd.exe split
+    # "Sonic & SEGA All-Stars Racing" at the "&" in the POST_BUILD line. renut-ultimate: REXGLUE_NACP_SCRIPT OFF, the
+    # direct call as before (the same nacptool arguments for a title without "&").
+    if(REXGLUE_NACP_SCRIPT)
+        string(REPLACE "&" "__AMP__" _nacp_name "${ARG_NAME}")
+        set(_nacp_create_cmd COMMAND "${CMAKE_COMMAND}" "-DNACPTOOL=${REXGLUE_NACPTOOL}" "-DNAME=${_nacp_name}"
+            "-DAUTHOR=${ARG_AUTHOR}" "-DVERSION=${ARG_VERSION}" "-DOUT=${_dir}/${target_name}.nacp"
+            -P "${_REXGLUE_SWITCH_CMAKE_DIR}/rexglue_nacp.cmake")
+    else()
+        set(_nacp_create_cmd COMMAND "${REXGLUE_NACPTOOL}" --create "${ARG_NAME}" "${ARG_AUTHOR}" "${ARG_VERSION}"
+            "${_dir}/${target_name}.nacp")
+    endif()
     add_custom_command(TARGET ${target_name} POST_BUILD
-        COMMAND "${REXGLUE_NACPTOOL}" --create "${ARG_NAME}" "${ARG_AUTHOR}" "${ARG_VERSION}"
-            "${_dir}/${target_name}.nacp"
+        ${_nacp_create_cmd}
         ${_nacp_patch_cmd}
         COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:${target_name}>"
             "${_dir}/${target_name}.stripped.elf"
